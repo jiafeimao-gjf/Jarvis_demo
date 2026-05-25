@@ -184,6 +184,34 @@ class OllamaClient(AIClient):
             logger.error(f"Ollama vision error: {e}")
             return f"Error: {str(e)}"
 
+    async def chat_stream(
+        self,
+        messages: list[dict]
+    ) -> AsyncIterator[str]:
+        """流式对话"""
+        try:
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True
+            }
+
+            async with self.client.stream("POST", "/api/chat", json=payload) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            content = data.get("message", {}).get("content", "")
+                            if content:
+                                yield content
+                            if data.get("done"):
+                                break
+                        except json.JSONDecodeError:
+                            continue
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama chat stream error: {e}")
+            yield f"Error: {str(e)}"
+
     async def generate_stream(
         self,
         prompt: str,

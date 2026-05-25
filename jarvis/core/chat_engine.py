@@ -66,8 +66,8 @@ class ChatEngine:
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
 
-        # 5. 调用 LLM
-        response = await self.ollama.chat(messages, stream=stream)
+        # 5. 调用 LLM (非流式)
+        response = await self.ollama.chat(messages, stream=False)
 
         # 6. 添加助手消息
         self.current_conversation.add_message("assistant", response.content)
@@ -106,10 +106,7 @@ class ChatEngine:
 
         messages.append({"role": "user", "content": user_input})
 
-        async for token in self.ollama.generate_stream(
-            prompt="",  # chat 模式不用 prompt
-            system="\n".join([f"{m['role']}: {m['content']}" for m in messages])
-        ):
+        async for token in self.ollama.chat_stream(messages):
             yield token
 
     def to_dict(self) -> dict:

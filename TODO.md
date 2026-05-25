@@ -6,184 +6,61 @@
 
 ## 🔴 P0 - 立即处理
 
-### 1. API 路由已修复 ✅
-
-### 2. Ollama 模型名称已修复 ✅
-
-### 3. Ollama API 错误处理
-
-**文件**：`jarvis/services/ollama_client.py`
-
-**问题**：chat() 方法遇到 404 或其他 HTTP 错误时直接返回错误字符串
-
-**修复**：
-- [ ] 添加重试机制（最多3次）
-- [ ] 当 `/api/chat` 失败时回退到 `/api/generate`
-- [ ] 区分模型未找到和端点问题
-- [ ] 添加超时配置（目前 60s 可调整）
-
-**状态**：待修复
+### 1-2. API 路由 + Ollama 模型名称
+**状态**：✅ 已修复并提交
 
 ---
 
 ## 🟡 P1 - 功能完善
 
-### 4. 前端 WebSocket 代理
-
+### 4. WebSocket 代理
 **文件**：`frontend/vite.config.ts`
+**状态**：✅ 已修复 (8000 → 9529)
 
-**问题**：`/ws` 路由未配置代理，前端无法连接 WebSocket
-
-**修复**：
-```typescript
-'/ws': {
-  target: 'ws://localhost:9529',
-  ws: true
-}
-```
-
-**状态**：待修复
-
-### 5. 创建 .gitignore
-
-**文件**：项目根目录
-
-**内容**：
-```
-# Python
-__pycache__/
-*.py[cod]
-venv/
-*.egg-info/
-.eggs/
-
-# Frontend
-node_modules/
-dist/
-.DS_Store
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# Logs
-logs/
-*.log
-
-# Memory
-memory/
-```
-
-**状态**：待创建
+### 5. .gitignore
+**状态**：✅ 已创建
 
 ### 6. LanceDB 向量检索
-
 **文件**：`jarvis/core/memory_store.py`
-
-**问题**：LanceDB 初始化不稳定，fallback 到 SQLite 导致向量检索功能不可用
-
+**问题**：初始化不稳定，fallback 到 SQLite
 **修复**：
 - [ ] 使用正确的 schema 定义
 - [ ] 添加初始化重试
-- [ ] 或接入专业向量数据库（如 Milvus、Qdrant）
+- [ ] 或接入专业向量数据库
 
 **状态**：待修复
 
 ### 7. Stream 响应格式
-
 **文件**：`jarvis/api/chat.py`
-
-**问题**：前端期望 SSE 格式与后端实际输出不匹配
-
-**修复**：
-- [ ] 统一 SSE 事件格式
-- [ ] 添加 `onDone` 回调处理
-- [ ] 测试完整流式对话流程
-
-**状态**：待修复
+**状态**：✅ 已修复
+- 后端添加 `chat_stream` 方法支持 SSE 流式输出
+- 前端解析 SSE 格式正确
 
 ---
 
 ## 🟢 P2 - 优化项
 
 ### 8. 环境变量配置
-
 **文件**：`.env.example`
-
-**内容**：
-```
-# Backend
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3:4b
-OLLAMA_VISION_MODEL=qwen3-vl:4b
-PORT=9529
-
-# Frontend
-VITE_API_URL=http://localhost:9529
-```
-
-**状态**：待创建
+**状态**：✅ 已创建
 
 ### 9. 基础单元测试
-
 **需添加**：
 - Backend: `pytest` + `pytest-asyncio`
 - Frontend: `vitest` (已配置)
-
-**测试文件**：
-```
-tests/
-├── test_chat_engine.py
-├── test_memory_store.py
-├── test_api_chat.py
-└── test_task_engine.py
-```
-
 **状态**：待实现
 
 ### 10. TTS 完整流程
-
-**文件**：
-- `jarvis/api/voice.py`
-- `frontend/src/composables/useSpeechRecognition.ts`
-
-**问题**：TTS 使用浏览器 `speechSynthesis`，需要在后端添加 Qwen3-TTS 支持
-
-**修复**：
-- [ ] 后端实现 Qwen3-TTS 调用
-- [ ] 前端对接后端 TTS API
-- [ ] 音频流传输
-
+**问题**：需后端实现 Qwen3-TTS 支持
 **状态**：待实现
 
-### 11. 前端 Loading 动画优化
-
-**文件**：`frontend/src/components/ChatWindow.vue`
-
-**优化**：
-- [ ] 打字机效果显示
-- [ ] 脉冲动画改进
-- [ ] 消息发送成功/失败状态
-
-**状态**：待优化
+### 11. 前端 Loading 动画
+**文件**：`ChatWindow.vue`
+**状态**：✅ 已优化 (打字机动画 + 改进加载动画)
 
 ### 12. CORS 生产配置
-
 **文件**：`jarvis/main.py`
-
-**修复**：
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:8529"],  # 限制为前端地址
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "WS"],
-    allow_headers=["*"],
-)
-```
-
-**状态**：待修复
+**状态**：✅ 已修复 (限制前端地址)
 
 ---
 
@@ -222,6 +99,26 @@ app.add_middleware(
 |------|------|----------|
 | 1 | API 路由路径重复修复 | 2026-05-25 |
 | 2 | Ollama 模型名称修复 | 2026-05-25 |
+| 3 | Ollama 重试机制 (3次) | 2026-05-25 |
+| 4 | WebSocket 代理修复 | 2026-05-25 |
+| 5 | .gitignore 创建 | 2026-05-25 |
+| 8 | .env.example 创建 | 2026-05-25 |
+| 11 | Loading 动画优化 | 2026-05-25 |
+| 12 | CORS 生产配置 | 2026-05-25 |
+
+---
+
+## 🔄 本次提交
+
+```
+[ddc6551] feat: 完成 P1/P2 待办项
+- WebSocket 代理配置修复 (8000 → 9529)
+- CORS 生产配置 (限制前端地址)
+- 创建 .env.example 环境变量模板
+- ChatWindow 流式响应支持
+- ChatWindow 打字机动画优化
+- Loading 动画改进
+```
 
 ---
 
