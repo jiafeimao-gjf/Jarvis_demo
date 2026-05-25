@@ -1,6 +1,7 @@
 # jarvis/core/task_engine.py
 """任务执行引擎 - Strategy Pattern + Mediator Pattern"""
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional, Any
 from dataclasses import dataclass
 from jarvis.core.entities import Task, Step, TaskStatus
@@ -130,6 +131,184 @@ class APICallStrategy(TaskStrategy):
         return {"status": "error", "message": "No URL provided"}
 
 
+class FileOperationStrategy(TaskStrategy):
+    """文件操作策略 - 读、写、改、删"""
+
+    def __init__(self, work_folder: Optional[str] = None):
+        self.work_folder = work_folder or str(Path.cwd())
+
+    def _resolve_path(self, path: str) -> Path:
+        """解析文件路径，支持相对路径和绝对路径"""
+        p = Path(path)
+        if p.is_absolute():
+            return p
+        return Path(self.work_folder) / path
+
+    async def execute(self, step: Step) -> Any:
+        """执行文件操作"""
+        import json
+        logger.info(f"File operation: {step.tool} with {step.params}")
+
+        params = step.params
+        action = params.get("action", "")
+        file_path = params.get("path", "")
+
+        try:
+            if action == "read":
+                return await self._read_file(file_path)
+            elif action == "write":
+                content = params.get("content", "")
+                return await self._write_file(file_path, content)
+            elif action == "edit":
+                old_content = params.get("old_content", "")
+                new_content = params.get("new_content", "")
+                return await self._edit_file(file_path, old_content, new_content)
+            elif action == "delete":
+                return await self._delete_file(file_path)
+            elif action == "list":
+                return await self._list_files(file_path)
+            elif action == "mkdir":
+                return await self._mkdir(file_path)
+            elif action == "exists":
+                return await self._file_exists(file_path)
+            elif action == "set_work_folder":
+                folder = params.get("folder", "")
+                self.work_folder = folder
+                return {"status": "success", "message": f"工作文件夹已设置为: {folder}"}
+            elif action == "get_work_folder":
+                return {"status": "success", "folder": self.work_folder}
+            else:
+                return {"status": "error", "message": f"未知操作: {action}"}
+        except Exception as e:
+            logger.error(f"File operation error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def _read_file(self, path: str) -> dict:
+        """读取文件"""
+        full_path = self._resolve_path(path)
+        if not full_path.exists():
+            return {"status": "error", "message": f"文件不存在: {path}"}
+        if not full_path.is_file():
+            return {"status": "error", "message": f"不是文件: {path}"}
+
+        try:
+            content = full_path.read_text(encoding="utf-8")
+            return {
+                "status": "success",
+                "path": str(full_path),
+                "content": content,
+                "lines": len(content.splitlines())
+            }
+        except UnicodeDecodeError:
+            content = full_path.read_bytes()
+            import base64
+            return {
+                "status": "success",
+                "path": str(full_path),
+                "content": base64.b64encode(content).decode(),
+                "encoding": "base64",
+                "size": len(content)
+            }
+
+    async def _write_file(self, path: str, content: str) -> dict:
+        """写入文件"""
+        full_path = self._resolve_path(path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if isinstance(content, str) and content.startswith("base64:"):
+            import base64
+            data = base64.b64decode(content[7:])
+            full_path.write_bytes(data)
+        else:
+            full_path.write_text(content, encoding="utf-8")
+
+        return {
+            "status": "success",
+            "message": f"文件已写入: {path}",
+            "path": str(full_path)
+        }
+
+    async def _edit_file(self, path: str, old_content: str, new_content: str) -> dict:
+        """修改文件"""
+        full_path = self._resolve_path(path)
+        if not full_path.exists():
+            return {"status": "error", "message": f"文件不存在: {path}"}
+
+        text = full_path.read_text(encoding="utf-8")
+        if old_content not in text:
+            return {"status": "error", "message": "未找到要替换的内容"}
+
+        new_text = text.replace(old_content, new_content, 1)
+        full_path.write_text(new_text, encoding="utf-8")
+
+        return {
+            "status": "success",
+            "message": f"文件已修改: {path}",
+            "path": str(full_path)
+        }
+
+    async def _delete_file(self, path: str) -> dict:
+        """删除文件"""
+        full_path = self._resolve_path(path)
+        if not full_path.exists():
+            return {"status": "error", "message": f"文件不存在: {path}"}
+
+        if full_path.is_file():
+            full_path.unlink()
+        elif full_path.is_dir():
+            import shutil
+            shutil.rmtree(full_path)
+
+        return {
+            "status": "success",
+            "message": f"已删除: {path}",
+            "path": str(full_path)
+        }
+
+    async def _list_files(self, path: str = "") -> dict:
+        """列出目录文件"""
+        full_path = self._resolve_path(path) if path else Path(self.work_folder)
+        if not full_path.exists():
+            return {"status": "error", "message": f"目录不存在: {path}"}
+        if not full_path.is_dir():
+            return {"status": "error", "message": f"不是目录: {path}"}
+
+        files = []
+        dirs = []
+        for item in full_path.iterdir():
+            if item.is_file():
+                files.append({"name": item.name, "size": item.stat().st_size})
+            elif item.is_dir():
+                dirs.append(item.name)
+
+        return {
+            "status": "success",
+            "path": str(full_path),
+            "files": files,
+            "directories": dirs
+        }
+
+    async def _mkdir(self, path: str) -> dict:
+        """创建目录"""
+        full_path = self._resolve_path(path)
+        full_path.mkdir(parents=True, exist_ok=True)
+        return {
+            "status": "success",
+            "message": f"目录已创建: {path}",
+            "path": str(full_path)
+        }
+
+    async def _file_exists(self, path: str) -> dict:
+        """检查文件是否存在"""
+        full_path = self._resolve_path(path)
+        return {
+            "status": "success",
+            "exists": full_path.exists(),
+            "is_file": full_path.is_file() if full_path.exists() else None,
+            "is_dir": full_path.is_dir() if full_path.exists() else None
+        }
+
+
 class ToolRunnerStrategy(TaskStrategy):
     """工具运行策略 - 运行 MCP 工具"""
 
@@ -143,12 +322,14 @@ class ToolRunnerStrategy(TaskStrategy):
 class TaskExecutor:
     """任务执行器 - 根据任务类型选择策略"""
 
-    def __init__(self):
+    def __init__(self, work_folder: Optional[str] = None):
+        self.file_strategy = FileOperationStrategy(work_folder)
         self.strategies: dict[str, TaskStrategy] = {
             "browser": BrowserAutomationStrategy(),
             "desktop": DesktopControlStrategy(),
             "api": APICallStrategy(),
             "tool": ToolRunnerStrategy(),
+            "file": self.file_strategy,
         }
         logger.info("TaskExecutor initialized with strategies: "
                    f"{list(self.strategies.keys())}")
@@ -161,7 +342,7 @@ class TaskExecutor:
 
     async def execute_step(self, step: Step) -> Any:
         """执行单个步骤"""
-        strategy = self.get_strategy(step.tool.split(".")[0] if "." in step.tool else "tool")
+        strategy = self.get_strategy(step.tool)
         return await strategy.execute(step)
 
 

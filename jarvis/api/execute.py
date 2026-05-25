@@ -61,3 +61,35 @@ async def execute_step(step: dict):
     except Exception as e:
         logger.error(f"Step execution error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class FileRequest(BaseModel):
+    """文件操作请求模型"""
+    action: str  # read, write, edit, delete, list, mkdir, exists, set_work_folder, get_work_folder
+    path: Optional[str] = None
+    content: Optional[str] = None
+    old_content: Optional[str] = None
+    new_content: Optional[str] = None
+    folder: Optional[str] = None
+
+
+@router.post("/file")
+async def file_operation(request: FileRequest):
+    """文件操作"""
+    try:
+        step = Step(
+            tool="file",
+            params={
+                "action": request.action,
+                "path": request.path,
+                "content": request.content,
+                "old_content": request.old_content,
+                "new_content": request.new_content,
+                "folder": request.folder,
+            }
+        )
+        result = await mediator.task_engine.executor.execute_step(step)
+        return result
+    except Exception as e:
+        logger.error(f"File operation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
