@@ -51,9 +51,9 @@ class OllamaClient(AIClient):
         model: Optional[str] = None,
         vision_model: Optional[str] = None
     ):
-        self.base_url = base_url or settings.ollama_base_url
-        self.model = model or settings.ollama_model
-        self.vision_model = vision_model or settings.ollama_vision_model
+        self.base_url = base_url or settings.ai.ollama.base_url
+        self.model = model or settings.ai.ollama.model
+        self.vision_model = vision_model or settings.ai.ollama.vision_model
         self._client: Optional[httpx.AsyncClient] = None
 
     @property

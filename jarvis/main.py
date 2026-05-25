@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from jarvis.config import settings
+from jarvis.config import settings, config_manager
 from jarvis.api.routes import api_router
 from jarvis.utils.logger import get_logger
 
@@ -20,16 +20,16 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     description="贾维斯智能助手系统",
-    debug=settings.debug,
+    debug=settings.server.debug,
 )
 
-# 配置 CORS
+# 配置 CORS - 使用新的 CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8529", "http://127.0.0.1:8529"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors.allow_origins,
+    allow_credentials=settings.cors.allow_credentials,
+    allow_methods=settings.cors.allow_methods,
+    allow_headers=settings.cors.allow_headers,
 )
 
 # 注册 API 路由
@@ -63,8 +63,23 @@ async def api_info():
             "GET  /api/memory - 记忆检索",
             "POST /api/memory - 保存记忆",
             "POST /api/execute - 任务执行",
+            "GET  /api/config - 系统配置",
+            "PUT  /api/config - 更新配置",
         ]
     }
+
+
+@app.get("/api/config")
+async def get_config():
+    """获取系统配置（隐藏敏感信息）"""
+    return config_manager.to_dict()
+
+
+@app.put("/api/config")
+async def update_config(key: str, value):
+    """更新配置项"""
+    config_manager.update(key, value)
+    return {"success": True, "key": key, "value": value}
 
 
 # WebSocket 端点
@@ -99,9 +114,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def startup_event():
     """应用启动"""
     logger.info(f"{settings.app_name} v{settings.app_version} starting...")
-    settings.memory_dir.mkdir(parents=True, exist_ok=True)
-    settings.lance_db_path.mkdir(parents=True, exist_ok=True)
-    settings.logs_dir.mkdir(parents=True, exist_ok=True)
+    settings.storage.ensure_directories()
     logger.info("Directories initialized")
 
 
@@ -118,7 +131,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "jarvis.main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=settings.debug,
+        host=config_manager.get("server.host"),
+        port=config_manager.get("server.port"),
+        reload=config_manager.get("server.reload"),
     )

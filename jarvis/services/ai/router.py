@@ -14,6 +14,7 @@ from jarvis.services.ai.exceptions import (
     ModelNotSupportedError,
 )
 from jarvis.utils.logger import get_logger
+from jarvis.config import settings
 
 logger = get_logger(__name__)
 
@@ -21,8 +22,9 @@ logger = get_logger(__name__)
 class AIRouter:
     """Routes AI requests with automatic failover"""
 
-    def __init__(self, config: AIConfig):
-        self.config = config
+    def __init__(self, config: Optional[AIConfig] = None):
+        # Use provided config or create from settings
+        self.config = config or create_ai_config_from_settings(settings)
         self._client_cache: dict[str, AIClient] = {}
 
     def _get_client(self, provider: str, model: str) -> AIClient:

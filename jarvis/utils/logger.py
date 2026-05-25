@@ -4,7 +4,6 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional
-from jarvis.config import settings
 
 
 class JarvisLogger:
@@ -12,6 +11,15 @@ class JarvisLogger:
 
     _loggers: dict[str, logging.Logger] = {}
     _initialized: bool = False
+    _settings = None
+
+    @classmethod
+    def _get_settings(cls):
+        """延迟导入 settings 避免循环"""
+        if cls._settings is None:
+            from jarvis.config import settings
+            cls._settings = settings
+        return cls._settings
 
     @classmethod
     def init_logger(cls, name: str) -> logging.Logger:
@@ -20,7 +28,19 @@ class JarvisLogger:
             return cls._loggers[name]
 
         logger = logging.getLogger(name)
-        logger.setLevel(getattr(logging, settings.log_level.upper()))
+        s = cls._get_settings()
+        log_level = getattr(logging, s.log_level.upper()) if s else logging.INFO
+
+        # 处理嵌套配置
+        if s:
+            try:
+                logs_dir = s.storage.logs_dir if hasattr(s, 'storage') and s.storage else None
+            except Exception:
+                logs_dir = None
+        else:
+            logs_dir = None
+
+        logger.setLevel(log_level)
 
         # 避免重复添加 handler
         if logger.handlers:
@@ -32,17 +52,23 @@ class JarvisLogger:
         console_handler.setLevel(logging.DEBUG)
 
         # 文件 Handler
-        log_file = settings.logs_dir / f"{name}.log"
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(logging.DEBUG)
+        if logs_dir:
+            log_file = logs_dir / f"{name}.log"
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setLevel(logging.DEBUG)
+        else:
+            file_handler = None
 
         # 格式化
-        formatter = logging.Formatter(settings.log_format)
+        formatter = logging.Formatter(
+            s.log_format if s and hasattr(s, 'log_format') else "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
         console_handler.setFormatter(formatter)
-        file_handler.setFormatter(formatter)
 
         logger.addHandler(console_handler)
-        logger.addHandler(file_handler)
+        if file_handler:
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
 
         cls._loggers[name] = logger
         return logger

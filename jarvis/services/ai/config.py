@@ -1,7 +1,8 @@
 # jarvis/services/ai/config.py
 """AI Configuration for Multi-Provider Support"""
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+from jarvis.config import OllamaConfig, OpenAIConfig, AnthropicConfig
 from jarvis.services.ai.models import MODELS, Provider
 
 
@@ -15,20 +16,28 @@ class ProviderConfig:
     timeout: float = 60.0
     max_retries: int = 3
 
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "base_url": self.base_url,
+            "default_model": self.default_model,
+            "timeout": self.timeout,
+            "max_retries": self.max_retries,
+            "has_api_key": bool(self.api_key)
+        }
+
 
 @dataclass
 class AIConfig:
-    """Global AI configuration"""
+    """Global AI configuration - 从 jarvis.config 导入"""
     default_provider: str = "ollama"
     default_model: str = "qwen3:4b"
 
     # Provider-specific configs
-    ollama: ProviderConfig = field(
-        default_factory=lambda: ProviderConfig(
-            base_url="http://localhost:11434",
-            default_model="qwen3:4b"
-        )
-    )
+    ollama: ProviderConfig = field(default_factory=lambda: ProviderConfig(
+        base_url="http://localhost:11434",
+        default_model="qwen3:4b"
+    ))
     openai: ProviderConfig = field(default_factory=ProviderConfig)
     anthropic: ProviderConfig = field(default_factory=ProviderConfig)
 
@@ -57,3 +66,56 @@ class AIConfig:
         if provider:
             return provider
         return self.default_provider
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Export config as dict"""
+        return {
+            "default_provider": self.default_provider,
+            "default_model": self.default_model,
+            "enable_fallback": self.enable_fallback,
+            "fallback_chain": self.fallback_chain,
+            "providers": {
+                "ollama": self.ollama.to_dict(),
+                "openai": self.openai.to_dict(),
+                "anthropic": self.anthropic.to_dict(),
+            }
+        }
+
+
+def create_ai_config_from_settings(settings) -> AIConfig:
+    """从全局 settings 创建 AIConfig"""
+    config = AIConfig()
+
+    # Ollama
+    config.ollama = ProviderConfig(
+        enabled=True,
+        base_url=settings.ai.ollama.base_url,
+        default_model=settings.ai.ollama.model,
+        timeout=settings.ai.ollama.timeout,
+        max_retries=settings.ai.ollama.max_retries,
+    )
+
+    # OpenAI
+    config.openai = ProviderConfig(
+        enabled=bool(settings.ai.openai.api_key),
+        base_url=settings.ai.openai.base_url,
+        api_key=settings.ai.openai.api_key,
+        default_model=settings.ai.openai.model,
+        timeout=settings.ai.openai.timeout,
+    )
+
+    # Anthropic
+    config.anthropic = ProviderConfig(
+        enabled=bool(settings.ai.anthropic.api_key),
+        base_url=settings.ai.anthropic.base_url,
+        api_key=settings.ai.anthropic.api_key,
+        default_model=settings.ai.anthropic.model,
+        timeout=settings.ai.anthropic.timeout,
+    )
+
+    config.default_provider = settings.ai.default_provider
+    config.default_model = settings.ai.default_model
+    config.enable_fallback = settings.ai.enable_fallback
+    config.fallback_chain = settings.ai.fallback_chain
+
+    return config

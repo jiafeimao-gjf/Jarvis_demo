@@ -42,7 +42,7 @@ class SQLiteMemoryRepository(MemoryRepository):
     """基于 SQLite 的结构化记忆仓储"""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or settings.sqlite_db_path
+        self.db_path = db_path or settings.storage.sqlite_db_path
         self._init_table()
 
     def _init_table(self):
@@ -232,7 +232,7 @@ class LanceDBMemoryRepository(MemoryRepository):
     """基于 LanceDB 的向量记忆仓储"""
 
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or settings.lance_db_path
+        self.db_path = db_path or settings.storage.lance_db_path
         self._client = None
         self._table = None
         self._init_db()
