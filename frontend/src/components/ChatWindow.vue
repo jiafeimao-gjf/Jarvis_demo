@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useApi } from '@/composables/useApi'
 import ChatMessage from './ChatMessage.vue'
@@ -9,6 +9,25 @@ const api = useApi()
 const inputValue = ref('')
 const isLoading = ref(false)
 const currentResponse = ref('')
+const messagesContainer = ref<HTMLElement | null>(null)
+const showScrollBtn = ref(false)
+const isAtBottom = ref(true)
+
+function handleScroll() {
+  if (!messagesContainer.value) return
+  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
+  const threshold = 100
+  isAtBottom.value = scrollHeight - scrollTop - clientHeight < threshold
+  showScrollBtn.value = !isAtBottom.value
+}
+
+function scrollToBottom(smooth = true) {
+  if (!messagesContainer.value) return
+  messagesContainer.value.scrollTo({
+    top: messagesContainer.value.scrollHeight,
+    behavior: smooth ? 'smooth' : 'auto'
+  })
+}
 
 async function handleSend() {
   const text = inputValue.value.trim()
@@ -37,6 +56,10 @@ async function handleSend() {
       () => {
         // Done
         isLoading.value = false
+        // Auto-scroll to bottom when done (only if was at bottom)
+        if (isAtBottom.value) {
+          nextTick(() => scrollToBottom(false))
+        }
       }
     )
   } catch (e) {
@@ -56,18 +79,25 @@ watch(
   () => chatStore.messages.length,
   () => {
     nextTick(() => {
-      const container = document.querySelector('.chat-messages')
-      if (container) {
-        container.scrollTop = container.scrollHeight
+      if (isAtBottom.value) {
+        scrollToBottom(false)
       }
     })
   }
 )
+
+onMounted(() => {
+  scrollToBottom(false)
+})
 </script>
 
 <template>
-  <div class="flex flex-col h-full">
-    <div class="chat-messages flex-1 overflow-y-auto p-6 space-y-4">
+  <div class="flex flex-col h-full relative">
+    <div
+      ref="messagesContainer"
+      class="chat-messages flex-1 overflow-y-auto p-6 space-y-4"
+      @scroll="handleScroll"
+    >
       <div v-if="chatStore.messages.length === 0" class="flex items-center justify-center h-full">
         <div class="text-center text-muted-foreground">
           <p class="text-lg mb-2">你好，我是贾维斯</p>
@@ -90,6 +120,18 @@ watch(
         <span class="text-sm text-muted-foreground">贾维斯正在思考...</span>
       </div>
     </div>
+
+    <!-- 滚动到底部按钮 -->
+    <button
+      v-show="showScrollBtn"
+      class="absolute right-6 bottom-24 w-10 h-10 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center opacity-90 hover:opacity-100 transition-opacity"
+      @click="scrollToBottom()"
+      title="滚动到底部"
+    >
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12l7 7 7-7"/>
+      </svg>
+    </button>
 
     <div class="p-4 border-t border-border">
       <div class="flex gap-3">
