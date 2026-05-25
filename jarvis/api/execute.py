@@ -89,6 +89,11 @@ async def file_operation(request: FileRequest):
             }
         )
         result = await mediator.task_engine.executor.execute_step(step)
+
+        # 如果是设置工作文件夹，同步到 chat_engine
+        if request.action == "set_work_folder" and request.folder:
+            mediator.chat_engine.set_work_folder(request.folder)
+
         return result
     except Exception as e:
         logger.error(f"File operation error: {e}")

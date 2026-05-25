@@ -1,5 +1,6 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
+from pathlib import Path
 from typing import Optional
 from jarvis.core.entities import Message, Conversation
 from jarvis.core.memory_store import memory_store
@@ -25,15 +26,45 @@ class ChatEngine:
         self.router = AIRouter(self.ai_config)
         self.memory = memory_store
         self.current_conversation: Optional[Conversation] = None
-        self.system_prompt = """你叫贾维斯（JARVIS），是一个智能助手。
-你有以下能力：
-- 语音对话和文字对话
-- 视觉理解（看图分析）
-- 任务自动化执行
-- 个人记忆管理
-- 系统控制和自动化
+        self.work_folder: str = str(Path.cwd())
 
-请用中文回答，保持简洁、专业且有帮助。"""
+        # 工具列表定义
+        self.available_tools = """## 可用工具
+
+### 1. 文件操作 (tool: file)
+执行文件读写编辑删除等操作。
+
+| 操作 | 参数 | 说明 |
+|------|------|------|
+| read | path | 读取文件内容 |
+| write | path, content | 写入文件 |
+| edit | path, old_content, new_content | 修改文件 |
+| delete | path | 删除文件/目录 |
+| list | path | 列出目录文件 |
+| mkdir | path | 创建目录 |
+| exists | path | 检查文件是否存在 |
+| set_work_folder | folder | 设置工作目录 |
+| get_work_folder | - | 获取当前工作目录 |
+
+### 2. 浏览器自动化 (tool: browser)
+使用 Playwright 执行浏览器操作。
+
+### 3. 桌面控制 (tool: desktop)
+使用 pyautogui 执行桌面自动化操作。
+
+### 4. API 调用 (tool: api)
+发送 HTTP 请求。
+
+调用示例：
+```
+POST /api/execute/file
+{"action": "read", "path": "file.txt"}
+```
+
+## 工作目录
+当前工作目录: {work_folder}
+
+请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请明确说明将使用哪个工具。"""
 
     async def chat(
         self,
@@ -71,7 +102,7 @@ class ChatEngine:
 
         # 4. 构建消息历史
         messages = [
-            {"role": "system", "content": self.system_prompt + context_prompt}
+            {"role": "system", "content": self.system_prompt.format(work_folder=self.work_folder) + context_prompt}
         ]
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
@@ -109,7 +140,7 @@ class ChatEngine:
     ):
         """流式对话"""
         messages = [
-            {"role": "system", "content": self.system_prompt}
+            {"role": "system", "content": self.system_prompt.format(work_folder=self.work_folder)}
         ]
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
@@ -123,6 +154,11 @@ class ChatEngine:
 
         async for token in self.router.chat_stream(messages, model=model):
             yield token
+
+    def set_work_folder(self, folder: str):
+        """设置工作目录"""
+        self.work_folder = folder
+        logger.info(f"Work folder set to: {folder}")
 
     async def list_models(self) -> list[dict]:
         """List available models from all providers"""
