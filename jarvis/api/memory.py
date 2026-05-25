@@ -79,3 +79,25 @@ async def save_conversation(conversation_id: str, user_id: str, messages: list, 
     except Exception as e:
         logger.error(f"Save conversation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations")
+async def list_conversations(limit: int = Query(50, description="返回数量")):
+    """列出所有对话"""
+    try:
+        conversations = await mediator.memory_store.list_conversations(limit)
+        return {"conversations": conversations, "count": len(conversations)}
+    except Exception as e:
+        logger.error(f"List conversations error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/conversation/{conversation_id}")
+async def delete_conversation(conversation_id: str):
+    """删除对话"""
+    try:
+        success = await mediator.memory_store.delete_conversation(conversation_id)
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"Delete conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

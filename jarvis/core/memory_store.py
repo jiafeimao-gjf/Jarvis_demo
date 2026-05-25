@@ -182,6 +182,41 @@ class SQLiteMemoryRepository(MemoryRepository):
             logger.error(f"Failed to get conversation: {e}")
             return None
 
+    async def list_conversations(self, limit: int = 50) -> list[dict]:
+        """列出所有对话（简要信息）"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """SELECT conversation_id, user_id, messages, context, created_at, updated_at
+                       FROM conversations ORDER BY updated_at DESC LIMIT ?""",
+                    (limit,)
+                )
+                rows = cursor.fetchall()
+                return [
+                    {
+                        "conversation_id": row["conversation_id"],
+                        "user_id": row["user_id"],
+                        "message_count": len(json.loads(row["messages"])),
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"]
+                    }
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.error(f"Failed to list conversations: {e}")
+            return []
+
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        """删除对话"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete conversation: {e}")
+            return False
+
 
 # 简单向量嵌入实现（可替换为 proper embedding model）
 async def simple_embed(text: str) -> list[float]:
@@ -330,6 +365,14 @@ class MemoryStore:
     async def get_conversation(self, conversation_id: str) -> Optional[dict]:
         """获取对话历史"""
         return await self.sqlite_repo.get_conversation(conversation_id)
+
+    async def list_conversations(self, limit: int = 50) -> list[dict]:
+        """列出所有对话"""
+        return await self.sqlite_repo.list_conversations(limit)
+
+    async def delete_conversation(self, conversation_id: str) -> bool:
+        """删除对话"""
+        return await self.sqlite_repo.delete_conversation(conversation_id)
 
 
 # 全局单例

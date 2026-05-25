@@ -21,14 +21,7 @@ function selectConversation(id: string) {
 
 function deleteConversation(id: string, event: Event) {
   event.stopPropagation()
-  const index = chatStore.conversations.findIndex(c => c.id === id)
-  if (index > -1) {
-    chatStore.conversations.splice(index, 1)
-    if (chatStore.currentConversationId === id) {
-      const remaining = chatStore.conversations[0]
-      chatStore.selectConversation(remaining?.id || '')
-    }
-  }
+  chatStore.deleteConversation(id)
 }
 
 function toggleTheme() {
