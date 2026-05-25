@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
+import Notification from './Notification.vue'
 
 const hardware = useHardwareStore()
 const speech = useSpeechRecognition()
@@ -83,6 +84,8 @@ function openSettings() {
         />
         摄像头
       </div>
+
+      <Notification />
 
       <button
         class="p-2 hover:bg-accent rounded-lg transition-colors"

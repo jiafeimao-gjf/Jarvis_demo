@@ -137,7 +137,11 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
     finally:
         ws_notifier.remove_connection(websocket)
-        await websocket.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            # WebSocket already closed
+            pass
 
 
 # 启动事件
