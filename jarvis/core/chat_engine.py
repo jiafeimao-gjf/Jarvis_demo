@@ -143,21 +143,48 @@ POST /api/execute/file
         model: Optional[str] = None
     ):
         """流式对话"""
-        messages = [
-            {"role": "system", "content": self._build_system_prompt()}
-        ]
+        # 获取或创建对话
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
             if conv_data:
-                messages.extend([
-                    {"role": m["role"], "content": m["content"]}
-                    for m in conv_data.get("messages", [])[-10:]
-                ])
+                self.current_conversation = Conversation(
+                    conversation_id=conversation_id,
+                    user_id=conv_data.get("user_id", ""),
+                    messages=[Message(**m) for m in conv_data.get("messages", [])],
+                    context=conv_data.get("context", {})
+                )
+            else:
+                self.current_conversation = Conversation(conversation_id=conversation_id)
+        else:
+            self.current_conversation = Conversation()
+
+        # 添加用户消息
+        self.current_conversation.add_message("user", user_input)
+
+        messages = [
+            {"role": "system", "content": self._build_system_prompt()}
+        ]
+        if self.current_conversation.messages:
+            messages.extend([
+                {"role": m.role, "content": m.content}
+                for m in self.current_conversation.get_history(limit=10)
+            ])
 
         messages.append({"role": "user", "content": user_input})
 
+        full_response = ""
         async for token in self.router.chat_stream(messages, model=model):
+            full_response += token
             yield token
+
+        # 保存助手消息和对话历史
+        self.current_conversation.add_message("assistant", full_response)
+        await self.memory.save_conversation(
+            self.current_conversation.conversation_id,
+            self.current_conversation.user_id,
+            [msg.to_dict() for msg in self.current_conversation.messages],
+            self.current_conversation.context
+        )
 
     def set_work_folder(self, folder: str):
         """设置工作目录"""

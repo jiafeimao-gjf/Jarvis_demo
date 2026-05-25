@@ -98,5 +98,6 @@ async def chat_stream(request: ChatRequest):
                 "event": "error",
                 "data": json.dumps({"type": "error", "content": str(e)})
             }
+            return  # Stop streaming after error
 
     return EventSourceResponse(event_generator())

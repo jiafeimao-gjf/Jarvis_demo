@@ -164,6 +164,8 @@ async def shutdown_event():
     logger.info("Shutting down...")
     from jarvis.services.ollama_client import ollama_client
     await ollama_client.close()
+    from jarvis.core.mediator import mediator
+    await mediator.chat_engine.router.close()
     logger.info("Shutdown complete")
 
 

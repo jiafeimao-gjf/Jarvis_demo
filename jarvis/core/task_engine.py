@@ -138,11 +138,17 @@ class FileOperationStrategy(TaskStrategy):
         self.work_folder = work_folder or str(Path.cwd())
 
     def _resolve_path(self, path: str) -> Path:
-        """解析文件路径，支持相对路径和绝对路径"""
-        p = Path(path)
-        if p.is_absolute():
-            return p
-        return Path(self.work_folder) / path
+        """解析文件路径，支持相对路径和绝对路径，防止路径穿越"""
+        work = Path(self.work_folder).resolve()
+        p = Path(path).resolve()
+
+        # 路径穿越检测：确保解析后的路径在 work_folder 内
+        try:
+            p.relative_to(work)
+        except ValueError:
+            raise PermissionError(f"路径穿越禁止: {path} 不在工作目录内")
+
+        return p
 
     async def execute(self, step: Step) -> Any:
         """执行文件操作"""

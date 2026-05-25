@@ -130,13 +130,17 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // Select conversation
+  let previousConversationId: string | null = null
   function selectConversation(id: string) {
-    currentConversationId.value = id
-    // Sync previous conversation
-    const prevConv = conversations.value.find(c => c.id !== id)
-    if (prevConv) {
-      syncToBackend(prevConv)
+    // Sync previous conversation before switching
+    if (previousConversationId && previousConversationId !== id) {
+      const prevConv = conversations.value.find(c => c.id === previousConversationId)
+      if (prevConv) {
+        syncToBackend(prevConv)
+      }
     }
+    previousConversationId = currentConversationId.value
+    currentConversationId.value = id
   }
 
   // Add message

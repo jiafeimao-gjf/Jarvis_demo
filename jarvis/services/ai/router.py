@@ -236,3 +236,13 @@ class AIRouter:
         """Clear client cache"""
         self._client_cache.clear()
         logger.info("AI router client cache cleared")
+
+    async def close(self):
+        """Close all client connections"""
+        for client in self._client_cache.values():
+            try:
+                await client.close()
+            except Exception as e:
+                logger.warning(f"Failed to close client: {e}")
+        self._client_cache.clear()
+        logger.info("AI router all clients closed")
