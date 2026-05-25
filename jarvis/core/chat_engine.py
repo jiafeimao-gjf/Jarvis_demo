@@ -66,6 +66,10 @@ POST /api/execute/file
 
 请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请明确说明将使用哪个工具。"""
 
+    def _build_system_prompt(self) -> str:
+        """构建系统提示词"""
+        return self.available_tools.replace("{work_folder}", self.work_folder)
+
     async def chat(
         self,
         user_input: str,
@@ -102,7 +106,7 @@ POST /api/execute/file
 
         # 4. 构建消息历史
         messages = [
-            {"role": "system", "content": self.system_prompt.format(work_folder=self.work_folder) + context_prompt}
+            {"role": "system", "content": self._build_system_prompt() + context_prompt}
         ]
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
@@ -140,7 +144,7 @@ POST /api/execute/file
     ):
         """流式对话"""
         messages = [
-            {"role": "system", "content": self.system_prompt.format(work_folder=self.work_folder)}
+            {"role": "system", "content": self._build_system_prompt()}
         ]
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
