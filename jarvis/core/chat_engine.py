@@ -3,7 +3,9 @@
 from typing import Optional
 from jarvis.core.entities import Message, Conversation
 from jarvis.core.memory_store import memory_store
-from jarvis.services.ollama_client import ollama_client
+from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
+from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
+from jarvis.services.ai.models import Provider
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -13,7 +15,14 @@ class ChatEngine:
     """对话引擎 - 管理对话上下文和 LLM 调用"""
 
     def __init__(self):
-        self.ollama = ollama_client
+        # Register providers
+        ProviderRegistry.register(Provider.OLLAMA, OllamaAdapter)
+        ProviderRegistry.register(Provider.OPENAI, OpenAIAdapter)
+        ProviderRegistry.register(Provider.ANTHROPIC, AnthropicAdapter)
+
+        # Initialize AI config
+        self.ai_config = AIConfig()
+        self.router = AIRouter(self.ai_config)
         self.memory = memory_store
         self.current_conversation: Optional[Conversation] = None
         self.system_prompt = """你叫贾维斯（JARVIS），是一个智能助手。
@@ -30,7 +39,8 @@ class ChatEngine:
         self,
         user_input: str,
         conversation_id: Optional[str] = None,
-        stream: bool = True
+        model: Optional[str] = None,
+        stream: bool = False  # Default to non-stream for simpler response
     ) -> str:
         """处理对话"""
         # 1. 获取或创建对话上下文
@@ -66,8 +76,12 @@ class ChatEngine:
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
 
-        # 5. 调用 LLM (非流式)
-        response = await self.ollama.chat(messages, stream=False)
+        # 5. 调用 LLM
+        response = await self.router.chat(
+            messages,
+            model=model,
+            stream=False
+        )
 
         # 6. 添加助手消息
         self.current_conversation.add_message("assistant", response.content)
@@ -90,7 +104,8 @@ class ChatEngine:
     async def stream_chat(
         self,
         user_input: str,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        model: Optional[str] = None
     ):
         """流式对话"""
         messages = [
@@ -106,7 +121,7 @@ class ChatEngine:
 
         messages.append({"role": "user", "content": user_input})
 
-        async for token in self.ollama.chat_stream(messages):
+        async for token in self.router.chat_stream(messages, model=model):
             yield token
 
     def to_dict(self) -> dict:

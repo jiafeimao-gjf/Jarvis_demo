@@ -84,11 +84,12 @@ class JarvisMediator:
         """处理文字对话"""
         text = event.payload.get("text")
         conversation_id = event.payload.get("conversation_id")
+        model = event.payload.get("model")
 
         if not text:
             return {"error": "No text provided"}
 
-        response = await self.chat_engine.chat(text, conversation_id)
+        response = await self.chat_engine.chat(text, conversation_id, model)
         return {
             "text": text,
             "response": response,
@@ -120,12 +121,17 @@ class JarvisMediator:
             "result": task.result
         }
 
-    async def process_chat(self, text: str, conversation_id: Optional[str] = None) -> dict:
+    async def process_chat(
+        self,
+        text: str,
+        conversation_id: Optional[str] = None,
+        model: Optional[str] = None
+    ) -> dict:
         """便捷方法：处理对话"""
         event = JarvisEvent(
             event_id="",
             event_type=JarvisEventType.CHAT_MESSAGE,
-            payload={"text": text, "conversation_id": conversation_id},
+            payload={"text": text, "conversation_id": conversation_id, "model": model},
             metadata={}
         )
         return await self._handle_chat_message(event)
