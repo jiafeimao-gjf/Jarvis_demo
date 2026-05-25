@@ -1,0 +1,303 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { useApi } from '@/composables/useApi'
+
+const api = useApi()
+
+interface Config {
+  app_name: string
+  app_version: string
+  server: { host: string; port: number; debug: boolean; reload: boolean }
+  ai: {
+    default_provider: string
+    default_model: string
+    enable_fallback: boolean
+    fallback_chain: string[]
+    providers: {
+      ollama: { base_url: string; model: string; vision_model: string }
+      openai: { has_api_key: boolean }
+      anthropic: { has_api_key: boolean }
+    }
+  }
+  hardware: Record<string, number>
+  storage: { memory_dir: string; logs_dir: string }
+  log_level: string
+}
+
+const config = ref<Config | null>(null)
+const isLoading = ref(false)
+const isSaving = ref(false)
+const message = ref('')
+
+// Editable form
+const form = ref({
+  server_port: 9529,
+  ai_default_provider: 'ollama',
+  ai_default_model: 'qwen3:4b',
+  ai_enable_fallback: true,
+  ollama_base_url: '',
+  ollama_model: '',
+})
+
+onMounted(async () => {
+  await loadConfig()
+})
+
+async function loadConfig() {
+  isLoading.value = true
+  try {
+    const res = await fetch('/api/config')
+    if (res.ok) {
+      config.value = await res.json()
+      applyToForm()
+    }
+  } catch (e) {
+    showMessage('加载配置失败', 'error')
+  } finally {
+    isLoading.value = false
+  }
+}
+
+function applyToForm() {
+  if (!config.value) return
+  form.value.server_port = config.value.server.port
+  form.value.ai_default_provider = config.value.ai.default_provider
+  form.value.ai_default_model = config.value.ai.default_model
+  form.value.ai_enable_fallback = config.value.ai.enable_fallback
+  form.value.ollama_base_url = config.value.ai.providers.ollama?.base_url || ''
+  form.value.ollama_model = config.value.ai.providers.ollama?.model || ''
+}
+
+async function saveConfig() {
+  isSaving.value = true
+  message.value = ''
+
+  try {
+    // Update server port
+    await fetch('/api/config?key=server.port&value=' + form.value.server_port, {
+      method: 'PUT'
+    })
+
+    // Update AI defaults
+    await fetch('/api/config?key=ai.default_provider&value=' + form.value.ai_default_provider, {
+      method: 'PUT'
+    })
+
+    await fetch('/api/config?key=ai.default_model&value=' + form.value.ai_default_model, {
+      method: 'PUT'
+    })
+
+    await fetch('/api/config?key=ai.enable_fallback&value=' + form.value.ai_enable_fallback, {
+      method: 'PUT'
+    })
+
+    showMessage('配置已保存，重启服务后生效', 'success')
+  } catch (e) {
+    showMessage('保存配置失败', 'error')
+  } finally {
+    isSaving.value = false
+  }
+}
+
+function showMessage(msg: string, type: 'success' | 'error') {
+  message.value = msg
+  setTimeout(() => { message.value = '' }, 3000)
+}
+</script>
+
+<template>
+  <div class="settings-page p-6 max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-6">系统设置</h1>
+
+    <div v-if="isLoading" class="text-center py-8">
+      <div class="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
+    </div>
+
+    <div v-else-if="config" class="space-y-6">
+      <!-- 服务器配置 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">服务器配置</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm mb-1">端口</label>
+            <input
+              v-model="form.server_port"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">日志级别</label>
+            <select class="w-full bg-background rounded px-3 py-2 border border-border">
+              <option value="DEBUG">DEBUG</option>
+              <option value="INFO">INFO</option>
+              <option value="WARNING">WARNING</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI 配置 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">AI 配置</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm mb-1">默认 Provider</label>
+            <select
+              v-model="form.ai_default_provider"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            >
+              <option value="ollama">Ollama (本地)</option>
+              <option value="openai">OpenAI (云)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">默认模型</label>
+            <input
+              v-model="form.ai_default_model"
+              type="text"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+              placeholder="qwen3:4b"
+            />
+          </div>
+
+          <div class="flex items-center gap-2">
+            <input
+              v-model="form.ai_enable_fallback"
+              type="checkbox"
+              id="fallback"
+              class="w-4 h-4"
+            />
+            <label for="fallback">启用故障自动转移</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ollama 配置 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">Ollama 配置</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm mb-1">服务器地址</label>
+            <input
+              v-model="form.ollama_base_url"
+              type="text"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+              placeholder="http://localhost:11434"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">默认模型</label>
+            <input
+              v-model="form.ollama_model"
+              type="text"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+              placeholder="qwen3:4b"
+            />
+          </div>
+        </div>
+
+        <div class="mt-4 text-sm text-muted-foreground">
+          可用模型: qwen3:4b, qwen3:8b, qwen3-vl:4b, llama3:8b, gpt-4o-mini, claude-3-haiku
+        </div>
+      </section>
+
+      <!-- 硬件配置 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">硬件配置</h2>
+
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm mb-1">摄像头 ID</label>
+            <input
+              v-model="config.hardware.camera_device_id"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">分辨率宽度</label>
+            <input
+              v-model="config.hardware.camera_width"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">分辨率高度</label>
+            <input
+              v-model="config.hardware.camera_height"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">帧率</label>
+            <input
+              v-model="config.hardware.camera_fps"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">采样率</label>
+            <input
+              v-model="config.hardware.microphone_sample_rate"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">声道数</label>
+            <input
+              v-model="config.hardware.audio_channels"
+              type="number"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+            />
+          </div>
+        </div>
+      </section>
+
+      <!-- 存储路径 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">存储配置</h2>
+        <div class="space-y-2 text-sm text-muted-foreground">
+          <div>记忆目录: {{ config.storage.memory_dir }}</div>
+          <div>日志目录: {{ config.storage.logs_dir }}</div>
+        </div>
+      </section>
+
+      <!-- 消息 -->
+      <div
+        v-if="message"
+        :class="['px-4 py-2 rounded-lg text-sm', message.includes('失败') ? 'bg-destructive/20 text-destructive' : 'bg-green-500/20 text-green-500']"
+      >
+        {{ message }}
+      </div>
+
+      <!-- 保存按钮 -->
+      <div class="flex justify-end gap-4">
+        <button
+          class="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+          :disabled="isSaving"
+          @click="saveConfig"
+        >
+          {{ isSaving ? '保存中...' : '保存配置' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.settings-page {
+  background: var(--background);
+  min-height: 100vh;
+}
+</style>

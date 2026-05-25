@@ -33,8 +33,41 @@
 ### 7. Stream 响应格式
 **文件**：`jarvis/api/chat.py`
 **状态**：✅ 已修复
-- 后端添加 `chat_stream` 方法支持 SSE 流式输出
-- 前端解析 SSE 格式正确
+
+### 18. 系统配置页面
+**文件**：`frontend/src/components/Settings.vue`
+**功能**：
+- 显示服务器/AI/硬件/存储配置
+- 可编辑服务器端口、AI默认Provider/模型、Ollama配置
+- 调用 PUT /api/config 更新配置
+**状态**：✅ 已完成
+
+### 19. 配置系统重构
+**文件**：`jarvis/config.py`
+**功能**：
+- 嵌套配置结构 (ServerConfig, CORSConfig, AIConfig, HardwareConfig, StorageConfig)
+- 环境变量支持嵌套格式 (AI__OLLAMA__MODEL)
+- ConfigManager 运行时配置管理
+- GET/PUT /api/config API
+**状态**：✅ 已完成
+
+### 20. 多 Provider AI 模块
+**文件**：`jarvis/services/ai/`
+**功能**：
+- 支持 Ollama/OpenAI/Anthropic 三个 Provider
+- ProviderRegistry 注册表模式
+- AIRouter 自动故障转移
+- 模型选择支持 (model 参数)
+**状态**：✅ 已完成
+
+### 21. 对话持久化
+**文件**：`frontend/src/stores/chat.ts`
+**功能**：
+- localStorage 持久化对话列表
+- 页面刷新不丢失对话
+- 自动同步到后端 SQLite
+- 对话列表和删除功能
+**状态**：✅ 已完成
 
 ---
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
 import { useApi } from '@/composables/useApi'
 import Header from '@/components/Header.vue'
@@ -7,9 +7,11 @@ import Sidebar from '@/components/Sidebar.vue'
 import ChatWindow from '@/components/ChatWindow.vue'
 import HardwareControls from '@/components/HardwareControls.vue'
 import CameraPreview from '@/components/CameraPreview.vue'
+import Settings from '@/components/Settings.vue'
 
 const hardware = useHardwareStore()
 const api = useApi()
+const settingsOpen = ref(false)
 
 let statusInterval: ReturnType<typeof setInterval>
 
@@ -46,16 +48,25 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(statusInterval)
 })
+
+function openSettings() {
+  settingsOpen.value = true
+}
+
+function closeSettings() {
+  settingsOpen.value = false
+}
 </script>
 
 <template>
   <div class="h-screen flex flex-col bg-background">
-    <Header />
+    <Header @open-settings="openSettings" />
 
     <div class="flex flex-1 overflow-hidden">
       <Sidebar />
       <main class="flex-1 flex flex-col">
-        <ChatWindow />
+        <Settings v-if="settingsOpen" @close="closeSettings" />
+        <ChatWindow v-else />
       </main>
     </div>
 
