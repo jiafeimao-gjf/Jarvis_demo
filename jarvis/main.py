@@ -134,13 +134,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        # 忽略正常的连接关闭错误 (1001, 1000, etc.)
+        error_code = getattr(e, 'code', None)
+        if error_code in (1001, 1000, None):
+            pass  # Normal close
+        else:
+            logger.error(f"WebSocket error: {e}")
     finally:
         ws_notifier.remove_connection(websocket)
         try:
             await websocket.close()
-        except RuntimeError:
-            # WebSocket already closed
+        except Exception:
+            # WebSocket already closed or closing
             pass
 
 
