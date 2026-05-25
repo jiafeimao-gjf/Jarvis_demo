@@ -2,11 +2,13 @@
 """通知模块 - 支持日志报错通知、WebSocket实时推送"""
 import asyncio
 import json
+import threading
 from datetime import datetime
 from enum import Enum
 from typing import Callable, Optional
 from dataclasses import dataclass, asdict
 from collections import defaultdict
+from queue import Queue, Empty
 
 from jarvis.utils.logger import get_logger
 
@@ -67,7 +69,60 @@ class NotificationManager:
         self._subscribers: dict[str, list[Callable]] = defaultdict(list)
         self._history: list[Notification] = []
         self._max_history = 100
+        self._queue: Queue = Queue()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
         logger.info("NotificationManager initialized")
+
+    def _start_background_loop(self):
+        """启动后台事件循环线程"""
+        if self._thread and self._thread.is_alive():
+            return
+
+        self._running = True
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def _run_loop(self):
+        """后台事件循环"""
+        while self._running:
+            try:
+                # 处理队列中的通知（同步处理）
+                try:
+                    notification = self._queue.get(timeout=0.5)
+                    self._notify_sync(notification)
+                except Empty:
+                    continue
+                except Exception as e:
+                    logger.error(f"Notification processing error: {e}")
+            except Exception as e:
+                logger.error(f"Background loop error: {e}")
+
+    def _notify_sync(self, notification: Notification):
+        """同步通知处理（线程安全）"""
+        # 保存历史
+        self._history.append(notification)
+        if len(self._history) > self._max_history:
+            self._history.pop(0)
+
+        # 直接调用处理器（异步）
+        for handler in self._handlers:
+            try:
+                if hasattr(handler, '_sync_send'):
+                    handler._sync_send(notification)
+                elif asyncio.iscoroutinefunction(handler.send):
+                    # 如果是异步方法，在新事件循环中运行
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(handler.send(notification))
+                    finally:
+                        loop.close()
+                else:
+                    handler.send(notification)
+            except Exception as e:
+                logger.error(f"Notification handler error: {e}")
 
     def subscribe(self, event_type: str, callback: Callable):
         """订阅通知"""
@@ -111,7 +166,7 @@ class NotificationManager:
         message: str,
         metadata: Optional[dict] = None
     ) -> Notification:
-        """同步发送通知（创建后立即发送）"""
+        """发送通知（线程安全）"""
         notification = Notification(
             id=self._generate_id(),
             level=level,
@@ -121,8 +176,16 @@ class NotificationManager:
             timestamp=datetime.now().isoformat(),
             metadata=metadata
         )
-        asyncio.create_task(self.notify(notification))
+        # 确保后台循环已启动
+        self._ensure_running()
+        # 放入队列，后台线程处理
+        self._queue.put(notification)
         return notification
+
+    def _ensure_running(self):
+        """确保后台循环正在运行"""
+        if not self._thread or not self._thread.is_alive():
+            self._start_background_loop()
 
     def error(self, title: str, message: str, metadata: Optional[dict] = None) -> Notification:
         """发送错误通知"""

@@ -175,3 +175,53 @@ def _get_settings(cls):
         cls._settings = settings
     return cls._settings
 ```
+
+---
+
+## 8. 文件操作路径穿越漏洞
+
+**日期:** 2026-05-26
+
+**问题:**
+`_resolve_path()` 允许相对路径逃逸工作目录，如 `../../../etc/passwd`
+
+**解决方案:**
+使用 `Path.relative_to()` 验证路径：
+```python
+def _resolve_path(self, path: str) -> Path:
+    work = Path(self.work_folder).resolve()
+    p = Path(path).resolve()
+    try:
+        p.relative_to(work)
+    except ValueError:
+        raise PermissionError(f"路径穿越禁止: {path} 不在工作目录内")
+    return p
+```
+
+---
+
+## 9. 文件操作错误未触发日志通知
+
+**日期:** 2026-05-26
+
+**问题:**
+`FileOperationStrategy` 的 `_read_file`、`_edit_file` 等方法在文件不存在等错误时直接返回 error dict，没有调用 `logger.error()`，导致 `NotificationLogHandler` 无法捕获并发送通知。
+
+**原因:**
+- `_read_file` 返回 `{"status": "error", "message": f"文件不存在: {path}"}` 时没有先记录错误
+- `NotificationLogHandler.emit()` 只捕获 `record.levelno >= logging.ERROR` 的日志
+- 异常被 `execute()` 的 `except Exception` 捕获并记录，但业务错误（如文件不存在）是正常返回的
+
+**解决方案:**
+在返回错误响应前先调用 `logger.error()` 记录错误：
+```python
+async def _read_file(self, path: str) -> dict:
+    full_path = self._resolve_path(path)
+    if not full_path.exists():
+        logger.error(f"文件不存在: {path}")  # 添加日志
+        return {"status": "error", "message": f"文件不存在: {path}"}
+```
+
+**预防:**
+- 文件操作等策略在返回错误时，应先通过 logger 记录错误日志
+- 或在策略层检查返回值，发现 error status 时主动发送通知

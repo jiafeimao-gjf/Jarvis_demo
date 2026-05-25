@@ -193,8 +193,10 @@ class FileOperationStrategy(TaskStrategy):
         """读取文件"""
         full_path = self._resolve_path(path)
         if not full_path.exists():
+            logger.error(f"文件不存在: {path}")
             return {"status": "error", "message": f"文件不存在: {path}"}
         if not full_path.is_file():
+            logger.error(f"不是文件: {path}")
             return {"status": "error", "message": f"不是文件: {path}"}
 
         try:
@@ -238,10 +240,12 @@ class FileOperationStrategy(TaskStrategy):
         """修改文件"""
         full_path = self._resolve_path(path)
         if not full_path.exists():
+            logger.error(f"文件不存在: {path}")
             return {"status": "error", "message": f"文件不存在: {path}"}
 
         text = full_path.read_text(encoding="utf-8")
         if old_content not in text:
+            logger.error(f"未找到要替换的内容: {path}")
             return {"status": "error", "message": "未找到要替换的内容"}
 
         new_text = text.replace(old_content, new_content, 1)
@@ -257,6 +261,7 @@ class FileOperationStrategy(TaskStrategy):
         """删除文件"""
         full_path = self._resolve_path(path)
         if not full_path.exists():
+            logger.error(f"文件不存在: {path}")
             return {"status": "error", "message": f"文件不存在: {path}"}
 
         if full_path.is_file():
@@ -275,8 +280,10 @@ class FileOperationStrategy(TaskStrategy):
         """列出目录文件"""
         full_path = self._resolve_path(path) if path else Path(self.work_folder)
         if not full_path.exists():
+            logger.error(f"目录不存在: {path}")
             return {"status": "error", "message": f"目录不存在: {path}"}
         if not full_path.is_dir():
+            logger.error(f"不是目录: {path}")
             return {"status": "error", "message": f"不是目录: {path}"}
 
         files = []
