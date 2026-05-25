@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+logs/
+
+# Memory & Cache
+memory/
+lance_db/
+*.db
+
+# Frontend
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

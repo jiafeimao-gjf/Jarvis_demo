@@ -1,0 +1,89 @@
+@startuml JARVIS系统架构图
+!theme plain
+
+title 贾维斯（JARVIS）智能助手系统架构
+
+package "用户浏览器 (Chrome/Safari)" {
+  [语音输入\n(Microphone)] as mic
+  [文字输入] as text
+  [实时状态展示] as display
+  [摄像头捕获\n(WebRTC)] as camera
+}
+
+package "FastAPI 后端服务" {
+  package "API Routes" {
+    [POST /api/chat] as chat_api
+    [POST /api/voice] as voice_api
+    [POST /api/camera] as camera_api
+    [WS /ws] as ws_api
+    [WS /ws/camera] as ws_camera
+    [GET /api/memory] as mem_query
+    [POST /api/execute] as exec_api
+    [GET /api/status] as status_api
+  }
+
+  package "核心引擎" {
+    [ChatEngine\n对话管理/上下文] as chat_engine
+    [VoiceEngine\n语音处理/STT/TTS] as voice_engine
+    [TaskEngine\n任务分解/执行] as task_engine
+  }
+
+  package "核心模块" {
+    [OllamaClient\nLLM/Vision/T2I] as ollama
+    [MemoryStore\nSQLite+LanceDB] as memory
+    [ToolRunner\nMCP工具执行] as toolrunner
+  }
+
+  package "硬件服务" {
+    [HardwareBridge\n摄像头/麦克风] as hw_bridge
+    [VisionProcessor\n帧分析/场景理解] as vision_proc
+    [AudioProcessor\n音频流/降噪] as audio_proc
+  }
+}
+
+package "本地服务" {
+  [Ollama\nqwen3/qwen3-vl] as ollama_local
+  [Claude Code MCP\n浏览器自动化/桌面控制] as claude_mcp
+}
+
+package "硬件层" {
+  [麦克风] as mic_hw
+  [摄像头] as cam_hw
+  [屏幕] as screen_hw
+  [键盘/鼠标] as input_hw
+}
+
+' 浏览器到后端连接
+mic --> voice_api : 音频流
+text --> chat_api : 文字
+camera --> camera_api : 视频流
+camera --> ws_camera : 实时流
+display <-- ws_api : SSE/实时推送
+
+' API 到引擎
+chat_api --> chat_engine
+voice_api --> voice_engine
+camera_api --> vision_proc
+ws_camera --> vision_proc
+mem_query --> memory
+exec_api --> task_engine
+status_api --> hw_bridge
+
+' 引擎到核心模块
+chat_engine --> ollama
+chat_engine --> memory
+voice_engine --> ollama
+task_engine --> toolrunner
+vision_proc --> ollama
+
+' 核心模块到本地服务
+ollama --> ollama_local
+toolrunner --> claude_mcp
+
+' 硬件桥接
+hw_bridge --> mic_hw
+hw_bridge --> cam_hw
+hw_bridge --> screen_hw
+hw_bridge --> input_hw
+
+@enduml

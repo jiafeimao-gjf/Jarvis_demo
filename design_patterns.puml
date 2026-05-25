@@ -1,0 +1,100 @@
+@startuml JARVIS设计模式
+!theme plain
+
+title JARVIS 系统设计模式
+
+package "Driving Adapters（驱动适配器层）" {
+  [FastAPI Routes] as api
+  [WebSocket Handler] as ws
+  [HardwareBridge\n(摄像头/麦克风)] as hw_adapter
+}
+
+package "Input Ports（输入端口）" {
+  [ChatPort] as chat_port
+  [VoicePort] as voice_port
+  [CameraPort] as camera_port
+  [TaskPort] as task_port
+}
+
+package "Application Services（应用服务层）" {
+  [JarvisApplicationService] as app_service
+  [JarvisMediator] as mediator
+}
+
+package "Domain Core（领域核心层）" {
+  entity User
+  entity Conversation
+  entity Message
+  entity Task
+  entity JarvisEvent
+}
+
+package "Output Ports（输出端口）" {
+  [MemoryPort] as mem_port
+  [AIPort] as ai_port
+  [ToolPort] as tool_port
+}
+
+package "Infrastructure（基础设施层）" {
+  [LanceDBMemoryRepository] as lance_repo
+  [SQLiteMemoryRepository] as sqlite_repo
+  [OllamaClient] as ollama_client
+  [ClaudeClient] as claude_client
+  [ToolRunner] as tool_runner
+}
+
+package "Engine Components（引擎组件）" {
+  [ChatEngine] as chat_engine
+  [VoiceEngine] as voice_engine
+  [TaskEngine] as task_engine
+  [VisionProcessor] as vision_proc
+  [AudioProcessor] as audio_proc
+}
+
+' 驱动适配器到端口
+api --> chat_port : POST /api/chat
+api --> voice_port : POST /api/voice
+api --> camera_port : POST /api/camera
+ws --> voice_port : WebSocket
+hw_adapter --> camera_port : Camera Events
+
+' 端口到应用服务
+chat_port --> app_service
+voice_port --> app_service
+camera_port --> app_service
+task_port --> app_service
+
+' 应用服务通过中介者协调
+app_service --> mediator
+
+' 应用服务到领域对象
+app_service --> User
+app_service --> Conversation
+app_service --> Task
+
+' 中介者协调引擎
+mediator --> chat_engine
+mediator --> voice_engine
+mediator --> task_engine
+mediator --> vision_proc
+
+' 引擎到输出端口
+chat_engine --> ai_port
+chat_engine --> mem_port
+voice_engine --> ai_port
+vision_proc --> ai_port
+task_engine --> tool_port
+
+' 端口到基础设施
+mem_port --> lance_repo
+mem_port --> sqlite_repo
+ai_port --> ollama_client
+ai_port --> claude_client
+tool_port --> tool_runner
+
+' 领域事件
+User <- JarvisEvent
+Conversation <- JarvisEvent
+Task <- JarvisEvent
+
+@enduml

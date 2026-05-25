@@ -1,0 +1,28 @@
+# requirements.txt
+# 贾维斯智能助手系统依赖
+
+# Web 框架
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+sse-starlette==1.8.2
+python-multipart==0.0.9
+
+# HTTP 客户端
+httpx==0.27.0
+
+# 数据验证
+pydantic==2.8.0
+pydantic-settings==2.4.0
+
+# 数据库
+lancedb==0.8.0
+pyarrow>=14.0.0
+numpy>=1.26.0
+
+# 可选依赖（根据需要安装）
+# playwright==1.42.0   # 浏览器自动化 (需: playwright install chromium)
+# pyautogui==0.9.54    # 桌面自动化
+# pynput==1.7.7        # 键盘鼠标控制
+# bleak==0.22.0         # 蓝牙设备
+# pyserial==3.5         # 串口设备
+# pillow==10.4.0        # 图像处理
