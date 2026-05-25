@@ -114,11 +114,12 @@ class JarvisLogger:
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
 
-        # 添加日志通知处理器（只添加一次）
+        # 添加日志通知处理器到根 logger（只添加一次）
         if not cls._notification_handler_added:
+            root_logger = logging.getLogger()
             notification_handler = NotificationLogHandler()
             notification_handler.setLevel(logging.ERROR)
-            logger.addHandler(notification_handler)
+            root_logger.addHandler(notification_handler)
             cls._notification_handler_added = True
 
         cls._loggers[name] = logger
