@@ -1,15 +1,21 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
 from pathlib import Path
-from typing import Optional
-from jarvis.core.entities import Message, Conversation
+from typing import Optional, Any
+from jarvis.core.entities import Message, Conversation, Step
 from jarvis.core.memory_store import memory_store
+from jarvis.core.task_engine import TaskExecutor
+from jarvis.core.tool_parser import ToolCallParser
+from jarvis.core.tool_result_formatter import ToolResultFormatter
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
 from jarvis.services.ai.models import Provider
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 最大工具调用迭代次数，防止无限循环
+MAX_TOOL_ITERATIONS = 5
 
 
 class ChatEngine:
@@ -27,6 +33,10 @@ class ChatEngine:
         self.memory = memory_store
         self.current_conversation: Optional[Conversation] = None
         self.work_folder: str = str(Path.cwd())
+
+        # 工具执行器
+        self.task_executor = TaskExecutor(self.work_folder)
+        self.tool_parser = ToolCallParser(self.work_folder)
 
         # 工具列表定义
         self.available_tools = """## 可用工具
@@ -55,16 +65,29 @@ class ChatEngine:
 ### 4. API 调用 (tool: api)
 发送 HTTP 请求。
 
-调用示例：
+### 5. 通用工具 (tool: tool)
+运行 MCP 工具。
+
+## 工具调用格式
+当需要执行操作时，请以 JSON 格式返回工具调用：
+
+单个调用：
+```json
+{"tool": "file", "params": {"action": "read", "path": "file.txt"}}
 ```
-POST /api/execute/file
-{"action": "read", "path": "file.txt"}
+
+多个调用：
+```json
+[
+  {"tool": "file", "params": {"action": "read", "path": "file.txt"}},
+  {"tool": "browser", "params": {"action": "navigate", "url": "https://example.com"}}
+]
 ```
 
 ## 工作目录
 当前工作目录: {work_folder}
 
-请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请明确说明将使用哪个工具。"""
+请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请在回复末尾以 JSON 格式明确说明将使用的工具。"""
 
     def _build_system_prompt(self) -> str:
         """构建系统提示词"""
@@ -77,7 +100,7 @@ POST /api/execute/file
         model: Optional[str] = None,
         stream: bool = False  # Default to non-stream for simpler response
     ) -> str:
-        """处理对话"""
+        """处理对话 - 支持工具调用"""
         # 1. 获取或创建对话上下文
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
@@ -111,17 +134,61 @@ POST /api/execute/file
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
 
-        # 5. 调用 LLM
-        response = await self.router.chat(
-            messages,
-            model=model,
-            stream=False
-        )
+        # 5. 工具调用迭代循环
+        final_response = ""
+        iteration_count = 0
 
-        # 6. 添加助手消息
-        self.current_conversation.add_message("assistant", response.content)
+        for iteration_count in range(MAX_TOOL_ITERATIONS):
+            # 调用 LLM
+            response = await self.router.chat(
+                messages,
+                model=model,
+                stream=False
+            )
 
-        # 7. 保存对话历史
+            response_text = response.content
+            final_response = response_text
+
+            # 检查是否有工具调用
+            if not self.tool_parser.has_tool_calls(response_text):
+                # 没有工具调用，返回响应
+                break
+
+            tool_calls = self.tool_parser.parse(response_text)
+            if not tool_calls:
+                # 解析失败但有工具标记，跳出
+                break
+
+            logger.info(f"迭代 {iteration_count + 1}: 发现 {len(tool_calls)} 个工具调用")
+
+            # 6. 顺序执行工具调用
+            for tool_call in tool_calls:
+                step = Step(
+                    tool=tool_call.tool,
+                    params=tool_call.params
+                )
+                try:
+                    result = await self.task_executor.execute_step(step)
+                    status = result.get("status") if isinstance(result, dict) else "success"
+                    logger.info(f"工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
+                except Exception as e:
+                    logger.error(f"工具执行错误: {e}")
+                    result = {"status": "error", "message": str(e)}
+
+                # 格式化结果并添加到消息
+                result_message = ToolResultFormatter.format(
+                    tool=tool_call.tool,
+                    action=tool_call.action,
+                    params=tool_call.params,
+                    result=result
+                )
+                self.current_conversation.add_message("user", result_message)
+                messages.append({"role": "user", "content": result_message})
+
+        # 7. 添加助手消息（最终响应）
+        self.current_conversation.add_message("assistant", final_response)
+
+        # 8. 保存对话历史
         await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
@@ -129,12 +196,15 @@ POST /api/execute/file
             self.current_conversation.context
         )
 
-        # 8. 保存相关记忆（如果是有意义的信息）
+        # 9. 保存相关记忆（如果是有意义的信息）
         if len(user_input) > 10 and "记住" in user_input:
             key = user_input[:50].strip()
             await self.memory.save(key, user_input)
 
-        return response.content
+        if iteration_count >= MAX_TOOL_ITERATIONS - 1:
+            logger.warning(f"已达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
+
+        return final_response
 
     async def stream_chat(
         self,
@@ -142,8 +212,8 @@ POST /api/execute/file
         conversation_id: Optional[str] = None,
         model: Optional[str] = None
     ):
-        """流式对话"""
-        # 获取或创建对话
+        """流式对话 - 两阶段：第一阶段执行工具，第二阶段流式返回"""
+        # 1. 获取或创建对话上下文
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
             if conv_data:
@@ -158,9 +228,10 @@ POST /api/execute/file
         else:
             self.current_conversation = Conversation()
 
-        # 添加用户消息
+        # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
 
+        # 3. 构建消息列表
         messages = [
             {"role": "system", "content": self._build_system_prompt()}
         ]
@@ -172,19 +243,62 @@ POST /api/execute/file
 
         messages.append({"role": "user", "content": user_input})
 
-        full_response = ""
-        async for token in self.router.chat_stream(messages, model=model):
-            full_response += token
-            yield token
+        # 4. 第一阶段：非流式调用以检测工具
+        response = await self.router.chat(messages, model=model, stream=False)
+        response_text = response.content
 
-        # 保存助手消息和对话历史
-        self.current_conversation.add_message("assistant", full_response)
+        # 5. 检测并执行工具调用
+        iteration_count = 0
+        final_response = response_text
+
+        for iteration_count in range(MAX_TOOL_ITERATIONS):
+            if not self.tool_parser.has_tool_calls(response_text):
+                break
+
+            tool_calls = self.tool_parser.parse(response_text)
+            if not tool_calls:
+                break
+
+            logger.info(f"Stream: 发现 {len(tool_calls)} 个工具调用")
+
+            # 执行工具
+            for tool_call in tool_calls:
+                step = Step(tool=tool_call.tool, params=tool_call.params)
+                try:
+                    result = await self.task_executor.execute_step(step)
+                    status = result.get("status") if isinstance(result, dict) else "success"
+                    logger.info(f"Stream: 工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
+                except Exception as e:
+                    logger.error(f"Stream: 工具执行错误: {e}")
+                    result = {"status": "error", "message": str(e)}
+
+                # 格式化结果并添加
+                result_message = ToolResultFormatter.format(
+                    tool=tool_call.tool,
+                    action=tool_call.action,
+                    params=tool_call.params,
+                    result=result
+                )
+                self.current_conversation.add_message("user", result_message)
+                messages.append({"role": "user", "content": result_message})
+
+            # 再次调用 LLM 获取响应
+            response = await self.router.chat(messages, model=model, stream=False)
+            response_text = response.content
+            final_response = response_text
+
+        # 6. 保存对话历史
+        self.current_conversation.add_message("assistant", final_response)
         await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
             [msg.to_dict() for msg in self.current_conversation.messages],
             self.current_conversation.context
         )
+
+        # 7. 流式返回最终响应
+        for token in final_response:
+            yield token
 
     def set_work_folder(self, folder: str):
         """设置工作目录"""
