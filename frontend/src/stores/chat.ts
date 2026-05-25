@@ -27,7 +27,12 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
-        const parsed = JSON.parse(stored)
+        const parsed = JSON.parse(stored, (key, value) => {
+          if (key === 'createdAt' || key === 'updatedAt' || key === 'timestamp') {
+            return new Date(value)
+          }
+          return value
+        })
         conversations.value = parsed.conversations || []
         currentConversationId.value = parsed.currentId || null
       }
