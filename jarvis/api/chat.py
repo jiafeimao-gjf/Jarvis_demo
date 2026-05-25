@@ -47,6 +47,17 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/models")
+async def list_models():
+    """获取可用的 AI 模型列表"""
+    try:
+        models = await mediator.chat_engine.list_models()
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"List models error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/stream")
 async def chat_stream(request: ChatRequest):
     """流式对话响应"""

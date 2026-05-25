@@ -2,6 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { useApi } from '@/composables/useApi'
 
+const emit = defineEmits<{
+  (e: 'close'): void
+}>()
+
 const api = useApi()
 
 interface Config {
@@ -24,10 +28,20 @@ interface Config {
   log_level: string
 }
 
+interface OllamaModel {
+  name: string
+  model: string
+  size?: number
+  modified_at?: string
+  provider?: string
+}
+
 const config = ref<Config | null>(null)
 const isLoading = ref(false)
 const isSaving = ref(false)
 const message = ref('')
+const isLoadingModels = ref(false)
+const ollamaModels = ref<OllamaModel[]>([])
 
 // Editable form
 const form = ref({
@@ -41,6 +55,7 @@ const form = ref({
 
 onMounted(async () => {
   await loadConfig()
+  await loadOllamaModels()
 })
 
 async function loadConfig() {
@@ -103,11 +118,37 @@ function showMessage(msg: string, type: 'success' | 'error') {
   message.value = msg
   setTimeout(() => { message.value = '' }, 3000)
 }
+
+async function loadOllamaModels() {
+  isLoadingModels.value = true
+  try {
+    const res = await fetch('/api/chat/models')
+    if (res.ok) {
+      const data = await res.json()
+      ollamaModels.value = data.models || []
+    }
+  } catch (e) {
+    console.error('Failed to load models:', e)
+  } finally {
+    isLoadingModels.value = false
+  }
+}
 </script>
 
 <template>
   <div class="settings-page p-6 max-w-4xl mx-auto">
-    <h1 class="text-2xl font-bold mb-6">系统设置</h1>
+    <div class="flex items-center gap-4 mb-6">
+      <button
+        class="p-2 hover:bg-accent rounded-lg transition-colors"
+        @click="emit('close')"
+        title="返回"
+      >
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 12H5M12 19l-7-7 7-7"/>
+        </svg>
+      </button>
+      <h1 class="text-2xl font-bold">系统设置</h1>
+    </div>
 
     <div v-if="isLoading" class="text-center py-8">
       <div class="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
@@ -157,12 +198,15 @@ function showMessage(msg: string, type: 'success' | 'error') {
 
           <div>
             <label class="block text-sm mb-1">默认模型</label>
-            <input
+            <select
               v-model="form.ai_default_model"
-              type="text"
               class="w-full bg-background rounded px-3 py-2 border border-border"
-              placeholder="qwen3:4b"
-            />
+            >
+              <option v-if="ollamaModels.length === 0" value="">请选择模型</option>
+              <option v-for="m in ollamaModels" :key="m.name" :value="m.name">
+                {{ m.name }}
+              </option>
+            </select>
           </div>
 
           <div class="flex items-center gap-2">
@@ -194,12 +238,23 @@ function showMessage(msg: string, type: 'success' | 'error') {
 
           <div>
             <label class="block text-sm mb-1">默认模型</label>
-            <input
+            <select
               v-model="form.ollama_model"
-              type="text"
               class="w-full bg-background rounded px-3 py-2 border border-border"
-              placeholder="qwen3:4b"
-            />
+            >
+              <option v-if="isLoadingModels" value="" disabled>加载中...</option>
+              <option v-else-if="ollamaModels.length === 0" value="">无可用模型</option>
+              <option v-for="m in ollamaModels" :key="m.name" :value="m.name">
+                {{ m.name }}
+              </option>
+            </select>
+            <button
+              class="mt-2 text-sm text-primary hover:underline"
+              @click="loadOllamaModels"
+              :disabled="isLoadingModels"
+            >
+              {{ isLoadingModels ? '刷新中...' : '刷新模型列表' }}
+            </button>
           </div>
         </div>
 

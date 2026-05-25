@@ -84,6 +84,10 @@ class AIClient(ABC):
         """Check if provider is available"""
         pass
 
+    async def list_models(self) -> list[dict]:
+        """List available models (default implementation)"""
+        return []
+
     async def close(self):
         """Clean up resources"""
         pass

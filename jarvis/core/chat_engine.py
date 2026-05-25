@@ -124,6 +124,10 @@ class ChatEngine:
         async for token in self.router.chat_stream(messages, model=model):
             yield token
 
+    async def list_models(self) -> list[dict]:
+        """List available models from all providers"""
+        return await self.router.list_models()
+
     def to_dict(self) -> dict:
         """导出状态"""
         return {
