@@ -6,12 +6,56 @@ from pathlib import Path
 from typing import Optional
 
 
+class NotificationLogHandler(logging.Handler):
+    """日志通知处理器 - 将错误日志发送到通知系统"""
+
+    def __init__(self):
+        super().__init__()
+        self._notification_manager = None
+
+    def _get_notification_manager(self):
+        if self._notification_manager is None:
+            try:
+                from jarvis.core.notification import notification_manager
+                self._notification_manager = notification_manager
+            except Exception:
+                return None
+        return self._notification_manager
+
+    def emit(self, record: logging.LogRecord):
+        """发送日志通知"""
+        if record.levelno < logging.ERROR:
+            return
+
+        nm = self._get_notification_manager()
+        if not nm:
+            return
+
+        try:
+            from jarvis.core.notification import NotificationLevel, NotificationType
+            nm.send_notification(
+                level=NotificationLevel.ERROR if record.levelno == logging.ERROR else NotificationLevel.CRITICAL,
+                notification_type=NotificationType.LOG_ERROR,
+                title=f"日志错误: {record.name}",
+                message=record.getMessage(),
+                metadata={
+                    "logger": record.name,
+                    "level": record.levelname,
+                    "file": record.filename,
+                    "line": record.lineno
+                }
+            )
+        except Exception:
+            pass  # 避免通知系统故障影响日志
+
+
 class JarvisLogger:
     """贾维斯日志器"""
 
     _loggers: dict[str, logging.Logger] = {}
     _initialized: bool = False
     _settings = None
+    _notification_handler_added: bool = False
 
     @classmethod
     def _get_settings(cls):
@@ -69,6 +113,13 @@ class JarvisLogger:
         if file_handler:
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
+
+        # 添加日志通知处理器（只添加一次）
+        if not cls._notification_handler_added:
+            notification_handler = NotificationLogHandler()
+            notification_handler.setLevel(logging.ERROR)
+            logger.addHandler(notification_handler)
+            cls._notification_handler_added = True
 
         cls._loggers[name] = logger
         return logger

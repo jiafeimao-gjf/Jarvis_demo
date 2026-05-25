@@ -82,12 +82,35 @@ async def update_config(key: str, value):
     return {"success": True, "key": key, "value": value}
 
 
+# 通知 API
+@app.get("/api/notifications")
+async def get_notifications(limit: int = 50):
+    """获取通知历史"""
+    from jarvis.core.notification import notification_manager
+    return {
+        "notifications": notification_manager.get_history(limit),
+        "count": len(notification_manager._history)
+    }
+
+
+@app.delete("/api/notifications")
+async def clear_notifications():
+    """清空通知历史"""
+    from jarvis.core.notification import notification_manager
+    notification_manager.clear_history()
+    return {"success": True}
+
+
 # WebSocket 端点
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """通用 WebSocket 端点"""
     await websocket.accept()
     logger.info("WebSocket connected")
+
+    # 注册到 WebSocket 通知器
+    from jarvis.core.notification import ws_notifier
+    ws_notifier.add_connection(websocket)
 
     try:
         while True:
@@ -102,10 +125,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     "type": "status",
                     "data": mediator.get_status()
                 })
+            elif msg_type == "notifications":
+                # 获取通知历史
+                from jarvis.core.notification import notification_manager
+                await websocket.send_json({
+                    "type": "notifications",
+                    "data": notification_manager.get_history()
+                })
 
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
+        ws_notifier.remove_connection(websocket)
         await websocket.close()
 
 
