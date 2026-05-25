@@ -1,15 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useChatStore } from '@/stores/chat'
-import { cn } from '@/lib/utils'
+import { ref } from 'vue'
 
 const chatStore = useChatStore()
-const isOpen = ref(false)
 const isDarkMode = ref(true)
-
-function toggleSidebar() {
-  isOpen.value = !isOpen.value
-}
 
 function handleNewChat() {
   chatStore.createConversation()
@@ -32,10 +26,8 @@ function toggleTheme() {
 
 <template>
   <aside
-    :class="[
-      'w-72 bg-secondary border-r border-border flex flex-col transition-all duration-300',
-      isOpen ? 'translate-x-0' : '-translate-x-full'
-    ]"
+    class="w-72 bg-secondary border-r border-border flex flex-col"
+    style="top: 56px; height: calc(100vh - 56px);"
   >
     <div class="p-4 border-b border-border flex items-center justify-between">
       <h2 class="font-semibold">历史对话</h2>
