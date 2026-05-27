@@ -26,6 +26,7 @@ class ChatEngine:
         ProviderRegistry.register(Provider.OLLAMA, OllamaAdapter)
         ProviderRegistry.register(Provider.OPENAI, OpenAIAdapter)
         ProviderRegistry.register(Provider.ANTHROPIC, AnthropicAdapter)
+        ProviderRegistry.register(Provider.MINIMAX, AnthropicAdapter)
 
         # Initialize AI config
         self.ai_config = AIConfig()

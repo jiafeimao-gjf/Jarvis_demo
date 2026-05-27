@@ -10,6 +10,7 @@ class Provider(Enum):
     OLLAMA = "ollama"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    MINIMAX = "minimax"
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,15 @@ MODELS: dict[str, ModelInfo] = {
         supports_vision=True,
         context_window=200000,
         per_1k_cost=0.003,
+    ),
+    # MiniMax
+    "MiniMax-M2.7": ModelInfo(
+        provider=Provider.MINIMAX,
+        model_id="MiniMax-M2.7",
+        display_name="MiniMax M2.7",
+        supports_vision=False,
+        context_window=1000000,
+        per_1k_cost=0.0,
     ),
 }
 

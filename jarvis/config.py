@@ -35,6 +35,14 @@ class AnthropicConfig(BaseModel):
     timeout: float = 60.0
 
 
+class MiniMaxConfig(BaseModel):
+    """MiniMax 配置"""
+    api_key: Optional[str] = None
+    base_url: str = "https://api.minimaxi.com/anthropic/v1"
+    model: str = "MiniMax-M2.7"
+    timeout: float = 60.0
+
+
 # ============== AI Configuration ==============
 
 class AIConfig(BaseModel):
@@ -42,11 +50,12 @@ class AIConfig(BaseModel):
     default_provider: str = "ollama"
     default_model: str = "qwen3:4b"
     enable_fallback: bool = True
-    fallback_chain: List[str] = ["ollama", "openai", "anthropic"]
+    fallback_chain: List[str] = ["ollama", "openai", "anthropic", "minimax"]
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
+    minimax: MiniMaxConfig = Field(default_factory=MiniMaxConfig)
 
     def get_provider_config(self, provider: str) -> Dict[str, Any]:
         """获取 provider 配置字典"""

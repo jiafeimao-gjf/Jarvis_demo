@@ -2,7 +2,7 @@
 """AI Configuration for Multi-Provider Support"""
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
-from jarvis.config import OllamaConfig, OpenAIConfig, AnthropicConfig
+from jarvis.config import OllamaConfig, OpenAIConfig, AnthropicConfig, MiniMaxConfig
 from jarvis.services.ai.models import MODELS, Provider
 
 
@@ -14,7 +14,6 @@ class ProviderConfig:
     api_key: Optional[str] = None
     default_model: str = "qwen3:4b"
     timeout: float = 60.0
-    max_retries: int = 3
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -22,7 +21,6 @@ class ProviderConfig:
             "base_url": self.base_url,
             "default_model": self.default_model,
             "timeout": self.timeout,
-            "max_retries": self.max_retries,
             "has_api_key": bool(self.api_key)
         }
 
@@ -40,10 +38,11 @@ class AIConfig:
     ))
     openai: ProviderConfig = field(default_factory=ProviderConfig)
     anthropic: ProviderConfig = field(default_factory=ProviderConfig)
+    minimax: ProviderConfig = field(default_factory=ProviderConfig)
 
     # Fallback settings
     fallback_chain: List[str] = field(
-        default_factory=lambda: ["ollama", "openai", "anthropic"]
+        default_factory=lambda: ["ollama", "openai", "anthropic", "minimax"]
     )
     enable_fallback: bool = True
 
@@ -111,6 +110,15 @@ def create_ai_config_from_settings(settings) -> AIConfig:
         api_key=settings.ai.anthropic.api_key,
         default_model=settings.ai.anthropic.model,
         timeout=settings.ai.anthropic.timeout,
+    )
+
+    # MiniMax
+    config.minimax = ProviderConfig(
+        enabled=bool(settings.ai.minimax.api_key),
+        base_url=settings.ai.minimax.base_url,
+        api_key=settings.ai.minimax.api_key,
+        default_model=settings.ai.minimax.model,
+        timeout=settings.ai.minimax.timeout,
     )
 
     config.default_provider = settings.ai.default_provider

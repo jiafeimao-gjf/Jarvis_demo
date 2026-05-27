@@ -22,7 +22,7 @@ class ToolCallParser:
     """从 LLM 文本响应中解析工具调用"""
 
     # 支持的工具列表
-    VALID_TOOLS = {"file", "browser", "desktop", "api", "tool"}
+    VALID_TOOLS = {"file", "browser", "desktop", "api", "tool", "bash"}
 
     # JSON 数组模式: [{}, {}]
     JSON_ARRAY_PATTERN = re.compile(r'\[\s*\{.*\}\s*\]', re.DOTALL)

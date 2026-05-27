@@ -36,7 +36,6 @@ class AIRouter:
             # Provider-specific kwargs
             kwargs = {
                 "timeout": prov_config.timeout,
-                "max_retries": prov_config.max_retries,
             }
 
             # Only add base_url for providers that need it (Ollama)
@@ -44,8 +43,12 @@ class AIRouter:
                 kwargs["base_url"] = prov_config.base_url
 
             # Only add api_key for cloud providers
-            if provider in ("openai", "anthropic") and prov_config.api_key:
+            if provider in ("openai", "anthropic", "minimax") and prov_config.api_key:
                 kwargs["api_key"] = prov_config.api_key
+
+            # Pass use_minimax flag for MiniMax provider
+            if provider == "minimax":
+                kwargs["use_minimax"] = True
 
             self._client_cache[cache_key] = ProviderRegistry.create_client(
                 model_id=model,

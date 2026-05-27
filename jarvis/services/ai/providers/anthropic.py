@@ -11,6 +11,13 @@ from jarvis.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+MINIMAX_CONFIG = {
+    "api_key": "sk-cp-EsLppMnfOLiFIkhQYEWl_mzIlzXbnrZ5_SN6YdrbgT5HLNU7DdJwpXM8a75e7ZwYNdRosXJafYBTDeAfwiGFjfU30CS2aDAekaea_SoztygFKsUYGzs0uwU",
+    "base_url": "https://api.minimaxi.com/anthropic/v1",
+    "model": "MiniMax-M2.7",
+}
+
+
 class AnthropicAdapter(AIClient):
     """Anthropic Claude API adapter"""
 
@@ -19,14 +26,20 @@ class AnthropicAdapter(AIClient):
 
     def __init__(
         self,
-        model: str,
+        model: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.anthropic.com/v1",
+        base_url: Optional[str] = None,
         timeout: float = 60.0,
+        use_minimax: bool = False,
     ):
-        super().__init__(model=model, provider="anthropic")
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
-        self.base_url = base_url.rstrip("/")
+        if use_minimax:
+            super().__init__(model=MINIMAX_CONFIG["model"], provider="minimax")
+            self.api_key = MINIMAX_CONFIG["api_key"]
+            self.base_url = "https://api.minimaxi.com/anthropic/v1"
+        else:
+            super().__init__(model=model or "claude-3-5-sonnet-20241022", provider="anthropic")
+            self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
+            self.base_url = (base_url or "https://api.anthropic.com/v1").rstrip("/")
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -110,12 +123,17 @@ class AnthropicAdapter(AIClient):
             response.raise_for_status()
             data = response.json()
 
-            content = data["content"][0]["text"]
+            # Handle content array - find text content
+            content = ""
+            for item in data.get("content", []):
+                if item.get("type") == "text":
+                    content = item.get("text", "")
+                    break
 
             return AIResponse(
                 content=content,
                 model=self.model,
-                provider="anthropic",
+                provider=self.provider,
                 done=True,
                 usage=TokenUsage(
                     prompt_tokens=data.get("usage", {}).get("input_tokens", 0),
@@ -130,6 +148,9 @@ class AnthropicAdapter(AIClient):
             elif e.response.status_code == 429:
                 raise RateLimitError("anthropic", "Rate limit exceeded")
             raise ProviderNotAvailableError("anthropic", str(e))
+        except KeyError as e:
+            logger.error(f"Anthropic response parsing error: {e}, response: {data if 'data' in dir() else 'N/A'}")
+            raise ProviderNotAvailableError("anthropic", f"Response parsing error: {e}")
         except httpx.HTTPError as e:
             logger.error(f"Anthropic messages error: {e}")
             raise ProviderNotAvailableError("anthropic", str(e))
