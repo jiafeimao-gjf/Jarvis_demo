@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useSettingsStore } from '@/stores/settings'
 import { useApi } from '@/composables/useApi'
 
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+const settingsStore = useSettingsStore()
 const api = useApi()
 
 interface Config {
@@ -43,17 +45,14 @@ const message = ref('')
 const isLoadingModels = ref(false)
 const ollamaModels = ref<OllamaModel[]>([])
 
-// Editable form
-const form = ref({
-  server_port: 9529,
-  ai_default_provider: 'ollama',
-  ai_default_model: 'qwen3:4b',
-  ai_enable_fallback: true,
-  ollama_base_url: '',
-  ollama_model: '',
-})
+// Form bound directly to settings store
+const form = computed(() => settingsStore.settings)
 
 onMounted(async () => {
+  // Wait for settings to load from localStorage
+  if (!settingsStore.isLoaded) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   await loadConfig()
   await loadOllamaModels()
 })
@@ -64,7 +63,8 @@ async function loadConfig() {
     const res = await fetch('/api/config')
     if (res.ok) {
       config.value = await res.json()
-      applyToForm()
+      // Merge backend config into localStorage (won't override local changes)
+      settingsStore.mergeFromBackend(config.value)
     }
   } catch (e) {
     showMessage('加载配置失败', 'error')
@@ -73,27 +73,19 @@ async function loadConfig() {
   }
 }
 
-function applyToForm() {
-  if (!config.value) return
-  form.value.server_port = config.value.server.port
-  form.value.ai_default_provider = config.value.ai.default_provider
-  form.value.ai_default_model = config.value.ai.default_model
-  form.value.ai_enable_fallback = config.value.ai.enable_fallback
-  form.value.ollama_base_url = config.value.ai.providers.ollama?.base_url || ''
-  form.value.ollama_model = config.value.ai.providers.ollama?.model || ''
-}
-
 async function saveConfig() {
   isSaving.value = true
   message.value = ''
 
   try {
-    // Update server port
+    // Save to localStorage (already done by watch, but explicit save for clarity)
+    settingsStore.saveToStorage()
+
+    // Sync to backend
     await fetch('/api/config?key=server.port&value=' + form.value.server_port, {
       method: 'PUT'
     })
 
-    // Update AI defaults
     await fetch('/api/config?key=ai.default_provider&value=' + form.value.ai_default_provider, {
       method: 'PUT'
     })
@@ -106,7 +98,7 @@ async function saveConfig() {
       method: 'PUT'
     })
 
-    showMessage('配置已保存，重启服务后生效', 'success')
+    showMessage('配置已保存，将在刷新后生效', 'success')
   } catch (e) {
     showMessage('保存配置失败', 'error')
   } finally {
@@ -271,7 +263,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">摄像头 ID</label>
             <input
-              v-model="config.hardware.camera_device_id"
+              v-model="form.hardware.camera_device_id"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
@@ -279,7 +271,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">分辨率宽度</label>
             <input
-              v-model="config.hardware.camera_width"
+              v-model="form.hardware.camera_width"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
@@ -287,7 +279,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">分辨率高度</label>
             <input
-              v-model="config.hardware.camera_height"
+              v-model="form.hardware.camera_height"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
@@ -295,7 +287,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">帧率</label>
             <input
-              v-model="config.hardware.camera_fps"
+              v-model="form.hardware.camera_fps"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
@@ -303,7 +295,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">采样率</label>
             <input
-              v-model="config.hardware.microphone_sample_rate"
+              v-model="form.hardware.microphone_sample_rate"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
@@ -311,7 +303,7 @@ async function loadOllamaModels() {
           <div>
             <label class="block text-sm mb-1">声道数</label>
             <input
-              v-model="config.hardware.audio_channels"
+              v-model="form.hardware.audio_channels"
               type="number"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             />
