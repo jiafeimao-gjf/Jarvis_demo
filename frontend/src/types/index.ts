@@ -11,7 +11,7 @@ export interface Conversation {
   messages: Message[]
   createdAt: Date
   updatedAt: Date
-  userId?: string
+  userId: string
   context?: Record<string, any>
 }
 

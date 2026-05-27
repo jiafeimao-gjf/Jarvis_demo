@@ -2,12 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Message, Conversation } from '@/types'
 import { useApi } from '@/composables/useApi'
+import { useSettingsStore } from '@/stores/settings'
 
 const STORAGE_KEY = 'jarvis_conversations'
 const CURRENT_KEY = 'jarvis_current_conversation'
 
 export const useChatStore = defineStore('chat', () => {
   const api = useApi()
+  const settingsStore = useSettingsStore()
   const conversations = ref<Conversation[]>([])
   const currentConversationId = ref<string | null>(null)
   const isLoading = ref(false)
@@ -128,10 +130,16 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // Create new conversation
-  function createConversation(): Conversation {
+  function createConversation(): Conversation | null {
+    const userName = settingsStore.settings.user_name
+    if (!userName) {
+      // Prompt user to set user name in settings
+      return null
+    }
+
     const conv: Conversation = {
       id: crypto.randomUUID(),
-      userId: crypto.randomUUID(),  // Unique user identifier
+      userId: userName,
       title: '新对话',
       messages: [],
       createdAt: new Date(),
@@ -181,7 +189,8 @@ export const useChatStore = defineStore('chat', () => {
   // Add message
   function addMessage(role: Message['role'], content: string): Message | undefined {
     if (!currentConversationId.value) {
-      createConversation()
+      const conv = createConversation()
+      if (!conv) return  // user_name not set
     }
 
     const conv = conversations.value.find(c => c.id === currentConversationId.value)

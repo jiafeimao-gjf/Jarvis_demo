@@ -11,6 +11,7 @@ export interface Settings {
   ollama_base_url: string
   ollama_model: string
   log_level: string
+  user_name: string
   hardware: {
     camera_device_id: number
     camera_width: number
@@ -29,6 +30,7 @@ const DEFAULT_SETTINGS: Settings = {
   ollama_base_url: 'http://localhost:11434',
   ollama_model: '',
   log_level: 'INFO',
+  user_name: '',
   hardware: {
     camera_device_id: 0,
     camera_width: 1280,

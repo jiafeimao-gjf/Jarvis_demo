@@ -222,6 +222,16 @@ async function loadOllamaModels() {
 
         <div class="space-y-4">
           <div>
+            <label class="block text-sm mb-1">用户名</label>
+            <input
+              v-model="form.user_name"
+              type="text"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+              placeholder="设置用户名用于区分对话"
+            />
+          </div>
+
+          <div>
             <label class="block text-sm mb-1">默认 Provider</label>
             <select
               v-model="form.ai_default_provider"
