@@ -28,6 +28,9 @@ export interface ChatRequest {
   message: string
   conversation_id?: string
   stream?: boolean
+  model?: string
+  force_refresh_models?: boolean
+  messages?: Array<{ role: string; content: string }>
 }
 
 export interface ChatResponse {

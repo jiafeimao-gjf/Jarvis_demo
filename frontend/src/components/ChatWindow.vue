@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useSettingsStore } from '@/stores/settings'
 import { useApi } from '@/composables/useApi'
 import ChatMessage from './ChatMessage.vue'
 
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 const api = useApi()
 const inputValue = ref('')
 const isLoading = ref(false)
@@ -55,6 +57,7 @@ async function handleSend() {
         stream: true,
         conversation_id: chatStore.currentConversationId || undefined,
         force_refresh_models: false,
+        model: settingsStore.settings.ai_default_model,
         messages: messagesToSend
       },
       (token: string) => {
