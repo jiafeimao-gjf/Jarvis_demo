@@ -1,5 +1,6 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
 from jarvis.core.entities import Message, Conversation, Step
@@ -17,6 +18,15 @@ logger = get_logger(__name__)
 
 # 最大工具调用迭代次数，防止无限循环
 MAX_TOOL_ITERATIONS = 5
+
+
+@dataclass
+class SystemPromptSettings:
+    """系统 Prompt 设置"""
+    persona: str = ""      # 角色设定
+    abilities: str = ""    # 能力说明
+    memory: str = ""       # 记忆说明
+    tools: str = ""        # 工具说明（额外补充）
 
 
 class ChatEngine:
@@ -40,37 +50,69 @@ class ChatEngine:
         self.task_executor = TaskExecutor(self.work_folder)
         self.tool_parser = ToolCallParser(self.work_folder)
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, settings: SystemPromptSettings = None) -> str:
         """构建系统提示词"""
-        tools_desc = tool_registry.build_schema_for_llm()
+        parts = []
 
-        return f"""{tools_desc}
+        # 1. 角色设定
+        if settings and settings.persona:
+            parts.append(f"## 角色设定\n{settings.persona}")
 
-## 工作目录
-当前工作目录: {self.work_folder}
+        # 2. 工具描述（固定从 tool_registry 获取）
+        parts.append(tool_registry.build_schema_for_llm())
 
-## 工具调用格式
+        # 3. 额外工具说明
+        if settings and settings.tools:
+            parts.append(f"## 额外工具说明\n{settings.tools}")
+
+        # 4. 能力说明
+        if settings and settings.abilities:
+            parts.append(f"## 能力说明\n{settings.abilities}")
+
+        # 5. 记忆说明
+        if settings and settings.memory:
+            parts.append(f"## 记忆说明\n{settings.memory}")
+
+        # 6. 工作目录和调用格式
+        parts.append(f"## 工作目录\n当前工作目录: {self.work_folder}")
+        parts.append("""## 工具调用格式
 当需要执行操作时，请以 JSON 格式返回工具调用：
 
 单个调用（标准格式）：
 ```json
-{{"tool": "file", "params": {{"action": "read", "path": "file.txt"}}}}
+{"tool": "file", "params": {"action": "read", "path": "file.txt"}}
 ```
 
 单个调用（MiniMax格式）：
 ```json
-{{"name": "bash", "parameters": {{"command": "ls -la"}}}}
+{"name": "bash", "parameters": {"command": "ls -la"}}
 ```
 
 多个调用：
 ```json
 [
-  {{"tool": "file", "params": {{"action": "read", "path": "file.txt"}}}},
-  {{"tool": "bash", "params": {{"command": "ls"}}}}
+  {"tool": "file", "params": {"action": "read", "path": "file.txt"}},
+  {"tool": "bash", "params": {"command": "ls"}}
 ]
 ```
 
-请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请在回复末尾以 JSON 格式明确说明将使用的工具。"""
+请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请在回复末尾以 JSON 格式明确说明将使用的工具。""")
+
+        return "\n\n".join(parts)
+
+    async def _load_prompt_settings(self) -> SystemPromptSettings:
+        """从存储加载 Prompt 设置"""
+        try:
+            all_settings = await memory_store.get_all_settings()
+            return SystemPromptSettings(
+                persona=all_settings.get("persona_prompt", ""),
+                abilities=all_settings.get("abilities_prompt", ""),
+                memory=all_settings.get("memory_prompt", ""),
+                tools=all_settings.get("tools_prompt", "")
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load prompt settings: {e}")
+            return SystemPromptSettings()
 
     async def chat(
         self,
@@ -106,9 +148,12 @@ class ChatEngine:
                 [f"- {m['content']}" for m in memories]
             )
 
-        # 4. 构建消息历史
+        # 4. 加载 Prompt 设置
+        prompt_settings = await self._load_prompt_settings()
+
+        # 5. 构建消息历史
         messages = [
-            {"role": "system", "content": self._build_system_prompt() + context_prompt}
+            {"role": "system", "content": self._build_system_prompt(prompt_settings) + context_prompt}
         ]
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
@@ -210,9 +255,12 @@ class ChatEngine:
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
 
-        # 3. 构建消息列表
+        # 3. 加载 Prompt 设置
+        prompt_settings = await self._load_prompt_settings()
+
+        # 4. 构建消息列表
         messages = [
-            {"role": "system", "content": self._build_system_prompt()}
+            {"role": "system", "content": self._build_system_prompt(prompt_settings)}
         ]
         if self.current_conversation.messages:
             messages.extend([
@@ -292,9 +340,12 @@ class ChatEngine:
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
 
-        # 3. 构建消息列表 - 使用传入的历史
+        # 3. 加载 Prompt 设置
+        prompt_settings = await self._load_prompt_settings()
+
+        # 4. 构建消息列表 - 使用传入的历史
         messages = [
-            {"role": "system", "content": self._build_system_prompt()}
+            {"role": "system", "content": self._build_system_prompt(prompt_settings)}
         ]
 
         # 添加历史消息（过滤掉 system）
@@ -305,11 +356,11 @@ class ChatEngine:
         # 添加当前用户消息
         messages.append({"role": "user", "content": user_input})
 
-        # 4. 第一阶段：非流式调用以检测工具
+        # 5. 第一阶段：非流式调用以检测工具
         response = await self.router.chat(messages, model=model, stream=False)
         response_text = response.content
 
-        # 5. 检测并执行工具调用
+        # 6. 检测并执行工具调用
         iteration_count = 0
         final_response = response_text
 
@@ -349,7 +400,7 @@ class ChatEngine:
             response_text = response.content
             final_response = response_text
 
-        # 6. 保存对话历史
+        # 7. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
         await self.memory.save_conversation(
             self.current_conversation.conversation_id,
@@ -358,7 +409,7 @@ class ChatEngine:
             self.current_conversation.context
         )
 
-        # 7. 流式返回最终响应
+        # 8. 流式返回最终响应
         for token in final_response:
             yield token
 

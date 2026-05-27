@@ -12,6 +12,10 @@ export interface Settings {
   ollama_model: string
   log_level: string
   user_name: string
+  persona_prompt: string
+  abilities_prompt: string
+  memory_prompt: string
+  tools_prompt: string
   hardware: {
     camera_device_id: number
     camera_width: number
@@ -31,6 +35,10 @@ const DEFAULT_SETTINGS: Settings = {
   ollama_model: '',
   log_level: 'INFO',
   user_name: '',
+  persona_prompt: '',
+  abilities_prompt: '',
+  memory_prompt: '',
+  tools_prompt: '',
   hardware: {
     camera_device_id: 0,
     camera_width: 1280,

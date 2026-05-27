@@ -122,7 +122,7 @@ async function saveConfig() {
     // Save to localStorage (already done by watch, but explicit save for clarity)
     settingsStore.saveToStorage()
 
-    // Sync to backend
+    // Sync to backend config (runtime settings)
     await fetch('/api/config?key=server.port&value=' + form.value.server_port, {
       method: 'PUT'
     })
@@ -139,7 +139,32 @@ async function saveConfig() {
       method: 'PUT'
     })
 
-    showMessage('配置已保存，将在刷新后生效', 'success')
+    // Save prompt settings to memory DB
+    await fetch('/api/memory/settings/persona_prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form.value.persona_prompt)
+    })
+
+    await fetch('/api/memory/settings/abilities_prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form.value.abilities_prompt)
+    })
+
+    await fetch('/api/memory/settings/memory_prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form.value.memory_prompt)
+    })
+
+    await fetch('/api/memory/settings/tools_prompt', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form.value.tools_prompt)
+    })
+
+    showMessage('配置已保存', 'success')
   } catch (e) {
     showMessage('保存配置失败', 'error')
   } finally {
@@ -265,6 +290,53 @@ async function loadOllamaModels() {
               class="w-4 h-4"
             />
             <label for="fallback">启用故障自动转移</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- Prompt 设置 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">Prompt 设置</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm mb-1">角色设定</label>
+            <textarea
+              v-model="form.persona_prompt"
+              rows="3"
+              class="w-full bg-background rounded px-3 py-2 border border-border resize-none"
+              placeholder="定义 AI 的角色和身份，例如：你是贾维斯，一个智能助手..."
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">能力说明</label>
+            <textarea
+              v-model="form.abilities_prompt"
+              rows="3"
+              class="w-full bg-background rounded px-3 py-2 border border-border resize-none"
+              placeholder="描述 AI 能做什么，例如：可以帮助用户处理文件、回答问题..."
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">记忆说明</label>
+            <textarea
+              v-model="form.memory_prompt"
+              rows="2"
+              class="w-full bg-background rounded px-3 py-2 border border-border resize-none"
+              placeholder="关于记忆系统的说明，例如：会记住用户的偏好和历史对话..."
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">工具说明</label>
+            <textarea
+              v-model="form.tools_prompt"
+              rows="2"
+              class="w-full bg-background rounded px-3 py-2 border border-border resize-none"
+              placeholder="关于可用工具的补充说明..."
+            />
           </div>
         </div>
       </section>
