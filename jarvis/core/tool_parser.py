@@ -78,24 +78,27 @@ class ToolCallParser:
 
     def _validate_and_create(self, call: dict, raw: str) -> Optional[ToolCall]:
         """验证并创建 ToolCall"""
-        if "tool" not in call:
+        # 支持两种格式:
+        # 1. {"tool": ..., "params": {"action": ..., ...}}
+        # 2. {"name": ..., "parameters": {"command": ..., ...}}
+        tool_name = call.get("tool") or call.get("name", "")
+        if not tool_name:
             return None
 
-        tool_name = call.get("tool", "")
         if tool_name not in self.VALID_TOOLS:
             logger.warning(f"未知工具: {tool_name}")
             return None
 
-        params = call.get("params", {})
-        if not isinstance(params, dict):
+        # 根据格式获取参数
+        raw_params = call.get("params") or call.get("parameters", {})
+        if not isinstance(raw_params, dict):
             logger.warning(f"{tool_name} 的 params 参数类型无效")
             return None
 
-        # 提取 action
-        action = params.get("action", "")
-        if not action:
-            # 如果没有 action，尝试从顶层获取
-            action = call.get("action", "")
+        # 如果是 MiniMax 格式 {"command": ..., "context": {}} 直接使用
+        # 如果是标准格式 {"action": ..., "params": {...}} 需要提取
+        params = raw_params.copy()
+        action = params.pop("action", "") or call.get("action", "")
 
         return ToolCall(
             tool=tool_name,
@@ -106,7 +109,11 @@ class ToolCallParser:
 
     def has_tool_calls(self, text: str) -> bool:
         """快速检查文本是否包含可能的工具调用"""
-        return '"tool"' in text and '"params"' in text
+        # 支持两种格式:
+        # 1. {"tool": ..., "params": ...}
+        # 2. {"name": ..., "parameters": ...}
+        return ('"tool"' in text and '"params"' in text) or \
+               ('"name"' in text and '"parameters"' in text)
 
 
 @dataclass
