@@ -79,7 +79,8 @@ async def chat_stream(request: ChatRequest):
                 async for token in mediator.chat_engine.stream_chat_with_messages(
                     request.message,
                     request.messages,
-                    request.model
+                    request.model,
+                    request.conversation_id
                 ):
                     full_response += token
                     yield {

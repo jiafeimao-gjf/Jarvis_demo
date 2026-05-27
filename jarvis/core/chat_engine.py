@@ -350,17 +350,34 @@ class ChatEngine:
         self,
         user_input: str,
         messages_history: list[dict],
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        conversation_id: Optional[str] = None
     ):
         """流式对话 - 使用传入的完整消息历史"""
-        logger.info(f"[StreamChatWithMsgs] 开始处理 | model={model} | input_len={len(user_input)} | history_len={len(messages_history)}")
+        logger.info(f"[StreamChatWithMsgs] 开始处理 | conv_id={conversation_id} | model={model} | input_len={len(user_input)} | history_len={len(messages_history)}")
 
-        # 1. 创建对话上下文
-        self.current_conversation = Conversation()
-        logger.debug("[StreamChatWithMsgs] 新建空对话上下文")
+        # 1. 获取或创建对话上下文
+        if conversation_id:
+            conv_data = await self.memory.get_conversation(conversation_id)
+            if conv_data:
+                self.current_conversation = Conversation(
+                    conversation_id=conversation_id,
+                    user_id=conv_data.get("user_id", ""),
+                    messages=[Message(**m) for m in conv_data.get("messages", [])],
+                    context=conv_data.get("context", {})
+                )
+                logger.info(f"[StreamChatWithMsgs] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
+            else:
+                logger.info(f"[StreamChatWithMsgs] 对话不存在，创建新对话 | conv_id={conversation_id}")
+                self.current_conversation = Conversation(conversation_id=conversation_id)
+        else:
+            logger.info("[StreamChatWithMsgs] 无conv_id，创建新对话")
+            self.current_conversation = Conversation()
+            logger.debug("[StreamChatWithMsgs] 新建空对话上下文")
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
+        logger.debug(f"[StreamChatWithMsgs] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
 
         # 3. 加载 Prompt 设置
         prompt_settings = await self._load_prompt_settings()
