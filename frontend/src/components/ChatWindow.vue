@@ -36,7 +36,13 @@ async function handleSend() {
   if (!text || isLoading.value) return
 
   inputValue.value = ''
-  chatStore.addMessage('user', text)
+  const userMsg = chatStore.addMessage('user', text)
+  if (!userMsg) {
+    // user_name not set, prompt to configure
+    alert('请先在设置中配置用户名')
+    return
+  }
+
   isLoading.value = true
   currentResponse.value = ''
 
