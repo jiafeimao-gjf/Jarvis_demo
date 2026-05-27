@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useApi } from '@/composables/useApi'
 
@@ -23,6 +23,7 @@ interface Config {
       ollama: { base_url: string; model: string; vision_model: string }
       openai: { has_api_key: boolean }
       anthropic: { has_api_key: boolean }
+      minimax: { has_api_key: boolean }
     }
   }
   hardware: Record<string, number>
@@ -30,12 +31,9 @@ interface Config {
   log_level: string
 }
 
-interface OllamaModel {
+interface ModelOption {
   name: string
-  model: string
-  size?: number
-  modified_at?: string
-  provider?: string
+  provider: string
 }
 
 const config = ref<Config | null>(null)
@@ -43,10 +41,50 @@ const isLoading = ref(false)
 const isSaving = ref(false)
 const message = ref('')
 const isLoadingModels = ref(false)
-const ollamaModels = ref<OllamaModel[]>([])
+const ollamaModels = ref<ModelOption[]>([])
+
+// Predefined models for each provider
+const providerModels: Record<string, ModelOption[]> = {
+  ollama: [
+    { name: 'qwen3:4b', provider: 'ollama' },
+    { name: 'qwen3:8b', provider: 'ollama' },
+    { name: 'qwen3-vl:4b', provider: 'ollama' },
+    { name: 'llama3:8b', provider: 'ollama' },
+  ],
+  openai: [
+    { name: 'gpt-4o-mini', provider: 'openai' },
+    { name: 'gpt-4o', provider: 'openai' },
+  ],
+  anthropic: [
+    { name: 'claude-3-haiku', provider: 'anthropic' },
+    { name: 'claude-3-sonnet', provider: 'anthropic' },
+    { name: 'claude-3-5-sonnet', provider: 'anthropic' },
+  ],
+  minimax: [
+    { name: 'MiniMax-M2.7', provider: 'minimax' },
+  ]
+}
 
 // Form bound directly to settings store
 const form = computed(() => settingsStore.settings)
+
+// Current models based on selected provider
+const availableModels = computed(() => {
+  const provider = form.value.ai_default_provider
+  return providerModels[provider] || []
+})
+
+// Watch provider change to reset model if not available for new provider
+watch(() => form.value.ai_default_provider, (newProvider, oldProvider) => {
+  if (oldProvider && newProvider !== oldProvider) {
+    const currentModel = form.value.ai_default_model
+    const validModels = providerModels[newProvider] || []
+    const modelExists = validModels.some(m => m.name === currentModel)
+    if (!modelExists && validModels.length > 0) {
+      form.value.ai_default_model = validModels[0].name
+    }
+  }
+})
 
 onMounted(async () => {
   // Wait for settings to load from localStorage
@@ -120,7 +158,11 @@ async function loadOllamaModels() {
     const res = await fetch('/api/chat/models')
     if (res.ok) {
       const data = await res.json()
-      ollamaModels.value = data.models || []
+      // Update ollama models from backend
+      providerModels.ollama = (data.models || []).map((m: any) => ({
+        name: m.name || m.model,
+        provider: 'ollama'
+      }))
     }
   } catch (e) {
     console.error('Failed to load models:', e)
@@ -188,6 +230,7 @@ async function loadOllamaModels() {
               <option value="ollama">Ollama (本地)</option>
               <option value="openai">OpenAI (云)</option>
               <option value="anthropic">Anthropic (Claude)</option>
+              <option value="minimax">MiniMax</option>
             </select>
           </div>
 
@@ -197,9 +240,9 @@ async function loadOllamaModels() {
               v-model="form.ai_default_model"
               class="w-full bg-background rounded px-3 py-2 border border-border"
             >
-              <option v-if="ollamaModels.length === 0" value="">请选择模型</option>
-              <option v-for="m in ollamaModels" :key="m.name" :value="m.name">
-                {{ m.name }}
+              <option v-if="availableModels.length === 0" value="">请选择模型</option>
+              <option v-for="m in availableModels" :key="m.name" :value="m.name">
+                {{ m.name }} ({{ m.provider }})
               </option>
             </select>
           </div>

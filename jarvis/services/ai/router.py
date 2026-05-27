@@ -69,8 +69,13 @@ class AIRouter:
         model_id = model or self.config.default_model
         provider_str = provider or self.config.default_provider
 
-        # Get model info
+        # Get model info to determine provider
         model_info = get_model(model_id)
+
+        # If model is specified and exists, use model's provider for routing
+        # This ensures consistency between frontend model selection and backend
+        if model and model_info:
+            provider_str = model_info.provider.value
 
         # Build provider chain
         if enable_fallback:
