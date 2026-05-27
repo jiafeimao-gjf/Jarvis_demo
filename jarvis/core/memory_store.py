@@ -70,6 +70,13 @@ class SQLiteMemoryRepository(MemoryRepository):
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             logger.info(f"SQLite memory store initialized at {self.db_path}")
 
     async def save(self, key: str, content: str, metadata: dict = None) -> bool:
@@ -216,6 +223,49 @@ class SQLiteMemoryRepository(MemoryRepository):
         except Exception as e:
             logger.error(f"Failed to delete conversation: {e}")
             return False
+
+    async def save_setting(self, key: str, value: Any) -> bool:
+        """保存设置到数据库"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO settings (key, value, updated_at)
+                       VALUES (?, ?, CURRENT_TIMESTAMP)""",
+                    (key, json.dumps(value))
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save setting: {e}")
+            return False
+
+    async def get_setting(self, key: str) -> Optional[Any]:
+        """从数据库获取设置"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT value FROM settings WHERE key = ?",
+                    (key,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    return json.loads(row["value"])
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get setting: {e}")
+            return None
+
+    async def get_all_settings(self) -> dict:
+        """获取所有设置"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT key, value FROM settings")
+                rows = cursor.fetchall()
+                return {row["key"]: json.loads(row["value"]) for row in rows}
+        except Exception as e:
+            logger.error(f"Failed to get all settings: {e}")
+            return {}
 
 
 # 简单向量嵌入实现（可替换为 proper embedding model）
@@ -373,6 +423,18 @@ class MemoryStore:
     async def delete_conversation(self, conversation_id: str) -> bool:
         """删除对话"""
         return await self.sqlite_repo.delete_conversation(conversation_id)
+
+    async def save_setting(self, key: str, value: Any) -> bool:
+        """保存设置"""
+        return await self.sqlite_repo.save_setting(key, value)
+
+    async def get_setting(self, key: str) -> Optional[Any]:
+        """获取设置"""
+        return await self.sqlite_repo.get_setting(key)
+
+    async def get_all_settings(self) -> dict:
+        """获取所有设置"""
+        return await self.sqlite_repo.get_all_settings()
 
 
 # 全局单例

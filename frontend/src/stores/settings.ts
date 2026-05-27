@@ -42,8 +42,9 @@ const DEFAULT_SETTINGS: Settings = {
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<Settings>({ ...DEFAULT_SETTINGS })
   const isLoaded = ref(false)
+  const isSyncing = ref(false)
 
-  // Load from localStorage
+  // Load from localStorage first (for offline use)
   function loadFromStorage() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
@@ -51,10 +52,8 @@ export const useSettingsStore = defineStore('settings', () => {
         const parsed = JSON.parse(stored)
         settings.value = { ...DEFAULT_SETTINGS, ...parsed }
       }
-      isLoaded.value = true
     } catch (e) {
       console.error('Failed to load settings from storage:', e)
-      isLoaded.value = true
     }
   }
 
@@ -67,18 +66,70 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  // Sync from backend DB
+  async function syncFromBackend() {
+    if (isSyncing.value) return
+    isSyncing.value = true
+
+    try {
+      const res = await fetch('/api/memory/settings')
+      if (res.ok) {
+        const data = await res.json()
+        const dbSettings = data.settings || {}
+
+        // Merge DB settings into localStorage (DB takes precedence)
+        for (const [key, value] of Object.entries(dbSettings)) {
+          if (key in settings.value) {
+            // For nested objects like hardware, deep merge
+            if (typeof value === 'object' && value !== null) {
+              settings.value[key as keyof Settings] = {
+                ...settings.value[key as keyof Settings],
+                ...(value as object)
+              } as any
+            } else {
+              (settings.value as any)[key] = value
+            }
+          }
+        }
+
+        // Save merged result to localStorage
+        saveToStorage()
+      }
+    } catch (e) {
+      console.error('Failed to sync settings from backend:', e)
+    } finally {
+      isSyncing.value = false
+      isLoaded.value = true
+    }
+  }
+
+  // Save a single setting to backend
+  async function saveSettingToBackend(key: string, value: any) {
+    try {
+      await fetch(`/api/memory/settings/${key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value)
+      })
+    } catch (e) {
+      console.error('Failed to save setting to backend:', e)
+    }
+  }
+
   // Watch for changes and persist
   watch(settings, () => {
     saveToStorage()
   }, { deep: true })
 
-  // Update a single setting
-  function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
+  // Update a single setting (local + backend)
+  async function updateSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
     settings.value[key] = value
+    // Save to backend DB
+    await saveSettingToBackend(key, value)
   }
 
-  // Merge config from backend
-  function mergeFromBackend(config: Record<string, any>) {
+  // Merge config from backend API (initial load)
+  function mergeFromApi(config: Record<string, any>) {
     if (config.server?.port) {
       settings.value.server_port = config.server.port
     }
@@ -113,9 +164,11 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings,
     isLoaded,
+    isSyncing,
     loadFromStorage,
     saveToStorage,
+    syncFromBackend,
     updateSetting,
-    mergeFromBackend
+    mergeFromApi
   }
 })

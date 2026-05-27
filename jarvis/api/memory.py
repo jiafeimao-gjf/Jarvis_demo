@@ -1,8 +1,8 @@
 # jarvis/api/memory.py
 """记忆相关 API"""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 
 from jarvis.core.mediator import mediator
 from jarvis.utils.logger import get_logger
@@ -100,4 +100,43 @@ async def delete_conversation(conversation_id: str):
         return {"success": success}
     except Exception as e:
         logger.error(f"Delete conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Settings API
+@router.get("/settings")
+async def get_settings():
+    """获取所有设置"""
+    try:
+        settings = await mediator.memory_store.get_all_settings()
+        return {"settings": settings, "count": len(settings)}
+    except Exception as e:
+        logger.error(f"Get settings error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/settings/{key}")
+async def get_setting(key: str):
+    """获取单个设置"""
+    try:
+        value = await mediator.memory_store.get_setting(key)
+        if value is None:
+            raise HTTPException(status_code=404, detail="Setting not found")
+        return {"key": key, "value": value}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get setting error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/settings/{key}")
+async def save_setting(key: str, request: Request):
+    """保存设置"""
+    try:
+        value = await request.json()
+        success = await mediator.memory_store.save_setting(key, value)
+        return {"success": success, "key": key}
+    except Exception as e:
+        logger.error(f"Save setting error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

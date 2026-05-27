@@ -53,6 +53,9 @@ onMounted(async () => {
   if (!settingsStore.isLoaded) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
+  // Sync from backend DB
+  await settingsStore.syncFromBackend()
+  // Then load from /api/config for server-side settings
   await loadConfig()
   await loadOllamaModels()
 })
