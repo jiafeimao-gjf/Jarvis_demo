@@ -131,6 +131,108 @@ class APICallStrategy(TaskStrategy):
         return {"status": "error", "message": "No URL provided"}
 
 
+class BashOperationStrategy(TaskStrategy):
+    """Bash 命令执行策略"""
+
+    # 高危命令黑名单
+    DANGEROUS_COMMANDS = [
+        r'rm\s+-rf',           # 递归强制删除
+        r'dd\s+.*of=',          # 磁盘格式化
+        r'mkfs',                # 文件系统创建
+        r':\(\)\{.*:\}',        # Fork 炸弹
+        r'wget.*\|.*sh',        # 远程下载执行
+        r'curl.*\|.*sh',        # 远程下载执行
+        r'chmod\s+-R\s+777',    # 全权限递归
+        r'chown\s+-R',          # 所有权递归修改
+        r'>\s*/dev/',           # 设备重定向
+        r'\s*/proc/',           # 进程目录操作
+        r'shitdown',            # 关机命令
+        r'reboot',              # 重启命令
+        r'mount\s+--bind',      # 挂载绑定
+        r'umount\s+-f',         # 强制卸载
+        r'kill\s+-9',           # 强制终止进程
+        r'killall',            # 终止所有进程
+        r'pkill',              # 模式匹配终止进程
+        r'eval\s+.*\$\{?',      # 动态命令执行
+        r'exec\s+',            # 命令替换执行
+    ]
+
+    def __init__(self, work_folder: Optional[str] = None):
+        self.work_folder = work_folder or str(Path.cwd())
+
+    def _check_dangerous(self, command: str) -> tuple[bool, str]:
+        """检查命令是否危险"""
+        import re
+        for pattern in self.DANGEROUS_COMMANDS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return True, f"高危命令禁止执行: {pattern}"
+        return False, ""
+
+    async def execute(self, step: Step) -> Any:
+        """执行 Bash 命令"""
+        import asyncio
+        import subprocess
+        logger.info(f"Bash operation: {step.tool} with {step.params}")
+
+        params = step.params
+        command = params.get("command", "")
+        timeout = params.get("timeout", 30)  # 默认 30 秒超时
+        cwd = params.get("cwd", self.work_folder)
+
+        if not command:
+            return {"status": "error", "message": "No command provided"}
+
+        # 安全检查
+        is_dangerous, msg = self._check_dangerous(command)
+        if is_dangerous:
+            logger.warning(f"Dangerous command blocked: {command}")
+            return {"status": "error", "message": msg, "blocked": True}
+
+        try:
+            # 执行命令
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env={**subprocess.os.environ, "HOME": subprocess.os.path.expanduser("~")}
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                return {"status": "error", "message": f"Command timeout ({timeout}s)"}
+
+            return_code = process.returncode
+            stdout_text = stdout.decode('utf-8', errors='replace').strip()
+            stderr_text = stderr.decode('utf-8', errors='replace').strip()
+
+            if return_code == 0:
+                return {
+                    "status": "success",
+                    "command": command,
+                    "stdout": stdout_text,
+                    "returncode": return_code
+                }
+            else:
+                return {
+                    "status": "error",
+                    "command": command,
+                    "stdout": stdout_text,
+                    "stderr": stderr_text,
+                    "returncode": return_code
+                }
+
+        except Exception as e:
+            logger.error(f"Bash operation error: {e}")
+            return {"status": "error", "message": str(e)}
+
+
 class FileOperationStrategy(TaskStrategy):
     """文件操作策略 - 读、写、改、删"""
 
@@ -337,12 +439,14 @@ class TaskExecutor:
 
     def __init__(self, work_folder: Optional[str] = None):
         self.file_strategy = FileOperationStrategy(work_folder)
+        self.bash_strategy = BashOperationStrategy(work_folder)
         self.strategies: dict[str, TaskStrategy] = {
             "browser": BrowserAutomationStrategy(),
             "desktop": DesktopControlStrategy(),
             "api": APICallStrategy(),
             "tool": ToolRunnerStrategy(),
             "file": self.file_strategy,
+            "bash": self.bash_strategy,
         }
         logger.info("TaskExecutor initialized with strategies: "
                    f"{list(self.strategies.keys())}")

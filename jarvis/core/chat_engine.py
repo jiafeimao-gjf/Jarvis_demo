@@ -68,6 +68,17 @@ class ChatEngine:
 ### 5. 通用工具 (tool: tool)
 运行 MCP 工具。
 
+### 6. Bash 命令 (tool: bash)
+执行 Linux/Mac 系统命令。
+
+| 参数 | 说明 |
+|------|------|
+| command | 要执行的命令 |
+| timeout | 超时时间（秒），默认 30 |
+| cwd | 工作目录 |
+
+**高危命令禁止执行**: rm -rf, dd, mkfs, wget/curl 管道执行, chmod 777, chown, shutdown, reboot, kill -9 等
+
 ## 工具调用格式
 当需要执行操作时，请以 JSON 格式返回工具调用：
 
