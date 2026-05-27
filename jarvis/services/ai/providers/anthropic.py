@@ -113,7 +113,7 @@ class AnthropicAdapter(AIClient):
         payload = {
             "model": self.model,
             "messages": anthropic_messages,
-            "stream": stream,
+            "stream": False,  # Always use False for non-streaming JSON response
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,  # Required by Anthropic
         }
