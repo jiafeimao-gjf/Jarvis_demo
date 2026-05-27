@@ -496,14 +496,22 @@ class ChatEngine:
             # 文件名格式: {conversation_id}.json
             file_path = conv_dir / f"{conv.conversation_id}.json"
 
+            # Helper to format timestamp
+            def format_timestamp(ts):
+                if ts is None:
+                    return None
+                if isinstance(ts, str):
+                    return ts
+                return ts.isoformat()
+
             # 准备数据
             data = {
                 "conversation_id": conv.conversation_id,
                 "user_id": conv.user_id,
                 "messages": [msg.to_dict() for msg in conv.messages],
                 "context": conv.context,
-                "created_at": conv.created_at.isoformat() if conv.created_at else None,
-                "updated_at": conv.updated_at.isoformat() if conv.updated_at else None
+                "created_at": format_timestamp(conv.created_at),
+                "updated_at": format_timestamp(conv.updated_at)
             }
 
             # 写入文件
