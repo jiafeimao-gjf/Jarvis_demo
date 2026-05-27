@@ -43,7 +43,8 @@ export function useApi() {
   async function chatStream(
     request: ChatRequest,
     onToken: (token: string) => void,
-    onDone?: () => void
+    onDone?: () => void,
+    onStatus?: (status: string) => void
   ): Promise<void> {
     error.value = null
     try {
@@ -82,6 +83,8 @@ export function useApi() {
                   onToken(data.content)
                 } else if (data.type === 'done') {
                   onDone?.()
+                } else if (data.type === 'status' && data.content) {
+                  onStatus?.(data.content)
                 }
               } catch {
                 // Incomplete JSON, will be completed in next chunk

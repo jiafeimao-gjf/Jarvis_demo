@@ -10,10 +10,17 @@ const settingsStore = useSettingsStore()
 const api = useApi()
 const inputValue = ref('')
 const isLoading = ref(false)
+const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done'
 const currentResponse = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const showScrollBtn = ref(false)
 const isAtBottom = ref(true)
+
+const statusText = {
+  thinking: '贾维斯正在思考...',
+  typing: '贾维斯正在输入...',
+  done: ''
+}
 
 function handleScroll() {
   if (!messagesContainer.value) return
@@ -44,6 +51,7 @@ async function handleSend() {
   }
 
   isLoading.value = true
+  thinkingStatus.value = 'thinking'
   currentResponse.value = ''
 
   try {
@@ -67,24 +75,38 @@ async function handleSend() {
         messages: messagesToSend
       },
       (token: string) => {
+        // First token means we started typing
+        if (thinkingStatus.value === 'thinking') {
+          thinkingStatus.value = 'typing'
+        }
         currentResponse.value += token
         // Update the last message with streaming content
         if (chatStore.messages[msgIndex]) {
           chatStore.messages[msgIndex].content = currentResponse.value
         }
+        // Auto-scroll during streaming if user is at bottom
+        if (isAtBottom.value) {
+          nextTick(() => scrollToBottom(false))
+        }
       },
       () => {
         // Done
         isLoading.value = false
-        // Auto-scroll to bottom when done (only if was at bottom)
-        if (isAtBottom.value) {
-          nextTick(() => scrollToBottom(false))
+        thinkingStatus.value = 'done'
+        // Final scroll to bottom
+        nextTick(() => scrollToBottom(false))
+      },
+      (status: string) => {
+        // Handle status updates from server
+        if (status === 'thinking') {
+          thinkingStatus.value = 'thinking'
         }
       }
     )
   } catch (e) {
     chatStore.addMessage('assistant', `抱歉，发生错误：${(e as Error).message}`)
     isLoading.value = false
+    thinkingStatus.value = 'done'
   }
 }
 
@@ -131,13 +153,13 @@ onMounted(() => {
         :message="msg"
       />
 
-      <div v-if="isLoading" class="flex items-center gap-2">
+      <div v-if="isLoading && thinkingStatus !== 'done'" class="flex items-center gap-2">
         <div class="typing-indicator">
           <span></span>
           <span></span>
           <span></span>
         </div>
-        <span class="text-sm text-muted-foreground">贾维斯正在思考...</span>
+        <span class="text-sm text-muted-foreground">{{ statusText[thinkingStatus] }}</span>
       </div>
     </div>
 
