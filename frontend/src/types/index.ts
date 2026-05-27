@@ -29,6 +29,7 @@ export interface SystemStatus {
 export interface ChatRequest {
   message: string
   conversation_id?: string
+  user_id?: string
   stream?: boolean
   model?: string
   force_refresh_models?: boolean

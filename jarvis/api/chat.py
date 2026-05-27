@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     """对话请求模型"""
     message: str
     conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
     model: Optional[str] = None
     stream: bool = True
     force_refresh_models: bool = False
@@ -80,7 +81,8 @@ async def chat_stream(request: ChatRequest):
                     request.message,
                     request.messages,
                     request.model,
-                    request.conversation_id
+                    request.conversation_id,
+                    request.user_id
                 ):
                     full_response += token
                     yield {
@@ -93,7 +95,8 @@ async def chat_stream(request: ChatRequest):
                 async for token in mediator.chat_engine.stream_chat(
                     request.message,
                     request.conversation_id,
-                    request.model
+                    request.model,
+                    request.user_id
                 ):
                     full_response += token
                     yield {

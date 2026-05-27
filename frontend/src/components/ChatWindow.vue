@@ -70,6 +70,7 @@ async function handleSend() {
         message: text,
         stream: true,
         conversation_id: chatStore.currentConversationId || undefined,
+        user_id: settingsStore.settings.user_name || undefined,
         force_refresh_models: false,
         model: settingsStore.settings.ai_default_model,
         messages: messagesToSend
