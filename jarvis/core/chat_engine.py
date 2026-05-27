@@ -122,6 +122,9 @@ class ChatEngine:
         stream: bool = False  # Default to non-stream for simpler response
     ) -> str:
         """处理对话 - 支持工具调用"""
+        logger.info(f"[Chat] 开始处理对话 | conv_id={conversation_id} | model={model} | input_len={len(user_input)}")
+        logger.debug(f"[Chat] 用户输入: {user_input[:100]}...")
+
         # 1. 获取或创建对话上下文
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
@@ -132,13 +135,17 @@ class ChatEngine:
                     messages=[Message(**m) for m in conv_data.get("messages", [])],
                     context=conv_data.get("context", {})
                 )
+                logger.info(f"[Chat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
             else:
+                logger.info(f"[Chat] 对话不存在，创建新对话 | conv_id={conversation_id}")
                 self.current_conversation = Conversation(conversation_id=conversation_id)
         else:
+            logger.info("[Chat] 无conv_id，创建新对话")
             self.current_conversation = Conversation()
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
+        logger.debug(f"[Chat] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
 
         # 3. 检索相关记忆
         memories = await self.memory.retrieve(user_input, top_k=3)
@@ -147,9 +154,18 @@ class ChatEngine:
             context_prompt = "\n相关记忆：\n" + "\n".join(
                 [f"- {m['content']}" for m in memories]
             )
+            logger.info(f"[Chat] 检索到 {len(memories)} 条相关记忆")
+            for m in memories:
+                logger.debug(f"[Chat] 记忆: {m['content'][:50]}...")
+        else:
+            logger.debug("[Chat] 未检索到相关记忆")
 
         # 4. 加载 Prompt 设置
         prompt_settings = await self._load_prompt_settings()
+        if prompt_settings.persona or prompt_settings.abilities or prompt_settings.memory or prompt_settings.tools:
+            logger.info(f"[Chat] 已加载 Prompt 设置 | persona={'有' if prompt_settings.persona else '无'} | abilities={'有' if prompt_settings.abilities else '无'} | memory={'有' if prompt_settings.memory else '无'} | tools={'有' if prompt_settings.tools else '无'}")
+        else:
+            logger.debug("[Chat] 未配置自定义 Prompt 设置")
 
         # 5. 构建消息历史
         messages = [
@@ -157,12 +173,14 @@ class ChatEngine:
         ]
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
+        logger.debug(f"[Chat] 构建消息历史 | history_count={len(self.current_conversation.get_history(limit=10))} | system_prompt_len={len(messages[0]['content'])}")
 
-        # 5. 工具调用迭代循环
+        # 6. 工具调用迭代循环
         final_response = ""
         iteration_count = 0
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
+            logger.debug(f"[Chat] 第 {iteration_count + 1} 次迭代，调用 LLM...")
             # 调用 LLM
             response = await self.router.chat(
                 messages,
@@ -172,31 +190,40 @@ class ChatEngine:
 
             response_text = response.content
             final_response = response_text
+            logger.info(f"[Chat] LLM 响应 | len={len(response_text)} | has_tool_calls={self.tool_parser.has_tool_calls(response_text)}")
+            logger.debug(f"[Chat] LLM 响应内容: {response_text[:200]}...")
 
             # 检查是否有工具调用
             if not self.tool_parser.has_tool_calls(response_text):
+                logger.debug("[Chat] 无工具调用，结束迭代")
                 # 没有工具调用，返回响应
                 break
 
             tool_calls = self.tool_parser.parse(response_text)
             if not tool_calls:
                 # 解析失败但有工具标记，跳出
+                logger.warning("[Chat] 检测到工具调用但解析失败")
                 break
 
-            logger.info(f"迭代 {iteration_count + 1}: 发现 {len(tool_calls)} 个工具调用")
+            logger.info(f"[Chat] 迭代 {iteration_count + 1}: 发现 {len(tool_calls)} 个工具调用")
+            for tc in tool_calls:
+                logger.info(f"[Chat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
 
-            # 6. 顺序执行工具调用
+            # 7. 顺序执行工具调用
             for tool_call in tool_calls:
                 step = Step(
                     tool=tool_call.tool,
                     params=tool_call.params
                 )
                 try:
+                    logger.debug(f"[Chat] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
                     status = result.get("status") if isinstance(result, dict) else "success"
-                    logger.info(f"工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
+                    logger.info(f"[Chat] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
+                    if isinstance(result, dict) and 'content' in result:
+                        logger.debug(f"[Chat] 工具结果内容: {str(result['content'])[:100]}...")
                 except Exception as e:
-                    logger.error(f"工具执行错误: {e}")
+                    logger.error(f"[Chat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
                 # 格式化结果并添加到消息
@@ -209,24 +236,27 @@ class ChatEngine:
                 self.current_conversation.add_message("user", result_message)
                 messages.append({"role": "user", "content": result_message})
 
-        # 7. 添加助手消息（最终响应）
+        # 8. 添加助手消息（最终响应）
         self.current_conversation.add_message("assistant", final_response)
+        logger.info(f"[Chat] 对话完成 | total_messages={len(self.current_conversation.messages)}")
 
-        # 8. 保存对话历史
-        await self.memory.save_conversation(
+        # 9. 保存对话历史
+        save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
             [msg.to_dict() for msg in self.current_conversation.messages],
             self.current_conversation.context
         )
+        logger.info(f"[Chat] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 9. 保存相关记忆（如果是有意义的信息）
+        # 10. 保存相关记忆（如果是有意义的信息）
         if len(user_input) > 10 and "记住" in user_input:
             key = user_input[:50].strip()
-            await self.memory.save(key, user_input)
+            save_mem_result = await self.memory.save(key, user_input)
+            logger.info(f"[Chat] 保存记忆 | key={key} | success={save_mem_result}")
 
         if iteration_count >= MAX_TOOL_ITERATIONS - 1:
-            logger.warning(f"已达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
+            logger.warning(f"[Chat] 达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
 
         return final_response
 
@@ -237,6 +267,8 @@ class ChatEngine:
         model: Optional[str] = None
     ):
         """流式对话 - 两阶段：第一阶段执行工具，第二阶段流式返回"""
+        logger.info(f"[StreamChat] 开始处理 | conv_id={conversation_id} | model={model} | input_len={len(user_input)}")
+
         # 1. 获取或创建对话上下文
         if conversation_id:
             conv_data = await self.memory.get_conversation(conversation_id)
@@ -247,16 +279,21 @@ class ChatEngine:
                     messages=[Message(**m) for m in conv_data.get("messages", [])],
                     context=conv_data.get("context", {})
                 )
+                logger.info(f"[StreamChat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
             else:
+                logger.info(f"[StreamChat] 对话不存在，创建新对话 | conv_id={conversation_id}")
                 self.current_conversation = Conversation(conversation_id=conversation_id)
         else:
+            logger.info("[StreamChat] 无conv_id，创建新对话")
             self.current_conversation = Conversation()
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
+        logger.debug(f"[StreamChat] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
 
         # 3. 加载 Prompt 设置
         prompt_settings = await self._load_prompt_settings()
+        logger.debug(f"[StreamChat] Prompt设置已加载 | persona={'有' if prompt_settings.persona else '无'}")
 
         # 4. 构建消息列表
         messages = [
@@ -267,65 +304,47 @@ class ChatEngine:
                 {"role": m.role, "content": m.content}
                 for m in self.current_conversation.get_history(limit=10)
             ])
+        logger.debug(f"[StreamChat] 构建消息 | history_count={len(self.current_conversation.get_history(limit=10))}")
 
         messages.append({"role": "user", "content": user_input})
 
-        # 4. 第一阶段：非流式调用以检测工具
+        # 5. 第一阶段：非流式调用以检测工具
+        logger.debug("[StreamChat] 调用 LLM (第一阶段)...")
         response = await self.router.chat(messages, model=model, stream=False)
         response_text = response.content
+        logger.info(f"[StreamChat] LLM 第一阶段响应 | len={len(response_text)}")
 
-        # 5. 检测并执行工具调用
+        # 6. 检测并执行工具调用
         iteration_count = 0
         final_response = response_text
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
             if not self.tool_parser.has_tool_calls(response_text):
+                logger.debug("[StreamChat] 无工具调用，结束迭代")
                 break
-
-            tool_calls = self.tool_parser.parse(response_text)
-            if not tool_calls:
-                break
-
-            logger.info(f"Stream: 发现 {len(tool_calls)} 个工具调用")
-
-            # 执行工具
-            for tool_call in tool_calls:
-                step = Step(tool=tool_call.tool, params=tool_call.params)
-                try:
-                    result = await self.task_executor.execute_step(step)
-                    status = result.get("status") if isinstance(result, dict) else "success"
-                    logger.info(f"Stream: 工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
-                except Exception as e:
-                    logger.error(f"Stream: 工具执行错误: {e}")
-                    result = {"status": "error", "message": str(e)}
-
-                # 格式化结果并添加
-                result_message = ToolResultFormatter.format(
-                    tool=tool_call.tool,
-                    action=tool_call.action,
-                    params=tool_call.params,
-                    result=result
-                )
-                self.current_conversation.add_message("user", result_message)
-                messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
+            logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
             response = await self.router.chat(messages, model=model, stream=False)
             response_text = response.content
             final_response = response_text
+            logger.info(f"[StreamChat] LLM 后续响应 | len={len(response_text)}")
 
-        # 6. 保存对话历史
+        # 7. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
-        await self.memory.save_conversation(
+        save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
             [msg.to_dict() for msg in self.current_conversation.messages],
             self.current_conversation.context
         )
+        logger.info(f"[StreamChat] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 7. 流式返回最终响应
+        # 8. 流式返回最终响应
+        logger.info(f"[StreamChat] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
+        logger.info("[StreamChat] 流式返回完成")
 
     async def stream_chat_with_messages(
         self,
@@ -334,14 +353,18 @@ class ChatEngine:
         model: Optional[str] = None
     ):
         """流式对话 - 使用传入的完整消息历史"""
+        logger.info(f"[StreamChatWithMsgs] 开始处理 | model={model} | input_len={len(user_input)} | history_len={len(messages_history)}")
+
         # 1. 创建对话上下文
         self.current_conversation = Conversation()
+        logger.debug("[StreamChatWithMsgs] 新建空对话上下文")
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
 
         # 3. 加载 Prompt 设置
         prompt_settings = await self._load_prompt_settings()
+        logger.debug(f"[StreamChatWithMsgs] Prompt设置已加载")
 
         # 4. 构建消息列表 - 使用传入的历史
         messages = [
@@ -349,16 +372,21 @@ class ChatEngine:
         ]
 
         # 添加历史消息（过滤掉 system）
+        history_count = 0
         for msg in messages_history:
             if msg.get("role") != "system":
                 messages.append({"role": msg["role"], "content": msg["content"]})
+                history_count += 1
+        logger.debug(f"[StreamChatWithMsgs] 已添加 {history_count} 条历史消息")
 
         # 添加当前用户消息
         messages.append({"role": "user", "content": user_input})
 
         # 5. 第一阶段：非流式调用以检测工具
+        logger.debug("[StreamChatWithMsgs] 调用 LLM (第一阶段)...")
         response = await self.router.chat(messages, model=model, stream=False)
         response_text = response.content
+        logger.info(f"[StreamChatWithMsgs] LLM 第一阶段响应 | len={len(response_text)}")
 
         # 6. 检测并执行工具调用
         iteration_count = 0
@@ -366,23 +394,27 @@ class ChatEngine:
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
             if not self.tool_parser.has_tool_calls(response_text):
+                logger.debug("[StreamChatWithMsgs] 无工具调用，结束迭代")
                 break
 
             tool_calls = self.tool_parser.parse(response_text)
             if not tool_calls:
                 break
 
-            logger.info(f"Stream with messages: 发现 {len(tool_calls)} 个工具调用")
+            logger.info(f"[StreamChatWithMsgs] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
+            for tc in tool_calls:
+                logger.info(f"[StreamChatWithMsgs] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
 
             # 执行工具
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
                 try:
+                    logger.debug(f"[StreamChatWithMsgs] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
                     status = result.get("status") if isinstance(result, dict) else "success"
-                    logger.info(f"Stream with messages: 工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
+                    logger.info(f"[StreamChatWithMsgs] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
                 except Exception as e:
-                    logger.error(f"Stream with messages: 工具执行错误: {e}")
+                    logger.error(f"[StreamChatWithMsgs] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
                 # 格式化结果并添加
@@ -396,31 +428,39 @@ class ChatEngine:
                 messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
+            logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")
             response = await self.router.chat(messages, model=model, stream=False)
             response_text = response.content
             final_response = response_text
+            logger.info(f"[StreamChatWithMsgs] LLM 后续响应 | len={len(response_text)}")
 
         # 7. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
-        await self.memory.save_conversation(
+        save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
             [msg.to_dict() for msg in self.current_conversation.messages],
             self.current_conversation.context
         )
+        logger.info(f"[StreamChatWithMsgs] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
         # 8. 流式返回最终响应
+        logger.info(f"[StreamChatWithMsgs] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
+        logger.info("[StreamChatWithMsgs] 流式返回完成")
 
     def set_work_folder(self, folder: str):
         """设置工作目录"""
         self.work_folder = folder
-        logger.info(f"Work folder set to: {folder}")
+        logger.info(f"[ChatEngine] 工作目录已设置: {folder}")
 
     async def list_models(self, force_refresh: bool = False) -> list[dict]:
         """List available models from all providers"""
-        return await self.router.list_models(force_refresh=force_refresh)
+        logger.info(f"[ChatEngine] 列出可用模型 | force_refresh={force_refresh}")
+        models = await self.router.list_models(force_refresh=force_refresh)
+        logger.info(f"[ChatEngine] 可用模型数量: {len(models)}")
+        return models
 
     def to_dict(self) -> dict:
         """导出状态"""
