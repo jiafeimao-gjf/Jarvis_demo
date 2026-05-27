@@ -164,6 +164,12 @@ async function saveConfig() {
       body: JSON.stringify(form.value.tools_prompt)
     })
 
+    await fetch('/api/memory/settings/work_folder', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form.value.work_folder)
+    })
+
     showMessage('配置已保存', 'success')
   } catch (e) {
     showMessage('保存配置失败', 'error')
@@ -336,6 +342,16 @@ async function loadOllamaModels() {
               rows="2"
               class="w-full bg-background rounded px-3 py-2 border border-border resize-none"
               placeholder="关于可用工具的补充说明..."
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm mb-1">工作目录</label>
+            <input
+              v-model="form.work_folder"
+              type="text"
+              class="w-full bg-background rounded px-3 py-2 border border-border"
+              placeholder="设置 AI 的工作目录，默认为当前目录"
             />
           </div>
         </div>

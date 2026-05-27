@@ -12,6 +12,7 @@ export interface Settings {
   ollama_model: string
   log_level: string
   user_name: string
+  work_folder: string
   persona_prompt: string
   abilities_prompt: string
   memory_prompt: string
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: Settings = {
   ollama_model: '',
   log_level: 'INFO',
   user_name: '',
+  work_folder: '',
   persona_prompt: '',
   abilities_prompt: '',
   memory_prompt: '',

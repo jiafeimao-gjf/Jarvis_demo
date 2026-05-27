@@ -27,6 +27,7 @@ class SystemPromptSettings:
     abilities: str = ""    # 能力说明
     memory: str = ""       # 记忆说明
     tools: str = ""        # 工具说明（额外补充）
+    work_folder: str = ""  # 工作目录
 
 
 class ChatEngine:
@@ -73,8 +74,9 @@ class ChatEngine:
         if settings and settings.memory:
             parts.append(f"## 记忆说明\n{settings.memory}")
 
-        # 6. 工作目录和调用格式
-        parts.append(f"## 工作目录\n当前工作目录: {self.work_folder}")
+        # 6. 工作目录（优先使用设置中的，否则使用实例的）
+        work_folder = settings.work_folder if settings and settings.work_folder else self.work_folder
+        parts.append(f"## 工作目录\n当前工作目录: {work_folder}")
         parts.append("""## 工具调用格式
 当需要执行操作时，请以 JSON 格式返回工具调用：
 
@@ -104,11 +106,13 @@ class ChatEngine:
         """从存储加载 Prompt 设置"""
         try:
             all_settings = await memory_store.get_all_settings()
+            work_folder = all_settings.get("work_folder", "")
             return SystemPromptSettings(
                 persona=all_settings.get("persona_prompt", ""),
                 abilities=all_settings.get("abilities_prompt", ""),
                 memory=all_settings.get("memory_prompt", ""),
-                tools=all_settings.get("tools_prompt", "")
+                tools=all_settings.get("tools_prompt", ""),
+                work_folder=work_folder
             )
         except Exception as e:
             logger.warning(f"Failed to load prompt settings: {e}")
