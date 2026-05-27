@@ -7,6 +7,7 @@ from jarvis.core.memory_store import memory_store
 from jarvis.core.task_engine import TaskExecutor
 from jarvis.core.tool_parser import ToolCallParser
 from jarvis.core.tool_result_formatter import ToolResultFormatter
+from jarvis.core.tool_registry import tool_registry
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
 from jarvis.services.ai.models import Provider
@@ -39,71 +40,37 @@ class ChatEngine:
         self.task_executor = TaskExecutor(self.work_folder)
         self.tool_parser = ToolCallParser(self.work_folder)
 
-        # 工具列表定义
-        self.available_tools = """## 可用工具
+    def _build_system_prompt(self) -> str:
+        """构建系统提示词"""
+        tools_desc = tool_registry.build_schema_for_llm()
 
-### 1. 文件操作 (tool: file)
-执行文件读写编辑删除等操作。
+        return f"""{tools_desc}
 
-| 操作 | 参数 | 说明 |
-|------|------|------|
-| read | path | 读取文件内容 |
-| write | path, content | 写入文件 |
-| edit | path, old_content, new_content | 修改文件 |
-| delete | path | 删除文件/目录 |
-| list | path | 列出目录文件 |
-| mkdir | path | 创建目录 |
-| exists | path | 检查文件是否存在 |
-| set_work_folder | folder | 设置工作目录 |
-| get_work_folder | - | 获取当前工作目录 |
-
-### 2. 浏览器自动化 (tool: browser)
-使用 Playwright 执行浏览器操作。
-
-### 3. 桌面控制 (tool: desktop)
-使用 pyautogui 执行桌面自动化操作。
-
-### 4. API 调用 (tool: api)
-发送 HTTP 请求。
-
-### 5. 通用工具 (tool: tool)
-运行 MCP 工具。
-
-### 6. Bash 命令 (tool: bash)
-执行 Linux/Mac 系统命令。
-
-| 参数 | 说明 |
-|------|------|
-| command | 要执行的命令 |
-| timeout | 超时时间（秒），默认 30 |
-| cwd | 工作目录 |
-
-**高危命令禁止执行**: rm -rf, dd, mkfs, wget/curl 管道执行, chmod 777, chown, shutdown, reboot, kill -9 等
+## 工作目录
+当前工作目录: {self.work_folder}
 
 ## 工具调用格式
 当需要执行操作时，请以 JSON 格式返回工具调用：
 
-单个调用：
+单个调用（标准格式）：
 ```json
-{"tool": "file", "params": {"action": "read", "path": "file.txt"}}
+{{"tool": "file", "params": {{"action": "read", "path": "file.txt"}}}}
+```
+
+单个调用（MiniMax格式）：
+```json
+{{"name": "bash", "parameters": {{"command": "ls -la"}}}}
 ```
 
 多个调用：
 ```json
 [
-  {"tool": "file", "params": {"action": "read", "path": "file.txt"}},
-  {"tool": "browser", "params": {"action": "navigate", "url": "https://example.com"}}
+  {{"tool": "file", "params": {{"action": "read", "path": "file.txt"}}}},
+  {{"tool": "bash", "params": {{"command": "ls"}}}}
 ]
 ```
 
-## 工作目录
-当前工作目录: {work_folder}
-
 请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请在回复末尾以 JSON 格式明确说明将使用的工具。"""
-
-    def _build_system_prompt(self) -> str:
-        """构建系统提示词"""
-        return self.available_tools.replace("{work_folder}", self.work_folder)
 
     async def chat(
         self,

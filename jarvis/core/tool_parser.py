@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Any
 from jarvis.utils.logger import get_logger
+from jarvis.core.tool_registry import tool_registry
 
 logger = get_logger(__name__)
 
@@ -21,17 +22,8 @@ class ToolCall:
 class ToolCallParser:
     """从 LLM 文本响应中解析工具调用"""
 
-    # 支持的工具列表
-    VALID_TOOLS = {"file", "browser", "desktop", "api", "tool", "bash"}
-
     # JSON 数组模式: [{}, {}]
     JSON_ARRAY_PATTERN = re.compile(r'\[\s*\{.*\}\s*\]', re.DOTALL)
-
-    # JSON 对象模式: {"tool": "...", "params": {...}}
-    JSON_OBJECT_PATTERN = re.compile(
-        r'\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"params"\s*:\s*\{[^}]+\}',
-        re.DOTALL
-    )
 
     def __init__(self, work_folder: Optional[str] = None):
         self.work_folder = work_folder
@@ -46,7 +38,6 @@ class ToolCallParser:
 
         # 尝试 JSON 数组格式: [{}, {}]
         try:
-            # 先找整个 JSON 数组
             array_match = re.search(r'\[[\s\S]*\]', cleaned_text)
             if array_match:
                 calls = json.loads(array_match.group())
@@ -58,13 +49,12 @@ class ToolCallParser:
         except json.JSONDecodeError:
             pass
 
-        # 尝试直接找所有包含 "tool" 的 JSON 对象
+        # 尝试直接找所有包含 "tool" 或 "name" 的 JSON 对象
         if not tool_calls:
-            # 使用括号匹配找到完整的 JSON 对象
             json_pattern = re.compile(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}')
             matches = json_pattern.findall(cleaned_text)
             for match in matches:
-                if '"tool"' in match and '"params"' in match:
+                if ('"tool"' in match or '"name"' in match) and ('"params"' in match or '"parameters"' in match):
                     try:
                         call = json.loads(match)
                         tool_call = self._validate_and_create(call, match)
@@ -85,7 +75,9 @@ class ToolCallParser:
         if not tool_name:
             return None
 
-        if tool_name not in self.VALID_TOOLS:
+        # 使用 tool_registry 获取有效工具列表
+        valid_tools = tool_registry.get_tool_names()
+        if tool_name not in valid_tools:
             logger.warning(f"未知工具: {tool_name}")
             return None
 
@@ -95,8 +87,7 @@ class ToolCallParser:
             logger.warning(f"{tool_name} 的 params 参数类型无效")
             return None
 
-        # 如果是 MiniMax 格式 {"command": ..., "context": {}} 直接使用
-        # 如果是标准格式 {"action": ..., "params": {...}} 需要提取
+        # 提取 action（如果是标准格式）
         params = raw_params.copy()
         action = params.pop("action", "") or call.get("action", "")
 
@@ -109,9 +100,6 @@ class ToolCallParser:
 
     def has_tool_calls(self, text: str) -> bool:
         """快速检查文本是否包含可能的工具调用"""
-        # 支持两种格式:
-        # 1. {"tool": ..., "params": ...}
-        # 2. {"name": ..., "parameters": ...}
         return ('"tool"' in text and '"params"' in text) or \
                ('"name"' in text and '"parameters"' in text)
 
