@@ -131,12 +131,13 @@ export const useChatStore = defineStore('chat', () => {
   function createConversation(): Conversation {
     const conv: Conversation = {
       id: crypto.randomUUID(),
+      userId: crypto.randomUUID(),  // Unique user identifier
       title: '新对话',
       messages: [],
       createdAt: new Date(),
       updatedAt: new Date()
     }
-    conversations.value.unshift(conv) // Add to beginning
+    conversations.value.unshift(conv)
     currentConversationId.value = conv.id
     return conv
   }
