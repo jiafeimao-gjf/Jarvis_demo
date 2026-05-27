@@ -1,5 +1,6 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
@@ -244,7 +245,7 @@ class ChatEngine:
         self.current_conversation.add_message("assistant", final_response)
         logger.info(f"[Chat] 对话完成 | total_messages={len(self.current_conversation.messages)}")
 
-        # 9. 保存对话历史
+        # 9. 保存对话历史到 DB
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
@@ -253,7 +254,10 @@ class ChatEngine:
         )
         logger.info(f"[Chat] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 10. 保存相关记忆（如果是有意义的信息）
+        # 10. 保存对话到 JSON 文件
+        await self._save_conversation_to_file()
+
+        # 11. 保存相关记忆（如果是有意义的信息）
         if len(user_input) > 10 and "记住" in user_input:
             key = user_input[:50].strip()
             save_mem_result = await self.memory.save(key, user_input)
@@ -344,7 +348,10 @@ class ChatEngine:
         )
         logger.info(f"[StreamChat] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 8. 流式返回最终响应
+        # 8. 保存对话到 JSON 文件
+        await self._save_conversation_to_file()
+
+        # 9. 流式返回最终响应
         logger.info(f"[StreamChat] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
@@ -465,16 +472,47 @@ class ChatEngine:
         )
         logger.info(f"[StreamChatWithMsgs] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 8. 流式返回最终响应
+        # 8. 保存对话到 JSON 文件
+        await self._save_conversation_to_file()
+
+        # 9. 流式返回最终响应
         logger.info(f"[StreamChatWithMsgs] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
         logger.info("[StreamChatWithMsgs] 流式返回完成")
 
-    def set_work_folder(self, folder: str):
-        """设置工作目录"""
-        self.work_folder = folder
-        logger.info(f"[ChatEngine] 工作目录已设置: {folder}")
+    async def _save_conversation_to_file(self):
+        """将会话保存为 JSON 文件到工作目录"""
+        try:
+            if not self.current_conversation:
+                return
+
+            conv = self.current_conversation
+
+            # 确保目录存在
+            conv_dir = Path(self.work_folder) / "conversations"
+            conv_dir.mkdir(parents=True, exist_ok=True)
+
+            # 文件名格式: {conversation_id}.json
+            file_path = conv_dir / f"{conv.conversation_id}.json"
+
+            # 准备数据
+            data = {
+                "conversation_id": conv.conversation_id,
+                "user_id": conv.user_id,
+                "messages": [msg.to_dict() for msg in conv.messages],
+                "context": conv.context,
+                "created_at": conv.created_at.isoformat() if conv.created_at else None,
+                "updated_at": conv.updated_at.isoformat() if conv.updated_at else None
+            }
+
+            # 写入文件
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"[Chat] 对话已保存到文件 | path={file_path}")
+        except Exception as e:
+            logger.error(f"[Chat] 保存对话到文件失败: {e}")
 
     async def list_models(self, force_refresh: bool = False) -> list[dict]:
         """List available models from all providers"""
