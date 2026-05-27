@@ -496,6 +496,10 @@ class ChatEngine:
             # 文件名格式: {conversation_id}.json
             file_path = conv_dir / f"{conv.conversation_id}.json"
 
+            # 构建系统 Prompt
+            prompt_settings = await self._load_prompt_settings()
+            system_prompt = self._build_system_prompt(prompt_settings)
+
             # Helper to format timestamp
             def format_timestamp(ts):
                 if ts is None:
@@ -508,6 +512,7 @@ class ChatEngine:
             data = {
                 "conversation_id": conv.conversation_id,
                 "user_id": conv.user_id,
+                "system_prompt": system_prompt,
                 "messages": [msg.to_dict() for msg in conv.messages],
                 "context": conv.context,
                 "created_at": format_timestamp(conv.created_at),
