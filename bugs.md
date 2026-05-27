@@ -225,3 +225,98 @@ async def _read_file(self, path: str) -> dict:
 **预防:**
 - 文件操作等策略在返回错误时，应先通过 logger 记录错误日志
 - 或在策略层检查返回值，发现 error status 时主动发送通知
+
+---
+
+## 10. 选择对话后消息为空
+
+**日期:** 2026-05-27
+
+**问题:** 用户点击历史对话时，只切换了 `currentConversationId`，没有从后端加载消息。刷新页面后之前对话的消息为空。
+
+**原因:** `selectConversation` 只更新 ID，不调用 `GET /memory/conversation/{id}` 获取完整消息。
+
+**解决方案:**
+```typescript
+async function selectConversation(id: string) {
+  // ...
+  const conv = conversations.value.find(c => c.id === id)
+  if (conv && conv.messages.length === 0) {
+    const response = await fetch(`/api/memory/conversation/${id}`)
+    if (response.ok) {
+      const data = await response.json()
+      conv.messages = data.messages.map((m: any) => ({
+        id: crypto.randomUUID(),
+        role: m.role,
+        content: m.content,
+        timestamp: new Date()
+      }))
+    }
+  }
+  // ...
+}
+```
+
+**文件:** `frontend/src/stores/chat.ts`
+
+---
+
+## 11. syncToBackend 无重试机制
+
+**日期:** 2026-05-27
+
+**问题:** `syncToBackend` 发送请求后不检查返回结果，失败时无重试，可能导致对话消息丢失。
+
+**解决方案:**
+- 添加重试机制（默认 3 次）
+- 检查 `response.ok` 并在失败时等待 1s * attempt 后重试
+- 返回 `boolean` 表明是否成功
+
+**文件:** `frontend/src/stores/chat.ts`
+
+---
+
+## 12. MiniMax 工具调用格式不兼容
+
+**日期:** 2026-05-27
+
+**问题:** MiniMax 返回的工具调用格式是 `{"name": ..., "parameters": {...}}`，而解析器只支持 `{"tool": ..., "params": {...}}`。
+
+**解决方案:**
+- `ToolCallParser` 支持两种格式
+- `tool_parser.py` 使用 `tool_registry.get_tool_names()` 动态获取有效工具
+
+**文件:** `jarvis/core/tool_parser.py`
+
+---
+
+## 13. POST /memory/conversation/{id} 422 错误
+
+**日期:** 2026-05-27
+
+**错误信息:**
+```
+Field required", "loc": ["body", "messages"]
+```
+
+**问题:** FastAPI 将 `ConversationRequest` 字段当作 query 参数处理，而不是请求体。
+
+**解决方案:** 改用 `Request.json()` 直接解析请求体。
+
+**文件:** `jarvis/api/memory.py`
+
+---
+
+## 14. 模型选择与后端不一致
+
+**日期:** 2026-05-27
+
+**问题:** 前端选择 MiniMax 模型，但请求只带 model 不带 provider，后端用 settings 默认 provider 路由。
+
+**解决方案:**
+- 前端 `ChatWindow.vue` 添加 `model: settingsStore.settings.ai_default_model`
+- 后端 `AIRouter.chat()` 当指定 model 时，使用 model 的 provider 而非 config 默认值
+
+**文件:**
+- `frontend/src/components/ChatWindow.vue`
+- `jarvis/services/ai/router.py`

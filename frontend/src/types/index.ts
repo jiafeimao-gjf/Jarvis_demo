@@ -11,6 +11,8 @@ export interface Conversation {
   messages: Message[]
   createdAt: Date
   updatedAt: Date
+  userId?: string
+  context?: Record<string, any>
 }
 
 export interface HardwareStatus {

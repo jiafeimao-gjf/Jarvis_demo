@@ -93,26 +93,38 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // Sync current conversation to backend
-  async function syncToBackend(conversation: Conversation) {
-    if (!conversation || !conversation.id) return
+  // Sync current conversation to backend with retry
+  async function syncToBackend(conversation: Conversation, retries = 3): Promise<boolean> {
+    if (!conversation || !conversation.id) return false
 
-    try {
-      await fetch(`/api/memory/conversation/${conversation.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: '',
-          messages: conversation.messages.map(m => ({
-            role: m.role,
-            content: m.content
-          })),
-          context: {}
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`/api/memory/conversation/${conversation.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: conversation.userId || '',
+            messages: conversation.messages.map(m => ({
+              role: m.role,
+              content: m.content
+            })),
+            context: conversation.context || {}
+          })
         })
-      })
-    } catch (e) {
-      console.error('Failed to sync to backend:', e)
+
+        if (response.ok) {
+          return true
+        }
+        console.error(`Sync attempt ${attempt} failed: ${response.status}`)
+      } catch (e) {
+        console.error(`Sync attempt ${attempt} error:`, e)
+      }
+
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+      }
     }
+    return false
   }
 
   // Create new conversation
@@ -131,14 +143,36 @@ export const useChatStore = defineStore('chat', () => {
 
   // Select conversation
   let previousConversationId: string | null = null
-  function selectConversation(id: string) {
+  async function selectConversation(id: string) {
     // Sync previous conversation before switching
     if (previousConversationId && previousConversationId !== id) {
       const prevConv = conversations.value.find(c => c.id === previousConversationId)
       if (prevConv) {
-        syncToBackend(prevConv)
+        await syncToBackend(prevConv)
       }
     }
+
+    // Load full messages for selected conversation if needed
+    const conv = conversations.value.find(c => c.id === id)
+    if (conv && conv.messages.length === 0) {
+      try {
+        const response = await fetch(`/api/memory/conversation/${id}`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.messages) {
+            conv.messages = data.messages.map((m: any) => ({
+              id: crypto.randomUUID(),
+              role: m.role,
+              content: m.content,
+              timestamp: new Date()
+            }))
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load conversation messages:', e)
+      }
+    }
+
     previousConversationId = currentConversationId.value
     currentConversationId.value = id
   }
