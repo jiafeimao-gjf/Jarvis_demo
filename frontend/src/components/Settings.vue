@@ -348,6 +348,7 @@ async function loadOllamaModels() {
 <style scoped>
 .settings-page {
   background: var(--background);
-  min-height: 100vh;
+  height: 100vh;
+  overflow-y: auto;
 }
 </style>
