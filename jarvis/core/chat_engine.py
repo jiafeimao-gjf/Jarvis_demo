@@ -172,15 +172,20 @@ class ChatEngine:
         else:
             logger.debug("[Chat] 未配置自定义 Prompt 设置")
 
-        # 5. 构建消息历史
+        # 5. 构建系统 Prompt（包含记忆）
+        system_prompt = self._build_system_prompt(prompt_settings)
+        if context_prompt:
+            system_prompt = system_prompt + context_prompt
+
+        # 6. 构建消息历史
         messages = [
-            {"role": "system", "content": self._build_system_prompt(prompt_settings) + context_prompt}
+            {"role": "system", "content": system_prompt}
         ]
         for msg in self.current_conversation.get_history(limit=10):
             messages.append({"role": msg.role, "content": msg.content})
         logger.debug(f"[Chat] 构建消息历史 | history_count={len(self.current_conversation.get_history(limit=10))} | system_prompt_len={len(messages[0]['content'])}")
 
-        # 6. 工具调用迭代循环
+        # 7. 工具调用迭代循环
         final_response = ""
         iteration_count = 0
 
