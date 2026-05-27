@@ -68,12 +68,19 @@ async def get_conversation(conversation_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ConversationRequest(BaseModel):
+    """保存对话请求模型"""
+    user_id: str = ""
+    messages: list = []
+    context: dict = {}
+
+
 @router.post("/conversation/{conversation_id}")
-async def save_conversation(conversation_id: str, user_id: str, messages: list, context: dict):
+async def save_conversation(conversation_id: str, request: ConversationRequest):
     """保存对话历史"""
     try:
         success = await mediator.memory_store.save_conversation(
-            conversation_id, user_id, messages, context
+            conversation_id, request.user_id, request.messages, request.context
         )
         return {"success": success}
     except Exception as e:
