@@ -43,9 +43,20 @@ async function handleSend() {
     chatStore.addMessage('assistant', '')
     const msgIndex = chatStore.messages.length - 1
 
-    // Use streaming API
+    // Use streaming API with current conversation context
+    const messagesToSend = chatStore.messages.map(m => ({
+      role: m.role,
+      content: m.content
+    }))
+
     await api.chatStream(
-      { message: text, stream: true },
+      {
+        message: text,
+        stream: true,
+        conversation_id: chatStore.currentConversationId || undefined,
+        force_refresh_models: false,
+        messages: messagesToSend
+      },
       (token: string) => {
         currentResponse.value += token
         // Update the last message with streaming content

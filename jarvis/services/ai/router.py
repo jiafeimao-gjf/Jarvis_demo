@@ -213,7 +213,7 @@ class AIRouter:
 
         return result
 
-    async def list_models(self, provider: Optional[str] = None) -> list[dict]:
+    async def list_models(self, provider: Optional[str] = None, force_refresh: bool = False) -> list[dict]:
         """List available models from provider(s)"""
         result = []
         providers = [provider] if provider else [p.value for p in Provider]
@@ -223,7 +223,7 @@ class AIRouter:
                 # Get a default model for the provider to create client
                 model_id = self.config.get_provider_config(prov).default_model
                 client = self._get_client(prov, model_id)
-                models = await client.list_models()
+                models = await client.list_models(force_refresh=force_refresh)
                 for m in models:
                     m["provider"] = prov
                 result.extend(models)

@@ -19,6 +19,9 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     model: Optional[str] = None
     stream: bool = True
+    force_refresh_models: bool = False
+    # 可选：传递完整对话历史以支持上下文
+    messages: Optional[list[dict]] = None
 
 
 class ChatResponse(BaseModel):
@@ -48,10 +51,10 @@ async def chat(request: ChatRequest):
 
 
 @router.get("/models")
-async def list_models():
+async def list_models(force_refresh: bool = False):
     """获取可用的 AI 模型列表"""
     try:
-        models = await mediator.chat_engine.list_models()
+        models = await mediator.chat_engine.list_models(force_refresh=force_refresh)
         return {"models": models}
     except Exception as e:
         logger.error(f"List models error: {e}")
@@ -69,18 +72,33 @@ async def chat_stream(request: ChatRequest):
                 "data": json.dumps({"type": "status", "content": "thinking"})
             }
 
-            # 流式处理
-            full_response = ""
-            async for token in mediator.chat_engine.stream_chat(
-                request.message,
-                request.conversation_id,
-                request.model
-            ):
-                full_response += token
-                yield {
-                    "event": "token",
-                    "data": json.dumps({"type": "token", "content": token})
-                }
+            # 如果提供了完整消息历史，使用它；否则使用 conversation_id
+            if request.messages is not None:
+                # 使用传入的消息历史
+                full_response = ""
+                async for token in mediator.chat_engine.stream_chat_with_messages(
+                    request.message,
+                    request.messages,
+                    request.model
+                ):
+                    full_response += token
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"type": "token", "content": token})
+                    }
+            else:
+                # 使用 conversation_id 获取历史
+                full_response = ""
+                async for token in mediator.chat_engine.stream_chat(
+                    request.message,
+                    request.conversation_id,
+                    request.model
+                ):
+                    full_response += token
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"type": "token", "content": token})
+                    }
 
             # 发送完成状态
             yield {

@@ -66,20 +66,26 @@ export function useApi() {
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
 
-        for (const line of lines) {
+        // Process complete events (lines starting with 'data: ')
+        while (buffer.includes('\n')) {
+          const newlineIndex = buffer.indexOf('\n')
+          const line = buffer.slice(0, newlineIndex)
+          buffer = buffer.slice(newlineIndex + 1)
+
           if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.type === 'token' && data.content) {
-                onToken(data.content)
-              } else if (data.type === 'done') {
-                onDone?.()
+            const dataStr = line.slice(6).trim()
+            if (dataStr) {
+              try {
+                const data = JSON.parse(dataStr)
+                if (data.type === 'token' && data.content) {
+                  onToken(data.content)
+                } else if (data.type === 'done') {
+                  onDone?.()
+                }
+              } catch {
+                // Incomplete JSON, will be completed in next chunk
               }
-            } catch {
-              // Ignore parse errors for incomplete JSON
             }
           }
         }

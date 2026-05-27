@@ -199,10 +199,16 @@ class OllamaAdapter(AIClient):
             logger.error(f"Ollama health check failed: {e}")
             return False
 
-    async def list_models(self) -> list[dict]:
+    async def list_models(self, force_refresh: bool = False) -> list[dict]:
         """List available models in Ollama"""
         try:
-            response = await self.client.get("/api/tags")
+            # Use cache-busting if force refresh
+            if force_refresh:
+                import time
+                url = f"/api/tags?_t={int(time.time())}"
+            else:
+                url = "/api/tags"
+            response = await self.client.get(url)
             response.raise_for_status()
             data = response.json()
             return data.get("models", [])

@@ -311,14 +311,97 @@ class ChatEngine:
         for token in final_response:
             yield token
 
+    async def stream_chat_with_messages(
+        self,
+        user_input: str,
+        messages_history: list[dict],
+        model: Optional[str] = None
+    ):
+        """流式对话 - 使用传入的完整消息历史"""
+        # 1. 创建对话上下文
+        self.current_conversation = Conversation()
+
+        # 2. 添加用户消息
+        self.current_conversation.add_message("user", user_input)
+
+        # 3. 构建消息列表 - 使用传入的历史
+        messages = [
+            {"role": "system", "content": self._build_system_prompt()}
+        ]
+
+        # 添加历史消息（过滤掉 system）
+        for msg in messages_history:
+            if msg.get("role") != "system":
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # 添加当前用户消息
+        messages.append({"role": "user", "content": user_input})
+
+        # 4. 第一阶段：非流式调用以检测工具
+        response = await self.router.chat(messages, model=model, stream=False)
+        response_text = response.content
+
+        # 5. 检测并执行工具调用
+        iteration_count = 0
+        final_response = response_text
+
+        for iteration_count in range(MAX_TOOL_ITERATIONS):
+            if not self.tool_parser.has_tool_calls(response_text):
+                break
+
+            tool_calls = self.tool_parser.parse(response_text)
+            if not tool_calls:
+                break
+
+            logger.info(f"Stream with messages: 发现 {len(tool_calls)} 个工具调用")
+
+            # 执行工具
+            for tool_call in tool_calls:
+                step = Step(tool=tool_call.tool, params=tool_call.params)
+                try:
+                    result = await self.task_executor.execute_step(step)
+                    status = result.get("status") if isinstance(result, dict) else "success"
+                    logger.info(f"Stream with messages: 工具 {tool_call.tool}.{tool_call.action} 执行完成: {status}")
+                except Exception as e:
+                    logger.error(f"Stream with messages: 工具执行错误: {e}")
+                    result = {"status": "error", "message": str(e)}
+
+                # 格式化结果并添加
+                result_message = ToolResultFormatter.format(
+                    tool=tool_call.tool,
+                    action=tool_call.action,
+                    params=tool_call.params,
+                    result=result
+                )
+                self.current_conversation.add_message("user", result_message)
+                messages.append({"role": "user", "content": result_message})
+
+            # 再次调用 LLM 获取响应
+            response = await self.router.chat(messages, model=model, stream=False)
+            response_text = response.content
+            final_response = response_text
+
+        # 6. 保存对话历史
+        self.current_conversation.add_message("assistant", final_response)
+        await self.memory.save_conversation(
+            self.current_conversation.conversation_id,
+            self.current_conversation.user_id,
+            [msg.to_dict() for msg in self.current_conversation.messages],
+            self.current_conversation.context
+        )
+
+        # 7. 流式返回最终响应
+        for token in final_response:
+            yield token
+
     def set_work_folder(self, folder: str):
         """设置工作目录"""
         self.work_folder = folder
         logger.info(f"Work folder set to: {folder}")
 
-    async def list_models(self) -> list[dict]:
+    async def list_models(self, force_refresh: bool = False) -> list[dict]:
         """List available models from all providers"""
-        return await self.router.list_models()
+        return await self.router.list_models(force_refresh=force_refresh)
 
     def to_dict(self) -> dict:
         """导出状态"""
