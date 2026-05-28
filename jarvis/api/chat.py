@@ -77,32 +77,48 @@ async def chat_stream(request: ChatRequest):
             if request.messages is not None:
                 # 使用传入的消息历史
                 full_response = ""
-                async for token in mediator.chat_engine.stream_chat_with_messages(
+                async for content in mediator.chat_engine.stream_chat_with_messages(
                     request.message,
                     request.messages,
                     request.model,
                     request.conversation_id,
                     request.user_id
                 ):
-                    full_response += token
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"type": "token", "content": token})
-                    }
+                    # 检查是否是 JSON 事件（tool_call 或 tool_result）
+                    if content.startswith('{'):
+                        yield {
+                            "event": "tool",
+                            "data": content
+                        }
+                    else:
+                        full_response += content
+                        yield {
+                            "event": "token",
+                            "data": json.dumps({"type": "token", "content": content})
+                        }
             else:
                 # 使用 conversation_id 获取历史
                 full_response = ""
-                async for token in mediator.chat_engine.stream_chat(
+                async for content in mediator.chat_engine.stream_chat(
                     request.message,
                     request.conversation_id,
                     request.model,
                     request.user_id
                 ):
-                    full_response += token
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"type": "token", "content": token})
-                    }
+                    # 检查是否是 JSON 事件（tool_call 或 tool_result）
+                    if content.startswith('{'):
+                        # 直接发送 JSON 事件
+                        yield {
+                            "event": "tool",
+                            "data": content
+                        }
+                    else:
+                        # 普通文本 token
+                        full_response += content
+                        yield {
+                            "event": "token",
+                            "data": json.dumps({"type": "token", "content": content})
+                        }
 
             # 发送完成状态
             yield {

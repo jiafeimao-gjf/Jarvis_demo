@@ -43,7 +43,6 @@ const renderedContent = computed(() => {
           ? 'bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/30'
           : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
       ]"
-      :style="isUser ? 'clip-path: polygon(0 0, 100% 0, 100% 85%, 85% 100%, 0 100%);' : 'clip-path: polygon(0 0, 100% 0, 100% 100%, 15% 100%, 0 85%);'"
     >
       <!-- User message: plain text -->
       <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>

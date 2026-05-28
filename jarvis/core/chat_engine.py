@@ -418,6 +418,13 @@ class ChatEngine:
             logger.info(f"[StreamChat] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
             for tc in tool_calls:
                 logger.info(f"[StreamChat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
+                # Yield tool call event for frontend
+                yield json.dumps({
+                    "type": "tool_call",
+                    "tool": tc.tool,
+                    "action": tc.action,
+                    "params": tc.params
+                })
 
             # 将助手响应添加到消息历史
             assistant_content = response.content_blocks if response.content_blocks else response.content
@@ -458,6 +465,15 @@ class ChatEngine:
                 )
                 self.current_conversation.add_message("tool_result", result_message["content"])
                 messages.append({"role": "user", "content": result_message})
+
+                # Yield tool result event for frontend
+                yield json.dumps({
+                    "type": "tool_result",
+                    "tool": tool_call.tool,
+                    "action": tool_call.action,
+                    "status": result.get("status", "success"),
+                    "result": result
+                })
 
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
@@ -627,6 +643,15 @@ class ChatEngine:
                 )
                 self.current_conversation.add_message("tool_result", result_message["content"])
                 messages.append({"role": "user", "content": result_message})
+
+                # Yield tool result event for frontend
+                yield json.dumps({
+                    "type": "tool_result",
+                    "tool": tool_call.tool,
+                    "action": tool_call.action,
+                    "status": result.get("status", "success"),
+                    "result": result
+                })
 
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")

@@ -101,6 +101,21 @@ async function handleSend() {
         // Handle status updates from server
         if (status === 'thinking') {
           thinkingStatus.value = 'thinking'
+        } else if (status.startsWith('tool_call:')) {
+          // Display tool call in progress
+          const parts = status.split(':')
+          const tool = parts[1]
+          const action = parts[2]
+          // Add a system message showing tool call
+          chatStore.addMessage('system', `🔧 正在执行工具: ${tool}.${action}`)
+        } else if (status.startsWith('tool_result:')) {
+          // Display tool result
+          const parts = status.split(':')
+          const tool = parts[1]
+          const action = parts[2]
+          const resultStatus = parts[3]
+          const icon = resultStatus === 'success' ? '✅' : '❌'
+          chatStore.addMessage('system', `${icon} 工具完成: ${tool}.${action}`)
         }
       }
     )

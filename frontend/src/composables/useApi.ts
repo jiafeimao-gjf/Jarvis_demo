@@ -85,6 +85,12 @@ export function useApi() {
                   onDone?.()
                 } else if (data.type === 'status' && data.content) {
                   onStatus?.(data.content)
+                } else if (data.type === 'tool_call') {
+                  // Handle tool call events from backend
+                  onStatus?.(`tool_call:${data.tool}:${data.action}`)
+                } else if (data.type === 'tool_result') {
+                  // Handle tool result events from backend
+                  onStatus?.(`tool_result:${data.tool}:${data.action}:${data.status}`)
                 }
               } catch {
                 // Incomplete JSON, will be completed in next chunk
