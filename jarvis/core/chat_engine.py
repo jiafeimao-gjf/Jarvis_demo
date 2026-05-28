@@ -225,6 +225,16 @@ class ChatEngine:
                     tool=tool_call.tool,
                     params=tool_call.params
                 )
+
+                # 将工具调用作为独立消息记录（role: tool）
+                tool_call_message = {
+                    "tool": tool_call.tool,
+                    "action": tool_call.action,
+                    "params": tool_call.params,
+                    "raw": tool_call.raw
+                }
+                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
+
                 try:
                     logger.debug(f"[Chat] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
@@ -357,6 +367,16 @@ class ChatEngine:
             # 执行工具
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
+
+                # 将工具调用作为独立消息记录（role: tool）
+                tool_call_message = {
+                    "tool": tool_call.tool,
+                    "action": tool_call.action,
+                    "params": tool_call.params,
+                    "raw": tool_call.raw
+                }
+                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
+
                 try:
                     logger.debug(f"[StreamChat] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
@@ -491,6 +511,16 @@ class ChatEngine:
             # 执行工具
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
+
+                # 将工具调用作为独立消息记录（role: tool）
+                tool_call_message = {
+                    "tool": tool_call.tool,
+                    "action": tool_call.action,
+                    "params": tool_call.params,
+                    "raw": tool_call.raw
+                }
+                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
+
                 try:
                     logger.debug(f"[StreamChatWithMsgs] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
