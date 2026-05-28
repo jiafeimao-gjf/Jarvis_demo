@@ -59,7 +59,7 @@ class Message:
             "message_id": self.message_id,
             "role": self.role,
             "content": self.content,
-            "timestamp": self.timestamp.isoformat(),
+            "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
             "metadata": self.metadata
         }
 

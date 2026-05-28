@@ -31,6 +31,12 @@ class TestMessage:
         assert "message_id" in data
         assert "timestamp" in data
 
+    def test_message_to_dict_with_string_timestamp(self):
+        """测试消息 timestamp 为字符串时的处理"""
+        msg = Message(role="user", content="Test", timestamp="2024-01-01T00:00:00")
+        data = msg.to_dict()
+        assert data["timestamp"] == "2024-01-01T00:00:00"
+
 
 class TestConversation:
     """测试 Conversation 实体"""

@@ -339,6 +339,44 @@ class ChatEngine:
                 logger.debug("[StreamChat] 无工具调用，结束迭代")
                 break
 
+            tool_calls = self.tool_parser.parse(response_text)
+            if not tool_calls:
+                break
+
+            logger.info(f"[StreamChat] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
+            for tc in tool_calls:
+                logger.info(f"[StreamChat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
+
+            # 将助手响应添加到消息历史
+            assistant_content = response.content_blocks if response.content_blocks else response.content
+            messages.append({
+                "role": "assistant",
+                "content": assistant_content
+            })
+
+            # 执行工具
+            for tool_call in tool_calls:
+                step = Step(tool=tool_call.tool, params=tool_call.params)
+                try:
+                    logger.debug(f"[StreamChat] 执行工具: {tool_call.tool}.{tool_call.action}")
+                    result = await self.task_executor.execute_step(step)
+                    status = result.get("status") if isinstance(result, dict) else "success"
+                    logger.info(f"[StreamChat] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
+                except Exception as e:
+                    logger.error(f"[StreamChat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
+                    result = {"status": "error", "message": str(e)}
+
+                # 格式化结果并添加 - 使用 Anthropic tool_result 格式
+                result_message = ToolResultFormatter.format(
+                    tool=tool_call.tool,
+                    action=tool_call.action,
+                    params=tool_call.params,
+                    result=result,
+                    tool_use_id=tool_call.raw
+                )
+                self.current_conversation.add_message("user", result_message["content"])
+                messages.append({"role": "user", "content": [result_message]})
+
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
             response = await self.router.chat(messages, model=model, stream=False)

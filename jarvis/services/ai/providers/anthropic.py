@@ -6,6 +6,7 @@ import httpx
 from typing import Optional, AsyncIterator
 from jarvis.services.ai.base import AIClient, AIResponse, TokenUsage
 from jarvis.services.ai.exceptions import ProviderNotAvailableError, AuthenticationError, RateLimitError
+from jarvis.services.ai.providers.anthropic_tools import build_anthropic_tools
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -118,6 +119,11 @@ class AnthropicAdapter(AIClient):
             "max_tokens": max_tokens or 4096,  # Required by Anthropic
         }
 
+        # 添加 tools（如果消息中没有 tool_result blocks）
+        tools = build_anthropic_tools()
+        if tools:
+            payload["tools"] = tools
+
         try:
             response = await self.client.post("/messages", json=payload)
             response.raise_for_status()
@@ -176,6 +182,11 @@ class AnthropicAdapter(AIClient):
             "stream": True,
             "max_tokens": 4096,
         }
+
+        # 添加 tools
+        tools = build_anthropic_tools()
+        if tools:
+            payload["tools"] = tools
 
         try:
             async with self.client.stream("POST", "/messages", json=payload) as response:
