@@ -1,20 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
-import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import Notification from './Notification.vue'
 
 const hardware = useHardwareStore()
-const speech = useSpeechRecognition()
 const sidebarOpen = ref(false)
 
 const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
-
-function toggleMic() {
-  speech.toggle()
-}
 
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
@@ -27,10 +21,12 @@ function openSettings() {
 </script>
 
 <template>
-  <header class="h-14 bg-secondary border-b border-border flex items-center justify-between px-6">
-    <div class="flex items-center gap-3">
+  <header class="h-14 scifi-panel flex items-center justify-between px-6 relative overflow-hidden">
+    <div class="absolute inset-0 cyber-grid opacity-50 pointer-events-none" />
+
+    <div class="flex items-center gap-4 relative z-10">
       <button
-        class="p-2 hover:bg-accent rounded-lg transition-colors"
+        class="p-2 hover:bg-accent/50 rounded-lg transition-all btn-cyber"
         @click="toggleSidebar"
         title="切换侧边栏"
       >
@@ -38,57 +34,67 @@ function openSettings() {
           <path d="M3 12h18M3 6h18M3 18h18"/>
         </svg>
       </button>
-      <div class="w-9 h-9 rounded-lg bg-primary flex items-center justify-center">
-        <span class="text-lg font-bold text-primary-foreground">J</span>
+
+      <div class="w-10 h-10 rounded-lg bg-background border border-primary/50 flex items-center justify-center glow-primary">
+        <span class="text-lg font-bold text-primary text-glow">J</span>
       </div>
-      <h1 class="text-lg font-semibold">贾维斯</h1>
+
+      <h1 class="text-lg font-semibold tracking-wide text-glow">JARVIS</h1>
     </div>
 
-    <div class="flex items-center gap-4">
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
+    <div class="flex items-center gap-6 relative z-10">
+      <div class="flex items-center gap-2 text-sm">
         <span
           :class="[
-            'w-2 h-2 rounded-full',
-            hardware.system.server ? 'bg-green-500' : 'bg-red-500'
+            'w-2.5 h-2.5 rounded-full transition-all',
+            hardware.system.server
+              ? 'bg-green-400 pulse-glow text-green-400'
+              : 'bg-red-500/70'
           ]"
         />
-        服务器
+        <span :class="hardware.system.server ? 'text-green-400' : 'text-muted-foreground'">SERVER</span>
       </div>
 
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
+      <div class="flex items-center gap-2 text-sm">
         <span
           :class="[
-            'w-2 h-2 rounded-full',
-            hardware.system.ollama ? 'bg-green-500' : 'bg-red-500'
+            'w-2.5 h-2.5 rounded-full transition-all',
+            hardware.system.ollama
+              ? 'bg-cyan-400 pulse-glow text-cyan-400'
+              : 'bg-red-500/70'
           ]"
         />
-        Ollama
+        <span :class="hardware.system.ollama ? 'text-cyan-400' : 'text-muted-foreground'">OLLAMA</span>
       </div>
 
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
+      <div class="flex items-center gap-2 text-sm">
         <span
           :class="[
-            'w-2 h-2 rounded-full',
-            hardware.hardware.microphone ? 'bg-green-500' : 'bg-red-500'
+            'w-2.5 h-2.5 rounded-full transition-all',
+            hardware.hardware.microphone
+              ? 'bg-green-400 pulse-glow text-green-400'
+              : 'bg-red-500/70'
           ]"
         />
-        麦克风
+        <span :class="hardware.hardware.microphone ? 'text-green-400' : 'text-muted-foreground'">MIC</span>
       </div>
 
-      <div class="flex items-center gap-2 text-sm text-muted-foreground">
+      <div class="flex items-center gap-2 text-sm">
         <span
           :class="[
-            'w-2 h-2 rounded-full',
-            hardware.hardware.camera ? 'bg-green-500' : 'bg-red-500'
+            'w-2.5 h-2.5 rounded-full transition-all',
+            hardware.hardware.camera
+              ? 'bg-green-400 pulse-glow text-green-400'
+              : 'bg-red-500/70'
           ]"
         />
-        摄像头
+        <span :class="hardware.hardware.camera ? 'text-green-400' : 'text-muted-foreground'">CAM</span>
       </div>
 
       <Notification />
 
       <button
-        class="p-2 hover:bg-accent rounded-lg transition-colors"
+        class="p-2 hover:bg-accent/50 rounded-lg transition-all btn-cyber"
         @click="openSettings"
         title="设置"
       >

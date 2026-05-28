@@ -29,20 +29,32 @@ const renderedContent = computed(() => {
 <template>
   <div
     :class="[
-      'flex flex-col rounded-2xl px-4 py-3 max-w-[80%] break-words',
+      'flex flex-col px-4 py-3 max-w-[70%] break-words',
       isUser
-        ? 'bg-primary text-primary-foreground self-end'
-        : 'bg-secondary text-secondary-foreground self-start'
+        ? 'items-end self-end'
+        : 'items-start self-start'
     ]"
   >
-    <!-- User message: plain text -->
-    <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap">{{ message.content }}</p>
-    <!-- Assistant message: rendered markdown with sanitization -->
-    <div v-else class="text-sm leading-relaxed markdown-content" v-html="renderedContent"></div>
+    <!-- Chat bubble -->
+    <div
+      :class="[
+        'rounded-2xl px-4 py-3 relative',
+        isUser
+          ? 'bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/30'
+          : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
+      ]"
+      :style="isUser ? 'clip-path: polygon(0 0, 100% 0, 100% 85%, 85% 100%, 0 100%);' : 'clip-path: polygon(0 0, 100% 0, 100% 100%, 15% 100%, 0 85%);'"
+    >
+      <!-- User message: plain text -->
+      <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
+      <!-- Assistant message: rendered markdown -->
+      <div v-else class="text-sm leading-relaxed markdown-content text-foreground" v-html="renderedContent"></div>
+    </div>
+
     <span
       :class="[
-        'text-xs mt-2 opacity-60',
-        isUser ? 'text-primary-foreground/70' : 'text-muted-foreground'
+        'text-[10px] mt-1 tracking-wider',
+        isUser ? 'text-primary/60 text-right' : 'text-primary/40 text-left'
       ]"
     >
       {{ formatTime(message.timestamp) }}
@@ -56,16 +68,27 @@ const renderedContent = computed(() => {
 }
 
 .markdown-content :deep(pre) {
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid hsl(var(--primary) / 0.2);
   border-radius: 0.5rem;
   padding: 0.75rem;
   margin: 0.5rem 0;
   overflow-x: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
 }
 
 .markdown-content :deep(code) {
   font-family: ui-monospace, monospace;
   font-size: 0.875em;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.15em 0.4em;
+  border-radius: 0.25rem;
+}
+
+.markdown-content :deep(pre code) {
+  background: transparent;
+  padding: 0;
 }
 
 .markdown-content :deep(p:not(:last-child)) {
@@ -83,14 +106,30 @@ const renderedContent = computed(() => {
 }
 
 .markdown-content :deep(a) {
-  color: inherit;
+  color: hsl(var(--primary));
   text-decoration: underline;
 }
 
 .markdown-content :deep(blockquote) {
-  border-left: 3px solid currentColor;
-  opacity: 0.8;
+  border-left: 3px solid hsl(var(--primary) / 0.5);
   padding-left: 0.75rem;
   margin: 0.5rem 0;
+  opacity: 0.8;
+}
+
+.markdown-content :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  border: 1px solid hsl(var(--border));
+  padding: 0.5rem;
+}
+
+.markdown-content :deep(th) {
+  background: hsl(var(--primary) / 0.1);
 }
 </style>
