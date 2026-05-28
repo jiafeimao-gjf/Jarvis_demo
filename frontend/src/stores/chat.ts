@@ -1,14 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import type { Message, Conversation } from '@/types'
-import { useApi } from '@/composables/useApi'
 import { useSettingsStore } from '@/stores/settings'
 
-const STORAGE_KEY = 'jarvis_conversations'
-const CURRENT_KEY = 'jarvis_current_conversation'
-
 export const useChatStore = defineStore('chat', () => {
-  const api = useApi()
   const settingsStore = useSettingsStore()
   const conversations = ref<Conversation[]>([])
   const currentConversationId = ref<string | null>(null)
@@ -24,42 +19,6 @@ export const useChatStore = defineStore('chat', () => {
     currentConversation.value?.messages || []
   )
 
-  // Initialize from localStorage
-  function loadFromStorage() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored, (key, value) => {
-          if (key === 'createdAt' || key === 'updatedAt' || key === 'timestamp') {
-            return new Date(value)
-          }
-          return value
-        })
-        conversations.value = parsed.conversations || []
-        currentConversationId.value = parsed.currentId || null
-      }
-    } catch (e) {
-      console.error('Failed to load from storage:', e)
-    }
-  }
-
-  // Save to localStorage
-  function saveToStorage() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        conversations: conversations.value,
-        currentId: currentConversationId.value
-      }))
-    } catch (e) {
-      console.error('Failed to save to storage:', e)
-    }
-  }
-
-  // Watch for changes and persist
-  watch([conversations, currentConversationId], () => {
-    saveToStorage()
-  }, { deep: true })
-
   // Load conversations from backend
   async function loadFromBackend() {
     if (isSyncing.value) return
@@ -69,24 +28,15 @@ export const useChatStore = defineStore('chat', () => {
       const response = await fetch('/api/memory/conversations?limit=100')
       if (response.ok) {
         const data = await response.json()
-        // Merge with local storage, preferring local newer versions
         const backendConvs = data.conversations || []
 
-        for (const backendConv of backendConvs) {
-          const localConv = conversations.value.find(
-            c => c.id === backendConv.conversation_id
-          )
-          if (!localConv) {
-            // New from backend
-            conversations.value.push({
-              id: backendConv.conversation_id,
-              title: `对话 ${backendConv.message_count} 条消息`,
-              messages: [],
-              createdAt: new Date(backendConv.created_at),
-              updatedAt: new Date(backendConv.updated_at)
-            })
-          }
-        }
+        conversations.value = backendConvs.map((conv: any) => ({
+          id: conv.conversation_id,
+          title: conv.title || `对话 ${conv.message_count} 条消息`,
+          messages: [],
+          createdAt: new Date(conv.created_at),
+          updatedAt: new Date(conv.updated_at)
+        }))
       }
     } catch (e) {
       console.error('Failed to load from backend:', e)
@@ -233,8 +183,8 @@ export const useChatStore = defineStore('chat', () => {
       if (currentConversationId.value === id) {
         currentConversationId.value = conversations.value[0]?.id || null
       }
-      // Delete from backend
-      fetch(`/api/memory/conversation/${id}`, { method: 'DELETE' }).catch(console.error)
+      // Delete from backend (fire and forget)
+      fetch(`/api/memory/conversation/${id}`, { method: 'DELETE' }).catch(() => {})
     }
   }
 
@@ -246,7 +196,6 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // Initialize
-  loadFromStorage()
   loadFromBackend()
 
   return {
