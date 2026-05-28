@@ -292,7 +292,7 @@ class ChatEngine:
                     result=result,
                     tool_use_id=tool_call.raw  # 暂用 raw 作为 id
                 )
-                self.current_conversation.add_message("user", result_message["content"])
+                self.current_conversation.add_message("tool_result", result_message["content"])
                 # 添加到 LLM 消息历史 - 使用正确的 tool_result 格式
                 messages.append({"role": "user", "content": result_message})
 
@@ -456,7 +456,7 @@ class ChatEngine:
                     result=result,
                     tool_use_id=tool_call.raw
                 )
-                self.current_conversation.add_message("user", result_message["content"])
+                self.current_conversation.add_message("tool_result", result_message["content"])
                 messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
@@ -625,7 +625,7 @@ class ChatEngine:
                     result=result,
                     tool_use_id=tool_call.raw
                 )
-                self.current_conversation.add_message("user", result_message["content"])
+                self.current_conversation.add_message("tool_result", result_message["content"])
                 messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
