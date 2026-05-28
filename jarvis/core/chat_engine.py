@@ -7,7 +7,7 @@ from typing import Optional, Any
 from jarvis.core.entities import Message, Conversation, Step
 from jarvis.core.memory_store import memory_store
 from jarvis.core.task_engine import TaskExecutor
-from jarvis.core.tool_parser import ToolCallParser
+from jarvis.core.tool_parser import ToolCallParser, ToolCall
 from jarvis.core.tool_result_formatter import ToolResultFormatter
 from jarvis.core.tool_registry import tool_registry
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
@@ -119,6 +119,34 @@ class ChatEngine:
             logger.warning(f"Failed to load prompt settings: {e}")
             return SystemPromptSettings()
 
+    def _extract_tool_calls_from_blocks(self, content_blocks: list) -> list:
+        """从 Anthropic content_blocks 中提取工具调用"""
+        tool_calls = []
+        for block in content_blocks:
+            if block.get("type") == "tool_use":
+                tool_name = block.get("name", "")
+                input_data = block.get("input", {})
+
+                # 验证工具名
+                if not tool_name or tool_name not in tool_registry.get_tool_names():
+                    logger.warning(f"[ChatEngine] 未知工具: {tool_name}")
+                    continue
+
+                # 提取参数
+                params = input_data.copy()
+                action = params.pop("action", "")
+
+                tool_call = ToolCall(
+                    tool=tool_name,
+                    action=action,
+                    params=params,
+                    raw=block.get("id", json.dumps(block))  # 优先使用 id
+                )
+                tool_calls.append(tool_call)
+                logger.debug(f"[ChatEngine] 从 block 提取工具调用: {tool_name}.{action}")
+
+        return tool_calls
+
     async def chat(
         self,
         user_input: str,
@@ -200,11 +228,21 @@ class ChatEngine:
 
             response_text = response.content
             final_response = response_text
-            logger.info(f"[Chat] LLM 响应 | len={len(response_text)} | has_tool_calls={self.tool_parser.has_tool_calls(response_text)}")
+
+            # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
+            has_tools = self.tool_parser.has_tool_calls(response_text)
+            if response.content_blocks:
+                for block in response.content_blocks:
+                    if block.get("type") == "tool_use":
+                        has_tools = True
+                        logger.debug(f"[Chat] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
+                        break
+
+            logger.info(f"[Chat] LLM 响应 | len={len(response_text)} | has_tool_calls={has_tools}")
             logger.debug(f"[Chat] LLM 响应内容: {response_text[:200]}...")
 
             # 检查是否有工具调用
-            if not self.tool_parser.has_tool_calls(response_text):
+            if not has_tools:
                 logger.debug("[Chat] 无工具调用，结束迭代")
                 # 没有工具调用，返回响应
                 break
@@ -256,7 +294,16 @@ class ChatEngine:
                 )
                 self.current_conversation.add_message("user", result_message["content"])
                 # 添加到 LLM 消息历史 - 使用正确的 tool_result 格式
-                messages.append({"role": "user", "content": [result_message]})
+                messages.append({"role": "user", "content": result_message})
+
+            # 检查后续响应是否也有工具调用
+            has_tools = self.tool_parser.has_tool_calls(response_text)
+            if response.content_blocks:
+                for block in response.content_blocks:
+                    if block.get("type") == "tool_use":
+                        has_tools = True
+                        logger.debug(f"[Chat] 后续响应中发现 tool_use block")
+                        break
 
         # 8. 添加助手消息（最终响应）
         self.current_conversation.add_message("assistant", final_response)
@@ -344,12 +391,27 @@ class ChatEngine:
         iteration_count = 0
         final_response = response_text
 
+        # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
+        has_tools = self.tool_parser.has_tool_calls(response_text)
+        if response.content_blocks:
+            for block in response.content_blocks:
+                if block.get("type") == "tool_use":
+                    has_tools = True
+                    logger.debug(f"[StreamChat] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
+                    break
+
         for iteration_count in range(MAX_TOOL_ITERATIONS):
-            if not self.tool_parser.has_tool_calls(response_text):
+            if not has_tools:
                 logger.debug("[StreamChat] 无工具调用，结束迭代")
                 break
 
             tool_calls = self.tool_parser.parse(response_text)
+
+            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
+            if not tool_calls and response.content_blocks:
+                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
+                logger.debug(f"[StreamChat] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
+
             if not tool_calls:
                 break
 
@@ -395,7 +457,7 @@ class ChatEngine:
                     tool_use_id=tool_call.raw
                 )
                 self.current_conversation.add_message("user", result_message["content"])
-                messages.append({"role": "user", "content": [result_message]})
+                messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
@@ -403,6 +465,15 @@ class ChatEngine:
             response_text = response.content
             final_response = response_text
             logger.info(f"[StreamChat] LLM 后续响应 | len={len(response_text)}")
+
+            # 检查后续响应是否也有工具调用
+            has_tools = self.tool_parser.has_tool_calls(response_text)
+            if response.content_blocks:
+                for block in response.content_blocks:
+                    if block.get("type") == "tool_use":
+                        has_tools = True
+                        logger.debug(f"[StreamChat] 后续响应中发现 tool_use block")
+                        break
 
         # 7. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
@@ -487,12 +558,28 @@ class ChatEngine:
         iteration_count = 0
         final_response = response_text
 
+        # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
+        has_tools = self.tool_parser.has_tool_calls(response_text)
+        if response.content_blocks:
+            for block in response.content_blocks:
+                if block.get("type") == "tool_use":
+                    has_tools = True
+                    logger.debug(f"[StreamChatWithMsgs] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
+                    break
+
         for iteration_count in range(MAX_TOOL_ITERATIONS):
-            if not self.tool_parser.has_tool_calls(response_text):
+            if not has_tools:
                 logger.debug("[StreamChatWithMsgs] 无工具调用，结束迭代")
                 break
 
+            # 从响应文本或 content_blocks 解析工具调用
             tool_calls = self.tool_parser.parse(response_text)
+
+            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
+            if not tool_calls and response.content_blocks:
+                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
+                logger.debug(f"[StreamChatWithMsgs] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
+
             if not tool_calls:
                 break
 
@@ -539,7 +626,7 @@ class ChatEngine:
                     tool_use_id=tool_call.raw
                 )
                 self.current_conversation.add_message("user", result_message["content"])
-                messages.append({"role": "user", "content": [result_message]})
+                messages.append({"role": "user", "content": result_message})
 
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")
@@ -547,6 +634,15 @@ class ChatEngine:
             response_text = response.content
             final_response = response_text
             logger.info(f"[StreamChatWithMsgs] LLM 后续响应 | len={len(response_text)}")
+
+            # 检查后续响应是否也有工具调用
+            has_tools = self.tool_parser.has_tool_calls(response_text)
+            if response.content_blocks:
+                for block in response.content_blocks:
+                    if block.get("type") == "tool_use":
+                        has_tools = True
+                        logger.debug(f"[StreamChatWithMsgs] 后续响应中发现 tool_use block")
+                        break
 
         # 7. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)

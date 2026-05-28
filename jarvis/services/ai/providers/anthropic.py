@@ -106,9 +106,20 @@ class AnthropicAdapter(AIClient):
             if msg.get("role") == "system":
                 # Anthropic handles system differently
                 continue
+
+            # Handle content - can be string, list (tool_result blocks), or dict
+            msg_content = msg.get("content", "")
+            if isinstance(msg_content, list):
+                # Keep as-is for tool_result blocks
+                pass
+            elif isinstance(msg_content, dict):
+                # Single block - wrap in list
+                msg_content = [msg_content]
+            # else: string stays as-is
+
             anthropic_messages.append({
                 "role": msg["role"],
-                "content": msg["content"]
+                "content": msg_content
             })
 
         payload = {

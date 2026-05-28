@@ -299,8 +299,8 @@ class TestChatMethod:
         engine.memory.retrieve = AsyncMock(return_value=[])
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Done"))
-        engine.tool_parser.has_tool_calls = MagicMock(side_effect=[True, False])
+        engine.router.chat = AsyncMock(return_value=MagicMock(content="Done", content_blocks=[]))
+        engine.tool_parser.has_tool_calls = MagicMock(side_effect=[True, False, False])
         engine.tool_parser.parse = MagicMock(side_effect=[
             [ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw='{}')],
             []
