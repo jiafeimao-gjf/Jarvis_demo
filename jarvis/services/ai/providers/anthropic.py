@@ -140,7 +140,8 @@ class AnthropicAdapter(AIClient):
                     completion_tokens=data.get("usage", {}).get("output_tokens", 0),
                     total_tokens=data.get("usage", {}).get("input_tokens", 0) + data.get("usage", {}).get("output_tokens", 0),
                 ),
-                raw=data
+                raw=data,
+                content_blocks=data.get("content", [])  # 保留完整的 content blocks
             )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:

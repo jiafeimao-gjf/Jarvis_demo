@@ -236,15 +236,17 @@ class ChatEngine:
                     logger.error(f"[Chat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果并添加到消息
+                # 格式化结果并添加到消息 - 使用 Anthropic tool_result 格式
                 result_message = ToolResultFormatter.format(
                     tool=tool_call.tool,
                     action=tool_call.action,
                     params=tool_call.params,
-                    result=result
+                    result=result,
+                    tool_use_id=tool_call.raw  # 暂用 raw 作为 id
                 )
-                self.current_conversation.add_message("user", result_message)
-                messages.append({"role": "user", "content": result_message})
+                self.current_conversation.add_message("user", result_message["content"])
+                # 添加到 LLM 消息历史 - 使用正确的 tool_result 格式
+                messages.append({"role": "user", "content": [result_message]})
 
         # 8. 添加助手消息（最终响应）
         self.current_conversation.add_message("assistant", final_response)
@@ -440,6 +442,14 @@ class ChatEngine:
             for tc in tool_calls:
                 logger.info(f"[StreamChatWithMsgs] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
 
+            # 将助手的完整响应添加到消息历史（包含 tool_use blocks）
+            # 使用 content_blocks 格式（Anthropic API 返回的结构）
+            assistant_content = response.content_blocks if response.content_blocks else response.content
+            messages.append({
+                "role": "assistant",
+                "content": assistant_content
+            })
+
             # 执行工具
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
@@ -452,15 +462,16 @@ class ChatEngine:
                     logger.error(f"[StreamChatWithMsgs] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果并添加
+                # 格式化结果并添加 - 使用 Anthropic tool_result 格式
                 result_message = ToolResultFormatter.format(
                     tool=tool_call.tool,
                     action=tool_call.action,
                     params=tool_call.params,
-                    result=result
+                    result=result,
+                    tool_use_id=tool_call.raw
                 )
-                self.current_conversation.add_message("user", result_message)
-                messages.append({"role": "user", "content": result_message})
+                self.current_conversation.add_message("user", result_message["content"])
+                messages.append({"role": "user", "content": [result_message]})
 
             # 再次调用 LLM 获取响应
             logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")

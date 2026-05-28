@@ -30,6 +30,7 @@ class AIResponse:
     usage: Optional[TokenUsage] = None
     metrics: Optional[ResponseMetrics] = None
     raw: Optional[dict] = None
+    content_blocks: Optional[list] = None  # For tool_use blocks in Anthropic
 
 
 class AIClient(ABC):
