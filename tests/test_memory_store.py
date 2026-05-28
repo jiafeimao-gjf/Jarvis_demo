@@ -4,6 +4,7 @@ import pytest
 import tempfile
 import os
 from pathlib import Path
+from unittest.mock import patch, AsyncMock
 from jarvis.core.memory_store import SQLiteMemoryRepository, MemoryStore
 
 
@@ -40,13 +41,14 @@ class TestSQLiteMemoryRepository:
     @pytest.mark.asyncio
     async def test_retrieve_memory(self, repo):
         """测试检索记忆"""
-        await repo.save("apple", "A fruit")
-        await repo.save("banana", "Another fruit")
-        await repo.save("car", "A vehicle")
+        await repo.save("apple_key", "Apple is a fruit")
+        await repo.save("banana_key", "Banana is a fruit")
+        await repo.save("car_key", "Car is a vehicle")
 
         results = await repo.retrieve("fruit", top_k=2)
         assert len(results) <= 2
-        assert any("apple" in r["content"] or "banana" in r["content"] for r in results)
+        # content LIKE '%fruit%' should match "Apple is a fruit" and "Banana is a fruit"
+        assert any("fruit" in r["content"].lower() for r in results)
 
     @pytest.mark.asyncio
     async def test_delete_memory(self, repo):
@@ -119,15 +121,17 @@ class TestSQLiteMemoryRepository:
     @pytest.mark.asyncio
     async def test_save_and_get_setting(self, repo):
         """测试保存和获取设置"""
-        await repo.save_setting("theme", '"dark"')
+        # save_setting 会自动 json.dumps() 存储，所以传入普通值
+        await repo.save_setting("theme", "dark")
         value = await repo.get_setting("theme")
+        # get_setting 会自动 json.loads() 返回，所以直接比较值
         assert value == "dark"
 
     @pytest.mark.asyncio
     async def test_get_all_settings(self, repo):
         """测试获取所有设置"""
-        await repo.save_setting("key1", '"value1"')
-        await repo.save_setting("key2", '"value2"')
+        await repo.save_setting("key1", "value1")
+        await repo.save_setting("key2", "value2")
 
         all_settings = await repo.get_all_settings()
         assert "key1" in all_settings
@@ -146,7 +150,7 @@ class TestMemoryStore:
     @pytest.mark.asyncio
     async def test_save_conversation_delegates_to_sqlite(self, store):
         """测试 save_conversation 委托给 SQLite"""
-        with patch.object(store.sqlite_repo, 'save_conversation', return_value=True) as mock:
+        with patch.object(store.sqlite_repo, 'save_conversation', new_callable=AsyncMock, return_value=True) as mock:
             result = await store.save_conversation("id", "uid", [], {})
             assert result is True
             mock.assert_called_once()
@@ -154,7 +158,7 @@ class TestMemoryStore:
     @pytest.mark.asyncio
     async def test_get_conversation_delegates_to_sqlite(self, store):
         """测试 get_conversation 委托给 SQLite"""
-        with patch.object(store.sqlite_repo, 'get_conversation', return_value={"id": "test"}) as mock:
+        with patch.object(store.sqlite_repo, 'get_conversation', new_callable=AsyncMock, return_value={"id": "test"}) as mock:
             result = await store.get_conversation("test_id")
             assert result["id"] == "test"
             mock.assert_called_once()
@@ -162,7 +166,7 @@ class TestMemoryStore:
     @pytest.mark.asyncio
     async def test_save_setting_delegates_to_sqlite(self, store):
         """测试 save_setting 委托给 SQLite"""
-        with patch.object(store.sqlite_repo, 'save_setting', return_value=True) as mock:
+        with patch.object(store.sqlite_repo, 'save_setting', new_callable=AsyncMock, return_value=True) as mock:
             result = await store.save_setting("key", "value")
             assert result is True
             mock.assert_called_once_with("key", "value")
