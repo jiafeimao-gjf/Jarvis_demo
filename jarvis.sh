@@ -4,7 +4,7 @@
 
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_PORT=9529
-FRONTEND_PORT=5173
+FRONTEND_PORT=8529
 
 start() {
     echo "🚀 启动 JARVIS 服务..."
