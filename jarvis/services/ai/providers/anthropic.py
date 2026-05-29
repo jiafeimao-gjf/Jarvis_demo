@@ -11,7 +11,6 @@ from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-
 MINIMAX_CONFIG = {
     "api_key": "sk-api-REDACTED-PLEASE-ROTATE-IN-MINIMAX-CONSOLE",
     "base_url": "https://api.minimaxi.com/anthropic/v1",
