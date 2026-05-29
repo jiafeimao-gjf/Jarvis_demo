@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 
 MINIMAX_CONFIG = {
-    "api_key": "sk-cp-EsLppMnfOLiFIkhQYEWl_mzIlzXbnrZ5_SN6YdrbgT5HLNU7DdJwpXM8a75e7ZwYNdRosXJafYBTDeAfwiGFjfU30CS2aDAekaea_SoztygFKsUYGzs0uwU",
+    "api_key": "sk-api-REDACTED-PLEASE-ROTATE-IN-MINIMAX-CONSOLE",
     "base_url": "https://api.minimaxi.com/anthropic/v1",
     "model": "MiniMax-M2.7",
 }

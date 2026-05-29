@@ -248,6 +248,12 @@ class ChatEngine:
                 break
 
             tool_calls = self.tool_parser.parse(response_text)
+
+            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
+            if not tool_calls and response.content_blocks:
+                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
+                logger.debug(f"[Chat] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
+
             if not tool_calls:
                 # 解析失败但有工具标记，跳出
                 logger.warning("[Chat] 检测到工具调用但解析失败")
