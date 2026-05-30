@@ -8,28 +8,9 @@
 
 **日期:** 2026-05-25
 
-**错误信息:**
-```
-KeyError: '"action"'
-```
+**原因:** `str.format()` 把 `{action}` 解析为占位符
 
-**原因:**
-`available_tools` 字符串中包含 JSON 示例：
-```python
-{"action": "read", "path": "file.txt"}
-```
-Python `str.format()` 把 `{action}` 解析为占位符，导致 KeyError。
-
-**解决方案:**
-使用字符串替换替代 `format()` 方法：
-```python
-def _build_system_prompt(self) -> str:
-    return self.available_tools.replace("{work_folder}", self.work_folder)
-```
-
-**预防:**
-- 避免在模板字符串中使用 `{` `}` 包裹可能与 format 语法冲突的内容
-- 或使用 `{{}}` 转义，但需注意 `format()` 的 `{{}}` 会变成 `{}`
+**解决:** 使用字符串替换替代 `format()` 方法
 
 ---
 
@@ -37,23 +18,9 @@ def _build_system_prompt(self) -> str:
 
 **日期:** 2026-05-25
 
-**错误信息:**
-```
-RuntimeError: Unexpected ASGI message 'websocket.close', after sending 'websocket.close'
-```
+**原因:** `finally` 块中调用 `close()` 时连接可能已关闭
 
-**原因:**
-WebSocket 连接在 `finally` 块中调用 `close()`，但连接可能已经异常关闭。
-
-**解决方案:**
-```python
-finally:
-    ws_notifier.remove_connection(websocket)
-    try:
-        await websocket.close()
-    except RuntimeError:
-        pass  # WebSocket already closed
-```
+**解决:** 添加 try-except 捕获 RuntimeError
 
 ---
 
@@ -61,32 +28,9 @@ finally:
 
 **日期:** 2026-05-25
 
-**错误信息:**
-```
-Uncaught RangeError: Invalid time value
-```
+**原因:** 日期被序列化为字符串，读取时未还原
 
-**原因:**
-- `localStorage` 存储时日期被序列化为字符串
-- 读取时未还原为 `Date` 对象
-- `formatTime()` 收到字符串后 `new Date(string)` 失败
-
-**解决方案:**
-```typescript
-// loadFromStorage 中使用 reviver
-const parsed = JSON.parse(stored, (key, value) => {
-  if (key === 'createdAt' || key === 'updatedAt' || key === 'timestamp') {
-    return new Date(value)
-  }
-  return value
-})
-
-// formatTime 支持字符串
-export function formatTime(date: Date | string): string {
-  const d = typeof date === 'string' ? new Date(date) : date
-  ...
-}
-```
+**解决:** 使用 JSON.parse reviver 或 `formatTime` 支持字符串
 
 ---
 
@@ -94,18 +38,9 @@ export function formatTime(date: Date | string): string {
 
 **日期:** 2026-05-25
 
-**错误信息:**
-文件操作返回 `{"status": "simulated", "tool": "file", ...}`
+**原因:** `tool.split(".")[0]` 无法匹配无 `.` 的工具名
 
-**原因:**
-`execute_step` 中使用 `step.tool.split(".")[0]` 截取工具前缀，但 `tool="file"` 无 `.` 无法匹配到 `FileOperationStrategy`。
-
-**解决方案:**
-```python
-async def execute_step(self, step: Step) -> Any:
-    strategy = self.get_strategy(step.tool)  # 直接使用完整 tool 名称
-    return await strategy.execute(step)
-```
+**解决:** 直接使用完整 tool 名称匹配
 
 ---
 
@@ -113,27 +48,9 @@ async def execute_step(self, step: Step) -> Any:
 
 **日期:** 2026-05-25
 
-**问题:**
-chat_stream 返回空 token
+**原因:** 使用了错误的 API 端点或参数
 
-**原因:**
-OllamaAdapter 使用了错误的 API 端点或参数
-
-**解决方案:**
-```python
-async def chat_stream(self, messages: list[dict]):
-    payload = {
-        "model": self.model,
-        "messages": messages,
-        "stream": True
-    }
-    async with self.client.stream("POST", "/api/chat", json=payload) as response:
-        async for line in response.aiter_lines():
-            data = json.loads(line)
-            content = data.get("message", {}).get("content", "")
-            if content:
-                yield content
-```
+**解决:** 使用 `/api/chat` 端点并检查 `message.content`
 
 ---
 
@@ -141,17 +58,9 @@ async def chat_stream(self, messages: list[dict]):
 
 **日期:** 2026-05-25
 
-**错误信息:**
-```
-'Settings' object has no attribute 'sqlite_db_path'
-```
+**原因:** 配置重构后属性路径变化
 
-**原因:**
-配置重构后属性路径变化，如 `settings.sqlite_db_path` → `settings.storage.sqlite_db_path`
-
-**解决方案:**
-- 重构配置时保持属性路径一致性
-- 或更新所有引用点
+**解决:** 保持属性路径一致性或更新引用
 
 ---
 
@@ -159,22 +68,9 @@ async def chat_stream(self, messages: list[dict]):
 
 **日期:** 2026-05-25
 
-**错误信息:**
-循环导入导致 `settings` 为 None
+**原因:** logger.py 循环依赖 config
 
-**原因:**
-`logger.py` 在模块级别导入 `jarvis.config`，而 config 可能依赖 logger
-
-**解决方案:**
-使用延迟导入：
-```python
-@classmethod
-def _get_settings(cls):
-    if cls._settings is None:
-        from jarvis.config import settings
-        cls._settings = settings
-    return cls._settings
-```
+**解决:** 使用延迟导入
 
 ---
 
@@ -182,21 +78,9 @@ def _get_settings(cls):
 
 **日期:** 2026-05-26
 
-**问题:**
-`_resolve_path()` 允许相对路径逃逸工作目录，如 `../../../etc/passwd`
+**原因:** 相对路径可逃逸工作目录
 
-**解决方案:**
-使用 `Path.relative_to()` 验证路径：
-```python
-def _resolve_path(self, path: str) -> Path:
-    work = Path(self.work_folder).resolve()
-    p = Path(path).resolve()
-    try:
-        p.relative_to(work)
-    except ValueError:
-        raise PermissionError(f"路径穿越禁止: {path} 不在工作目录内")
-    return p
-```
+**解决:** 使用 `Path.relative_to()` 验证路径
 
 ---
 
@@ -204,27 +88,9 @@ def _resolve_path(self, path: str) -> Path:
 
 **日期:** 2026-05-26
 
-**问题:**
-`FileOperationStrategy` 的 `_read_file`、`_edit_file` 等方法在文件不存在等错误时直接返回 error dict，没有调用 `logger.error()`，导致 `NotificationLogHandler` 无法捕获并发送通知。
+**原因:** 错误响应未调用 `logger.error()`
 
-**原因:**
-- `_read_file` 返回 `{"status": "error", "message": f"文件不存在: {path}"}` 时没有先记录错误
-- `NotificationLogHandler.emit()` 只捕获 `record.levelno >= logging.ERROR` 的日志
-- 异常被 `execute()` 的 `except Exception` 捕获并记录，但业务错误（如文件不存在）是正常返回的
-
-**解决方案:**
-在返回错误响应前先调用 `logger.error()` 记录错误：
-```python
-async def _read_file(self, path: str) -> dict:
-    full_path = self._resolve_path(path)
-    if not full_path.exists():
-        logger.error(f"文件不存在: {path}")  # 添加日志
-        return {"status": "error", "message": f"文件不存在: {path}"}
-```
-
-**预防:**
-- 文件操作等策略在返回错误时，应先通过 logger 记录错误日志
-- 或在策略层检查返回值，发现 error status 时主动发送通知
+**解决:** 返回错误前先记录日志
 
 ---
 
@@ -232,32 +98,9 @@ async def _read_file(self, path: str) -> dict:
 
 **日期:** 2026-05-27
 
-**问题:** 用户点击历史对话时，只切换了 `currentConversationId`，没有从后端加载消息。刷新页面后之前对话的消息为空。
+**原因:** `selectConversation` 只更新 ID，未加载消息
 
-**原因:** `selectConversation` 只更新 ID，不调用 `GET /memory/conversation/{id}` 获取完整消息。
-
-**解决方案:**
-```typescript
-async function selectConversation(id: string) {
-  // ...
-  const conv = conversations.value.find(c => c.id === id)
-  if (conv && conv.messages.length === 0) {
-    const response = await fetch(`/api/memory/conversation/${id}`)
-    if (response.ok) {
-      const data = await response.json()
-      conv.messages = data.messages.map((m: any) => ({
-        id: crypto.randomUUID(),
-        role: m.role,
-        content: m.content,
-        timestamp: new Date()
-      }))
-    }
-  }
-  // ...
-}
-```
-
-**文件:** `frontend/src/stores/chat.ts`
+**解决:** 检查 messages 为空时调用 API 获取
 
 ---
 
@@ -265,14 +108,9 @@ async function selectConversation(id: string) {
 
 **日期:** 2026-05-27
 
-**问题:** `syncToBackend` 发送请求后不检查返回结果，失败时无重试，可能导致对话消息丢失。
+**原因:** 失败时无重试，可能丢失消息
 
-**解决方案:**
-- 添加重试机制（默认 3 次）
-- 检查 `response.ok` 并在失败时等待 1s * attempt 后重试
-- 返回 `boolean` 表明是否成功
-
-**文件:** `frontend/src/stores/chat.ts`
+**解决:** 添加重试机制
 
 ---
 
@@ -280,13 +118,9 @@ async function selectConversation(id: string) {
 
 **日期:** 2026-05-27
 
-**问题:** MiniMax 返回的工具调用格式是 `{"name": ..., "parameters": {...}}`，而解析器只支持 `{"tool": ..., "params": {...}}`。
+**原因:** MiniMax 返回 `{"name": ..., "parameters": {...}}`，解析器只支持 `{"tool": ..., "params": {...}}`
 
-**解决方案:**
-- `ToolCallParser` 支持两种格式
-- `tool_parser.py` 使用 `tool_registry.get_tool_names()` 动态获取有效工具
-
-**文件:** `jarvis/core/tool_parser.py`
+**解决:** `ToolCallParser` 支持两种格式
 
 ---
 
@@ -294,16 +128,9 @@ async function selectConversation(id: string) {
 
 **日期:** 2026-05-27
 
-**错误信息:**
-```
-Field required", "loc": ["body", "messages"]
-```
+**原因:** FastAPI 将字段当作 query 参数处理
 
-**问题:** FastAPI 将 `ConversationRequest` 字段当作 query 参数处理，而不是请求体。
-
-**解决方案:** 改用 `Request.json()` 直接解析请求体。
-
-**文件:** `jarvis/api/memory.py`
+**解决:** 改用 `Request.json()` 直接解析
 
 ---
 
@@ -311,12 +138,20 @@ Field required", "loc": ["body", "messages"]
 
 **日期:** 2026-05-27
 
-**问题:** 前端选择 MiniMax 模型，但请求只带 model 不带 provider，后端用 settings 默认 provider 路由。
+**原因:** 前端带 model 不带 provider，后端用默认值
 
-**解决方案:**
-- 前端 `ChatWindow.vue` 添加 `model: settingsStore.settings.ai_default_model`
-- 后端 `AIRouter.chat()` 当指定 model 时，使用 model 的 provider 而非 config 默认值
+**解决:** 前端添加 model，后端用 model 的 provider
 
-**文件:**
-- `frontend/src/components/ChatWindow.vue`
-- `jarvis/services/ai/router.py`
+---
+
+## 15. 工具调用 content_blocks 解析失败
+
+**日期:** 2026-05-28
+
+**原因:** LLM 返回空 content 但 has_tool_calls=True，content_blocks 未正确提取
+
+**状态:** 🔍 调试中
+
+---
+
+*持续更新*
