@@ -14,7 +14,7 @@
 | **技术栈（后端）** | Python / FastAPI / Ollama / Anthropic |
 | **技术栈（前端）** | Vue3 / TypeScript / Tailwind CSS / Pinia |
 | **设计模式** | Hexagonal / Mediator / Facade / Repository / Strategy / Observer |
-| **代码量** | ~6,500 行 |
+| **代码量** | ~7,000 行 |
 
 ---
 
@@ -126,14 +126,15 @@ jarvis_demo/
 | **语音对话** | ✅ | POST /api/voice → STT → ChatEngine → TTS |
 | **TTS 播报** | ✅ | 浏览器 SpeechSynthesis |
 | **摄像头捕获** | ✅ | WebRTC getUserMedia + 自动帧捕获 |
-| **视觉分析** | ✅ | Ollama qwen3-vl:4b 子模型 → 文本 → ChatEngine |
+| **视觉分析** | ✅ | Ollama qwen3.5:9b (Anthropic vision format /v1/messages) |
 | **多模态融合** | ✅ | SubModelProcessor → [语音/图片] 文本 → ChatEngine |
+| **语音输入** | ✅ | 单按钮录音, 无限时长, 实时计时, openai-whisper STT |
+| **图片粘贴** | ✅ | Ctrl+V 粘贴, 自动分析, 全屏查看器 (缩放 50%-400%) |
+| **摄像头自动分析** | ✅ | 30s 间隔, 启动/停止切换, 队列 (最大 2), 帧缓存去重 |
+| **图片持久化** | ✅ | 按对话存储 JPEG 到磁盘, message.image 存 URL 路径 |
 | **记忆存储** | ✅ | SQLite + LanceDB |
-| **任务执行** | ✅ | Strategy Pattern |
-| **浏览器自动化** | ✅ | Playwright |
-| **桌面控制** | ✅ | pyautogui |
-| **主题切换** | ✅ | 深色/浅色模式 |
-| **对话历史** | ✅ | localStorage + 后端持久化 |
+| **任务执行** | ✅ | Strategy Pattern (file, bash, browser, desktop, api, tool) |
+| **对话历史** | ✅ | localStorage + 后端 SQLite 持久化 + 图片文件存储 |
 
 ---
 

@@ -49,13 +49,12 @@ cd frontend && npm run build
 | Backend framework | FastAPI + uvicorn (port 9529) |
 | Frontend framework | Vue 3 + Vite + Tailwind CSS + Pinia (port 8529) |
 | Real-time | WebSocket + SSE (Server-Sent Events) |
-| AI providers | Ollama (local), OpenAI, Anthropic, MiniMax |
-| AI orchestration | AIRouter with automatic failover chain |
-| Voice STT | Ollama sendmeaiohyeah/whisper-large-v2 (sub-model) + Browser Web Speech API |
-| Voice TTS | Browser TTS (frontend SpeechSynthesis) |
-| Image generation | x/z-image-turbo via Ollama (1024×1024) |
-| Vision analysis | Ollama qwen3-vl:4b (sub-model pipeline) |
-| Multimodal routing | SubModelProcessor — STT/Vision sub-models → text → ChatEngine |
+| AI provider | Ollama (primary), OpenAI/Anthropic adapters config-driven |
+| AI orchestration | AIRouter — model registry → adapter → API |
+| Voice STT | Local openai-whisper (base model) with ffmpeg decode |
+| Voice TTS | Browser SpeechSynthesis |
+| Vision analysis | Ollama qwen3.5:9b via /v1/messages (Anthropic-compatible) |
+| Multimodal routing | SubModelProcessor facade → sub-model → text → chat |
 | Memory storage | SQLite + LanceDB vector search |
 | Task execution | Playwright, Claude Code MCP tools |
 
@@ -191,56 +190,38 @@ TODO.md                         # Feature priorities (P0/P1/P2)
 
 ## Multimodal Sub-Model Pipeline
 
-Audio (STT) and image (Vision) are processed by dedicated Ollama sub-models, then the generated text is injected into the main chat conversation.
+Audio and image processed by dedicated sub-models → plain text → injected into chat.
 
 ```
-🎤 Audio Bytes ──► SubModelProcessor.process_audio()
-                      │  _get_client("ollama", "sendmeaiohyeah/whisper-large-v2")
-                      │  ⟩ transcribe_audio(audio_bytes)
-                      ▼
-                   Text ("今天天气怎么样")
-                      │  [语音输入] prefix
-                      ▼
-                   ChatEngine.chat("[语音输入] 今天天气怎么样")
-                      │
-                      ▼  LLM 回复
-
-📷 Image Bytes ──► SubModelProcessor.process_image()
-                      │  AIRouter.vision_analyze(image, prompt)
-                      │  ⟩ OllamaAdapter.vision_analyze() → qwen3-vl:4b
-                      ▼
-                   Text ("一只橙色的猫坐在窗台上...")
-                      │  [图片分析] prefix
-                      ▼
-                   ChatEngine.chat("[图片分析] 一只橙色的猫...")
-                      │
-                      ▼  LLM 回复
+🎤 Audio: WebM → ffmpeg WAV → openai-whisper(base) → text → chat_engine.chat()
+📷 Image: JPEG → OllamaAdapter /v1/messages (Anthropic vision) → text → frontend displays card
+📋 Paste: Ctrl+V image → /camera/analyze → card in chat with fullscreen viewer
 ```
 
-- **SubModelProcessor** (`services/sub_model_processor.py`): Facade that finds audio/vision sub-models, calls them, returns text
-- **Mediator integration**: `_handle_voice_input` and `_handle_camera_frame` now route through `SubModelProcessor` before `ChatEngine`
-- **Frontend**: CameraPreview auto-captures frames every 5s; ChatWindow has a mic button for voice recording
-- **Models**: STT uses `sendmeaiohyeah/whisper-large-v2`; Vision uses `qwen3-vl:4b`; both configurable in `OllamaConfig`
-- **Fallback**: If whisper model unavailable, returns empty string and error is logged
+- **STT**: `openai-whisper` base model, lazy-loaded, `asyncio.to_thread()` non-blocking
+- **Vision**: `qwen3.5:9b` via `/v1/messages` Anthropic-compatible endpoint with `content: [{image, source:...}]`
+- **Camera**: 30s auto-capture with queue (max 2), start/stop toggle, frame image persisted per conversation
+- **Voice**: single mic button — click to record, click to stop, timer display, no time limit
+- **Image viewer**: click thumbnail → fullscreen overlay, mouse wheel zoom 50%–400%
 
 ## AI Provider System
 
-The AI module (`services/ai/`) supports multiple providers with automatic failover:
+Primary: **Ollama** (local). OpenAI/Anthropic adapters exist but are not in fallback chain.
 
-- **Configuration** — `.env.example` shows all options (AI__OLLAMA__*, AI__ANTHROPIC__*, etc.). Default provider/model in `config.py`.
-- **Model Registry** — `services/ai/models.py` defines `MODELS` dict mapping display names to `ModelInfo` (provider, capabilities, context window).
-- **Client Creation** — `ProviderRegistry.create_client(model_id)` looks up model in registry, picks the right adapter class, instantiates it with connector-specific config.
-- **Routing** — `AIRouter.chat()` tries primary provider; on failure iterates through `fallback_chain` (ollama → openai → anthropic → minimax).
-- **Adding a new model**: add entry to `MODELS` dict in `models.py`, register adapter in `chat_engine.py` constructor with `ProviderRegistry.register()`.
+- **Models**: `qwen3:4b` (chat), `qwen3.5:9b` (vision), `openai-whisper base` (STT)
+- **OllamaAdapter**: uses `/v1/messages` (Anthropic-compatible) for all operations
+- **Timeout**: httpx connect=10s, read=120s (vision per-request read=180s)
+- **Configuration**: `AI__OLLAMA__*` env vars, `.env.example` reference
+- **Adding a model**: add to `MODELS` in `models.py`, register adapter in `chat_engine.py`
 
 ## Tool Call Flow
 
-1. LLM generates a response with `tool_use` content blocks
-2. `ToolCallParser` in `core/tool_parser.py` extracts structured tool calls
-3. `ChatEngine` iterates through tool calls (up to `MAX_TOOL_ITERATIONS = 5`)
-4. Each tool invocation goes through `TaskExecutor` which dispatches to the right strategy
-5. Results are fed back to the LLM for the next reasoning cycle
-6. Frontend displays tool call/result via SSE events (`type: "tool_call"`, `type: "tool_result"`)
+1. LLM returns tool calls via `/v1/messages` response
+2. `ToolCallParser` extracts `{tool, action, params}` from text
+3. `ChatEngine` iterates (max 5), executes via `TaskExecutor`
+4. Results formatted as **plain text** (`[工具结果] file.read: ...`) — not Anthropic tool_result blocks
+5. Fed back to LLM for next reasoning cycle
+6. Frontend shows tool status via SSE events
 
 ## Memory System
 
@@ -249,28 +230,20 @@ The AI module (`services/ai/`) supports multiple providers with automatic failov
 - Conversations are persisted to backend via `POST /api/memory/conversation/{id}` with retry logic
 - Memory recall enriches system prompts with relevant context before LLM calls
 
-## Frontend Data Flow
+## Frontend Interaction Summary
 
-- `useApi` composable handles all HTTP/SSE communication
-- SSE streaming: backend sends `data: {"type": "token", "content": "..."}\n` lines
-- Frontend decodes SSE events and feeds tokens to `ChatWindow` for display
-- Conversation list loads from backend on mount; synced with retry on each new message
-- Settings store tracks current model, theme, voice, provider selection
-
-## Common Tasks
-
-- **Add a new API endpoint**: define route file in `jarvis/api/`, register in `routes.py`, implement handler using mediator
-- **Add a new AI provider**: implement `AIClient` ABC in `services/ai/providers/`, register in `chat_engine.py` constructor
-- **Add a new tool**: register `ToolDefinition` in `tool_registry.py` `_register_builtin_tools()`, implement execution strategy in `task_engine.py`
-- **Add a new frontend component**: create in `frontend/src/components/`, import in `App.vue` or relevant parent
+- **Chat**: Enter to send, Shift+Enter newline, Ctrl+V paste image
+- **Voice**: single mic button (HardwareControls) — start/stop recording, timer, send to backend
+- **Camera**: video preview + toggle start/stop auto-analysis (30s), image cards with fullscreen viewer
+- **Settings**: provider/model selection, prompts, hardware config — saved to memory DB
+- **Notifications**: WebSocket with exponential backoff reconnection
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure. Key variables:
-- `AI__OLLAMA__*` — local Ollama settings
-- `AI__ANTHROPIC__API_KEY` — Claude API key (optional)
-- `AI__OPENAI__API_KEY` — OpenAI API key (optional)
-- `AI__DEFAULT_PROVIDER` / `AI__DEFAULT_MODEL` — active model selection
+Copy `.env.example` to `.env`. Key vars:
+- `AI__OLLAMA__*` — Ollama base URL, model, vision model, STT model, timeout
+- `AI__OPENAI__API_KEY` / `AI__ANTHROPIC__API_KEY` — optional cloud providers
+- `AI__DEFAULT_PROVIDER` / `AI__DEFAULT_MODEL` — active selection
 
 ## Documentation
 
