@@ -121,9 +121,9 @@ class ChatEngine:
                     logger.warning(f"[ChatEngine] 未知工具: {tool_name}")
                     continue
 
-                # 提取参数
+                # 提取参数 — action 保留在 params 中 (FileOperationStrategy 需要)
                 params = input_data.copy()
-                action = params.pop("action", "")
+                action = params.get("action", "")
 
                 tool_call = ToolCall(
                     tool=tool_name,
