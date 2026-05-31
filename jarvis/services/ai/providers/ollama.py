@@ -78,6 +78,11 @@ class OllamaAdapter(AIClient):
                     "temperature": temperature,
                     "stream": False,
                 }
+                # Include tools for /v1/messages
+                from jarvis.core.tool_registry import tool_registry
+                tools = tool_registry.build_anthropic_tools()
+                if tools:
+                    payload["tools"] = tools
 
                 response = await self.client.post("/v1/messages", json=payload)
 

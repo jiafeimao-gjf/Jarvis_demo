@@ -190,5 +190,30 @@ class ToolRegistry:
         }
 
 
+    def build_anthropic_tools(self) -> list[dict]:
+        """构建 Anthropic-compatible 工具列表 (用于 /v1/messages)"""
+        tools = []
+        for tool in self._tools.values():
+            props = {}
+            required_params = []
+            for pname, p in tool.parameters.items():
+                prop = {"type": p.type, "description": p.description}
+                if p.enum:
+                    prop["enum"] = p.enum
+                props[pname] = prop
+                if p.required:
+                    required_params.append(pname)
+            tools.append({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": {
+                    "type": "object",
+                    "properties": props,
+                    "required": required_params,
+                },
+            })
+        return tools
+
+
 # 全局工具注册表
 tool_registry = ToolRegistry()
