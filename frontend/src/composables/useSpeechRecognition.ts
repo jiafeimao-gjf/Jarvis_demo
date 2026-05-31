@@ -9,15 +9,15 @@ export function useSpeechRecognition() {
   const isProcessing = ref(false)
   const error = ref<string | null>(null)
 
-  let recognition: SpeechRecognition | null = null
+  let recognition: any = null
   let mediaRecorder: MediaRecorder | null = null
   let audioChunks: Blob[] = []
 
   const hasTranscript = computed(() => transcript.value.trim().length > 0)
 
   function initRecognition(): boolean {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition
+    const SpeechRecognition: any =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SpeechRecognition) {
       error.value = '浏览器不支持语音识别'
       return false
@@ -28,7 +28,7 @@ export function useSpeechRecognition() {
     recognition.continuous = true
     recognition.interimResults = true
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: any) => {
       let final = ''
       let interim = ''
 
@@ -47,7 +47,7 @@ export function useSpeechRecognition() {
       interimTranscript.value = interim
     }
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+    recognition.onerror = (event: any) => {
       error.value = event.error
       isRecording.value = false
       if (event.error !== 'no-speech') {
@@ -156,14 +156,6 @@ export function useSpeechRecognition() {
     }
   }
 
-  function toggle() {
-    if (isRecording.value) {
-      stopRecording()
-    } else {
-      startRecording()
-    }
-  }
-
   function speak(text: string) {
     if (!('speechSynthesis' in window)) {
       console.warn('Browser does not support speech synthesis')
@@ -206,7 +198,6 @@ export function useSpeechRecognition() {
     stopRecording,
     captureAudio,
     processVoiceInput,
-    toggle,
     speak,
     stopSpeaking
   }

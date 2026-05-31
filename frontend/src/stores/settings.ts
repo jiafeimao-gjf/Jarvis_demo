@@ -94,10 +94,10 @@ export const useSettingsStore = defineStore('settings', () => {
           if (key in settings.value) {
             // For nested objects like hardware, deep merge
             if (typeof value === 'object' && value !== null) {
-              settings.value[key as keyof Settings] = {
-                ...settings.value[key as keyof Settings],
+              (settings.value as Record<string, any>)[key] = {
+                ...(settings.value as Record<string, any>)[key],
                 ...(value as object)
-              } as any
+              }
             } else {
               (settings.value as any)[key] = value
             }

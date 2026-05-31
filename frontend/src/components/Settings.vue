@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-import { useApi } from '@/composables/useApi'
 
 const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
 const settingsStore = useSettingsStore()
-const api = useApi()
 
 interface Config {
   app_name: string
@@ -105,7 +103,7 @@ async function loadConfig() {
     if (res.ok) {
       config.value = await res.json()
       // Merge backend config into localStorage (won't override local changes)
-      settingsStore.mergeFromBackend(config.value)
+      if (config.value) { settingsStore.mergeFromApi(config.value) }
     }
   } catch (e) {
     showMessage('加载配置失败', 'error')
@@ -178,7 +176,7 @@ async function saveConfig() {
   }
 }
 
-function showMessage(msg: string, type: 'success' | 'error') {
+function showMessage(msg: string, _type: 'success' | 'error') {
   message.value = msg
   setTimeout(() => { message.value = '' }, 3000)
 }
@@ -237,7 +235,7 @@ async function loadOllamaModels() {
           </div>
           <div>
             <label class="block text-sm mb-1">日志级别</label>
-            <select class="w-full bg-background rounded px-3 py-2 border border-border">
+            <select v-model="form.log_level" class="w-full bg-background rounded px-3 py-2 border border-border">
               <option value="DEBUG">DEBUG</option>
               <option value="INFO">INFO</option>
               <option value="WARNING">WARNING</option>

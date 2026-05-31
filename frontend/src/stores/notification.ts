@@ -16,6 +16,9 @@ export const useNotificationStore = defineStore('notification', () => {
   const unreadCount = ref(0)
   const isConnected = ref(false)
   let ws: WebSocket | null = null
+  let reconnectAttempts = 0
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  const MAX_RECONNECT_DELAY = 30000
 
   const hasUnread = computed(() => unreadCount.value > 0)
 
@@ -33,14 +36,17 @@ export const useNotificationStore = defineStore('notification', () => {
 
     ws.onopen = () => {
       isConnected.value = true
+      reconnectAttempts = 0
       console.log('Notification WebSocket connected')
     }
 
     ws.onclose = () => {
       isConnected.value = false
       ws = null
-      // 重连
-      setTimeout(connect, 3000)
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts) + Math.random() * 1000, MAX_RECONNECT_DELAY)
+      reconnectAttempts++
+      console.log(`WebSocket closed, reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempts})`)
+      reconnectTimer = setTimeout(connect, delay)
     }
 
     ws.onerror = (error) => {
@@ -60,6 +66,8 @@ export const useNotificationStore = defineStore('notification', () => {
   }
 
   function disconnect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    reconnectAttempts = 0
     if (ws) {
       ws.close()
       ws = null

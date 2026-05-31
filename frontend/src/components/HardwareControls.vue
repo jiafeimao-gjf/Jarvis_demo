@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { useHardwareStore } from '@/stores/hardware'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
-import { useApi } from '@/composables/useApi'
 import { ref } from 'vue'
 
 const hardware = useHardwareStore()
 const speech = useSpeechRecognition()
-const api = useApi()
 
 const isProcessingVoice = ref(false)
 
@@ -100,15 +98,3 @@ function handleCameraClick() {
   </div>
 </template>
 
-<style scoped>
-.animate-pulse {
-  animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-</style>

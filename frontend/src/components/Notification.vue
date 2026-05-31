@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useNotificationStore } from '@/stores/notification'
+import { formatTime } from '@/lib/utils'
 
 const store = useNotificationStore()
 const isOpen = ref(false)
@@ -36,11 +37,6 @@ function togglePanel() {
   }
 }
 
-function formatTime(timestamp: string) {
-  const d = new Date(timestamp)
-  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-}
-
 onMounted(() => {
   store.connect()
   store.fetchHistory()
@@ -74,9 +70,12 @@ onUnmounted(() => {
     <div
       v-if="isOpen"
       class="fixed inset-0 z-50"
-      @click.self="isOpen = false"
+      @click="isOpen = false"
     >
-      <div class="absolute top-16 right-4 w-96 max-h-[70vh] bg-background border border-border rounded-lg shadow-xl overflow-hidden flex flex-col">
+      <div
+        class="absolute top-16 right-4 w-80 md:w-96 max-h-[70vh] bg-background border border-border rounded-lg shadow-xl overflow-hidden flex flex-col"
+        @click.stop
+      >
         <!-- 头部 -->
         <div class="p-4 border-b border-border flex items-center justify-between">
           <h2 class="text-lg font-semibold">通知</h2>

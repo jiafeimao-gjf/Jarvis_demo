@@ -25,10 +25,7 @@ function toggleTheme() {
 </script>
 
 <template>
-  <aside
-    class="w-72 scifi-panel flex flex-col relative"
-    style="top: 56px; height: calc(100vh - 56px);"
-  >
+  <aside class="w-72 scifi-panel flex flex-col shrink-0 h-[calc(100vh-3.5rem)]">
     <div class="absolute inset-0 cyber-grid opacity-30 pointer-events-none" />
 
     <div class="p-4 border-b border-primary/20 flex items-center justify-between relative z-10">

@@ -4,7 +4,6 @@ import type {
   ChatResponse,
   VoiceResponse,
   CameraResponse,
-  MemoryItem,
   TaskResult,
   MemoryResponse,
   MemoryQueryResponse
@@ -13,11 +12,9 @@ import type {
 const API_BASE = '/api'
 
 export function useApi() {
-  const isLoading = ref(false)
   const error = ref<string | null>(null)
 
   async function chat(request: ChatRequest): Promise<ChatResponse> {
-    isLoading.value = true
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/chat`, {
@@ -35,8 +32,6 @@ export function useApi() {
     } catch (e) {
       error.value = (e as Error).message
       throw e
-    } finally {
-      isLoading.value = false
     }
   }
 
@@ -99,6 +94,8 @@ export function useApi() {
           }
         }
       }
+      // Stream ended normally — ensure onDone is called even if server didn't send done event
+      onDone?.()
     } catch (e) {
       error.value = (e as Error).message
       throw e
@@ -106,7 +103,6 @@ export function useApi() {
   }
 
   async function voice(audioBase64: string): Promise<VoiceResponse> {
-    isLoading.value = true
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/voice`, {
@@ -119,8 +115,6 @@ export function useApi() {
     } catch (e) {
       error.value = (e as Error).message
       throw e
-    } finally {
-      isLoading.value = false
     }
   }
 
@@ -128,7 +122,6 @@ export function useApi() {
     frameBase64: string,
     prompt = '描述这张图片'
   ): Promise<CameraResponse> {
-    isLoading.value = true
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/camera/analyze`, {
@@ -141,8 +134,6 @@ export function useApi() {
     } catch (e) {
       error.value = (e as Error).message
       throw e
-    } finally {
-      isLoading.value = false
     }
   }
 
@@ -171,7 +162,6 @@ export function useApi() {
   }
 
   async function executeTask(task: string): Promise<TaskResult> {
-    isLoading.value = true
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/execute`, {
@@ -184,8 +174,6 @@ export function useApi() {
     } catch (e) {
       error.value = (e as Error).message
       throw e
-    } finally {
-      isLoading.value = false
     }
   }
 
@@ -206,7 +194,6 @@ export function useApi() {
   }
 
   return {
-    isLoading,
     error,
     chat,
     chatStream,

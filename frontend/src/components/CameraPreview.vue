@@ -10,6 +10,7 @@ const api = useApi()
 
 const isCapturing = ref(false)
 const captureError = ref('')
+const videoRef = ref<HTMLVideoElement | null>(null)
 let captureTimer: ReturnType<typeof setInterval> | null = null
 
 function handleClose() {
@@ -18,7 +19,7 @@ function handleClose() {
 }
 
 function captureFrame(): string | null {
-  const videoEl = document.querySelector('video') as HTMLVideoElement | null
+  const videoEl = videoRef.value
   if (!videoEl || videoEl.readyState < 2) return null
 
   const canvas = document.createElement('canvas')
@@ -38,12 +39,14 @@ async function analyzeAndChat() {
     const frameBase64 = captureFrame()
     if (!frameBase64) {
       captureError.value = '无法获取摄像头画面'
+      isCapturing.value = false
       return
     }
     // Remove data:image/jpeg;base64, prefix
     const base64Data = frameBase64.split(',')[1]
     if (!base64Data) {
       captureError.value = '图像数据无效'
+      isCapturing.value = false
       return
     }
 
@@ -102,6 +105,7 @@ onUnmounted(() => stopCapture())
     >
       <!-- Hidden canvas for frame capture -->
       <video
+        ref="videoRef"
         :srcObject="hardware.cameraStream"
         autoplay
         playsinline

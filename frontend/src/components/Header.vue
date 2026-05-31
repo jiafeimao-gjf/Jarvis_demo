@@ -1,19 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
 import Notification from './Notification.vue'
 
 const hardware = useHardwareStore()
-const sidebarOpen = ref(false)
 
 const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
-
-function toggleSidebar() {
-  sidebarOpen.value = !sidebarOpen.value
-  document.body.dataset.sidebarOpen = sidebarOpen.value ? 'true' : 'false'
-}
 
 function openSettings() {
   emit('open-settings')
@@ -25,16 +18,6 @@ function openSettings() {
     <div class="absolute inset-0 cyber-grid opacity-50 pointer-events-none" />
 
     <div class="flex items-center gap-4 relative z-10">
-      <button
-        class="p-2 hover:bg-accent/50 rounded-lg transition-all btn-cyber"
-        @click="toggleSidebar"
-        title="切换侧边栏"
-      >
-        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 12h18M3 6h18M3 18h18"/>
-        </svg>
-      </button>
-
       <div class="w-10 h-10 rounded-lg bg-background border border-primary/50 flex items-center justify-center glow-primary">
         <span class="text-lg font-bold text-primary text-glow">J</span>
       </div>

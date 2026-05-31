@@ -5,8 +5,7 @@ import type { HardwareStatus, SystemStatus } from '@/types'
 export const useHardwareStore = defineStore('hardware', () => {
   const hardware = ref<HardwareStatus>({
     camera: false,
-    microphone: false,
-    screen: false
+    microphone: false
   })
 
   const system = ref<SystemStatus>({
@@ -15,7 +14,7 @@ export const useHardwareStore = defineStore('hardware', () => {
   })
 
   const cameraStream = ref<MediaStream | null>(null)
-  const mediaRecorder = ref<MediaRecorder | null>(null)
+  const microphoneStream = ref<MediaStream | null>(null)
 
   async function toggleCamera() {
     if (hardware.value.camera) {
@@ -52,7 +51,8 @@ export const useHardwareStore = defineStore('hardware', () => {
 
   async function startMicrophone() {
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      microphoneStream.value = stream
       hardware.value.microphone = true
     } catch (e) {
       console.error('Microphone access denied:', e)
@@ -61,6 +61,8 @@ export const useHardwareStore = defineStore('hardware', () => {
   }
 
   function stopMicrophone() {
+    microphoneStream.value?.getTracks().forEach(track => track.stop())
+    microphoneStream.value = null
     hardware.value.microphone = false
   }
 
@@ -72,7 +74,7 @@ export const useHardwareStore = defineStore('hardware', () => {
     hardware,
     system,
     cameraStream,
-    mediaRecorder,
+    microphoneStream,
     toggleCamera,
     startCamera,
     stopCamera,

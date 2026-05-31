@@ -18,7 +18,6 @@ export interface Conversation {
 export interface HardwareStatus {
   camera: boolean
   microphone: boolean
-  screen: boolean
 }
 
 export interface SystemStatus {
@@ -42,10 +41,6 @@ export interface ChatResponse {
   conversation_id?: string
 }
 
-export interface VoiceRequest {
-  audioData?: string
-}
-
 export interface VoiceResponse {
   text: string
   response: string
@@ -55,11 +50,6 @@ export interface VoiceResponse {
 export interface TTSResult {
   type: 'browser_tts' | 'qwen3_tts'
   text: string
-}
-
-export interface CameraFrameRequest {
-  frameData: string
-  prompt?: string
 }
 
 export interface CameraResponse {

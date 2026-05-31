@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { marked } from 'marked'
-import { cn } from '@/lib/utils'
+import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
 import { formatTime } from '@/lib/utils'
 
@@ -17,12 +17,16 @@ marked.setOptions({
   gfm: true
 })
 
+const ALLOWED_TAGS = ['p','br','strong','em','del','s','code','pre','ul','ol','li','blockquote','a','h1','h2','h3','h4','h5','h6','table','thead','tbody','tr','th','td','hr','img','span','div']
+const ALLOWED_ATTR = ['href','target','src','alt','class','id']
+
 // Render markdown content for assistant messages, plain text for user
 const renderedContent = computed(() => {
   if (isUser.value) {
     return props.message.content
   }
-  return marked.parse(props.message.content) as string
+  const raw = marked.parse(props.message.content) as string
+  return DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR })
 })
 </script>
 
