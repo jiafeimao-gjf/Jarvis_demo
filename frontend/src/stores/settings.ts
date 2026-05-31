@@ -165,9 +165,8 @@ export const useSettingsStore = defineStore('settings', () => {
     if (config.log_level) {
       settings.value.log_level = config.log_level
     }
-    if (config.hardware) {
-      settings.value.hardware = { ...settings.value.hardware, ...config.hardware }
-    }
+    // Hardware: skip API merge — /api/config returns defaults, not saved values.
+    // Saved hardware is in /api/memory/settings/hardware (loaded via syncFromBackend).
   }
 
   // Initialize
