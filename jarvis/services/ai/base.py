@@ -81,6 +81,15 @@ class AIClient(ABC):
         pass
 
     @abstractmethod
+    async def transcribe_audio(
+        self,
+        audio_data: bytes,
+        **kwargs,
+    ) -> str:
+        """Transcribe audio data to text (STT)"""
+        pass
+
+    @abstractmethod
     async def health_check(self) -> bool:
         """Check if provider is available"""
         pass

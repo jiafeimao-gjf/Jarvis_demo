@@ -216,6 +216,14 @@ class AnthropicAdapter(AIClient):
             logger.error(f"Anthropic chat stream error: {e}")
             yield f"Error: {str(e)}"
 
+    async def transcribe_audio(
+        self,
+        audio_data: bytes,
+        **kwargs,
+    ) -> str:
+        """Anthropic does not support audio transcription"""
+        return ""
+
     async def vision_analyze(
         self,
         image_data: bytes,

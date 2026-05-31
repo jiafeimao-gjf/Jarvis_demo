@@ -13,8 +13,8 @@
          │                │                │                │
          ▼                ▼                ▼                ▼
 ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│ VoiceEngine │   │CameraEngine│   │ ChatEngine  │   │ TaskEngine │
-│  音频引擎   │   │  摄像头引擎 │   │  对话引擎   │   │  任务引擎  │
+│ VoiceEngine │   │ SubModelProc│   │ ChatEngine  │   │ TaskEngine │
+│  语音引擎   │   │ 多模态处理 │   │  对话引擎   │   │  任务引擎  │
 └─────────────┘   └─────────────┘   └─────────────┘   └─────────────┘
          │                │                │                │
          └────────────────┴────────────────┴────────────────┘
@@ -278,7 +278,62 @@ monitor.notify(HardwareEvent(type="camera.connected", device_id=0))
 
 ---
 
-### 2.6 Factory Pattern（工厂模式）
+### 2.6 Facade Pattern（外观模式）— Multimodal Sub-Model Pipeline
+
+**用途**：封装多模态子模型（STT、Vision）的查找和调用，返回纯文本给主对话引擎
+
+**文件**: `jarvis/services/sub_model_processor.py`
+
+```python
+# jarvis/services/sub_model_processor.py
+class SubModelProcessor:
+    """子模型处理器 — 多模态输入转文本, 再注入主对话引擎
+
+    架构: 子模型 → 文本 → ChatEngine
+    设计决策: 不新增独立 Router 类, 复用 AIRouter._get_client()
+    """
+
+    def __init__(self, ai_router: AIRouter):
+        self.router = ai_router
+
+    async def process_audio(self, audio_data: bytes) -> str:
+        """STT: sendmeaiohyeah/whisper-large-v2 子模型 → 文本"""
+        model_id = find_audio_model(Provider.OLLAMA)
+        if not model_id:
+            return ""
+        client = self.router._get_client("ollama", model_id)
+        text = await client.transcribe_audio(audio_data)
+        return text.strip()
+
+    async def process_image(self, image_data: bytes, prompt: str) -> str:
+        """Vision: qwen3-vl:4b 子模型 → 文本描述"""
+        return await self.router.vision_analyze(image_data, prompt)
+
+# Mediator 集成:
+class JarvisMediator:
+    def __init__(self):
+        self.sub_model = SubModelProcessor(self.chat_engine.router)
+
+    async def _handle_voice_input(self, event):
+        text = await self.sub_model.process_audio(audio_data)  # ← Facade
+        if text:
+            response = await self.chat_engine.chat(f"[语音输入] {text}")
+
+    async def _handle_camera_frame(self, event):
+        analysis = await self.sub_model.process_image(frame_data)  # ← Facade
+        if analysis:
+            response = await self.chat_engine.chat(f"[图片分析] {analysis}")
+```
+
+**核心价值**:
+- **解耦多模态逻辑**: Mediator 不需要知道 whisper/vision 模型细节
+- **复用基础设施**: 直接使用 AIRouter 的 client cache 和 failover
+- **统一文本输出**: 所有子模型都返回纯文本, 格式化为 `[语音输入]`/`[图片分析]` 前缀后注入 ChatEngine
+- **易于扩展**: 新增子模型类型只需在 SubModelProcessor 中添加方法
+
+---
+
+### 2.7 Factory Pattern（工厂模式）
 
 **用途**：动态创建不同类型的 AI 客户端（Ollama / Claude / OpenAI）
 
@@ -306,7 +361,7 @@ claude = AIClientFactory.create_client("claude", {"api_key": "..."})
 
 ---
 
-### 2.7 Event Sourcing Pattern（事件溯源）
+### 2.8 Event Sourcing Pattern（事件溯源）
 
 **用途**：记录所有对话和操作历史，支持回溯和重放
 
@@ -454,7 +509,8 @@ async def websocket_handler(websocket: WebSocket):
 | **记忆存储** | Repository Pattern | 统一的数据访问接口 |
 | **任务执行** | Strategy Pattern | 多态的任务执行策略 |
 | **硬件状态** | Observer Pattern | 事件驱动的状态通知 |
-| **AI 客户端** | Factory Pattern | 动态的客户端创建 |
+| **AI 客户端** | Registry+Factory Pattern | 动态的客户端创建和注册 |
+| **多模态子模型** | Facade Pattern | 子模型调用封装, 纯文本输出 |
 | **历史记录** | Event Sourcing | 可追溯的状态变更 |
 | **整体架构** | Hexagonal | 清晰的端口和适配器分离 |
 

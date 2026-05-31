@@ -7,7 +7,7 @@ from jarvis.core.voice_engine import VoiceEngine
 from jarvis.core.task_engine import TaskEngine
 from jarvis.core.hardware_bridge import hardware_bridge
 from jarvis.core.memory_store import memory_store
-from jarvis.services.vision_processor import VisionProcessor
+from jarvis.services.sub_model_processor import SubModelProcessor
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -22,11 +22,13 @@ class JarvisMediator:
         self.task_engine = TaskEngine()
         self.hardware_bridge = hardware_bridge
         self.memory_store = memory_store
-        self.vision_processor = VisionProcessor()
+
+        # SubModelProcessor: STT + Vision → text → chat engine
+        self.sub_model = SubModelProcessor(self.chat_engine.router)
 
         self._event_handlers: dict[str, Callable] = {}
         self._register_handlers()
-        logger.info("JarvisMediator initialized")
+        logger.info("JarvisMediator initialized with SubModelProcessor")
 
     def _register_handlers(self):
         """注册事件处理器"""
@@ -50,17 +52,18 @@ class JarvisMediator:
         return None
 
     async def _handle_voice_input(self, event: JarvisEvent) -> dict:
-        """处理语音输入"""
+        """处理语音输入: 子模型 STT → 文本 → 主对话引擎"""
         audio_data = event.payload.get("audio_data")
         if not audio_data:
             return {"error": "No audio data"}
 
-        # 1. 语音转文字（简化实现）
-        text = await self.voice_engine.process_voice_input(audio_data)
+        # 1. STT: Ollama whisper 子模型转文字
+        text = await self.sub_model.process_audio(audio_data)
 
-        # 2. 如果有语音识别结果，进行对话
+        # 2. 识别成功, 注入主对话引擎
         if text:
-            response = await self.chat_engine.chat(text)
+            chat_input = f"[语音输入] {text}"
+            response = await self.chat_engine.chat(chat_input)
             # 3. TTS 播放
             tts_result = await self.voice_engine.text_to_speech(response)
             return {
@@ -68,7 +71,7 @@ class JarvisMediator:
                 "response": response,
                 "tts": tts_result
             }
-        return {"text": "", "response": None}
+        return {"text": "", "response": None, "warning": "语音识别失败"}
 
     async def _handle_chat_message(self, event: JarvisEvent) -> dict:
         """处理文字对话"""
@@ -88,15 +91,27 @@ class JarvisMediator:
         }
 
     async def _handle_camera_frame(self, event: JarvisEvent) -> dict:
-        """处理摄像头帧"""
+        """处理摄像头帧: 子模型 Vision → 文本 → 主对话引擎"""
         frame_data = event.payload.get("frame_data")
-        prompt = event.payload.get("prompt", "描述这张图片")
+        prompt = event.payload.get("prompt", "描述这张图片中的内容")
 
         if not frame_data:
             return {"error": "No frame data"}
 
-        result = await self.vision_processor.analyze_frame(frame_data, prompt)
-        return result
+        # 1. Vision: Ollama vision 子模型分析图像
+        analysis = await self.sub_model.process_image(frame_data, prompt)
+
+        if analysis:
+            # 2. 将分析结果作为用户消息注入主对话引擎
+            chat_input = f"[图片分析] {analysis}"
+            response = await self.chat_engine.chat(chat_input)
+            return {
+                "success": True,
+                "analysis": analysis,
+                "response": response,
+            }
+
+        return {"success": False, "error": "图像分析失败"}
 
     async def _handle_task_execution(self, event: JarvisEvent) -> dict:
         """处理任务执行"""
@@ -153,6 +168,7 @@ class JarvisMediator:
             "voice_engine": self.voice_engine.to_dict(),
             "task_engine": self.task_engine.to_dict(),
             "hardware_bridge": self.hardware_bridge.get_status(),
+            "sub_model_processor": self.sub_model.get_status(),
         }
 
 

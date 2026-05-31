@@ -13,8 +13,8 @@
 | **核心功能** | 语音对话、视觉理解、任务自动化、个人记忆 |
 | **技术栈（后端）** | Python / FastAPI / Ollama / Anthropic |
 | **技术栈（前端）** | Vue3 / TypeScript / Tailwind CSS / Pinia |
-| **设计模式** | Hexagonal / Mediator / Repository / Strategy / Observer |
-| **代码量** | ~5,400 行 |
+| **设计模式** | Hexagonal / Mediator / Facade / Repository / Strategy / Observer |
+| **代码量** | ~6,500 行 |
 
 ---
 
@@ -27,9 +27,10 @@
 | **后端框架** | FastAPI + uvicorn |
 | **前端界面** | Vue3 + Vite + Tailwind CSS |
 | **实时通信** | WebSocket + SSE |
-| **语音 STT** | 浏览器 Web Speech API |
-| **语音 TTS** | 本地 Qwen3-TTS（mlx-audio）或浏览器 TTS |
-| **本地 AI** | Ollama（LLM + Vision）+ Anthropic API |
+| **语音 STT** | Ollama sendmeaiohyeah/whisper-large-v2 子模型 + 浏览器 Web Speech API |
+| **语音 TTS** | 浏览器 SpeechSynthesis |
+| **视觉分析** | Ollama qwen3-vl:4b 子模型 → 文本 → 对话引擎 |
+| **本地 AI** | Ollama（LLM + Vision + Whisper）+ Anthropic API |
 | **记忆存储** | SQLite + 向量搜索（LanceDB） |
 | **任务执行** | Claude Code MCP 工具调用 |
 
@@ -39,6 +40,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │                    Frontend (Vue3)                       │
 │   Port 8529 - Vite proxy to backend /api/* → :9529      │
+│   📸 Camera auto-capture → Vision → Chat    🎤 Mic → STT│
 └─────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -46,15 +48,24 @@
 │               Backend (FastAPI) - Port 9529            │
 │                                                          │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │   Routes    │  │  Mediator   │  │  ChatEngine     │  │
-│  │  /api/*     │──│  (Coordinator)──│  (LLM calls)    │  │
-│  └─────────────┘  └─────────────┘  └─────────────────┘  │
+│  │   Routes    │  │  Mediator   │  │  SubModelProc   │  │
+│  │  /api/*     │──│  (Coordinator)──│  (STT + Vision)  │  │
+│  └─────────────┘  └─────────────┘  └────────┬────────┘  │
 │         │                │                  │           │
 │         ▼                ▼                  ▼           │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │ OllamaClient│  │MemoryStore  │  │VisionProcessor  │  │
-│  │ (HTTP :11434│  │(SQLite/Lance│  │ (Frame analysis)│  │
-│  └─────────────┘  └─────────────┘  └─────────────────┘  │
+│  │  AIRouter   │  │MemoryStore  │  │  ChatEngine     │  │
+│  │  (failover) │  │(SQLite/Lance│  │  (LLM + tools)  │  │
+│  └──────┬──────┘  └─────────────┘  └─────────────────┘  │
+│         │                                                │
+│         ▼                                                │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │ Ollama (localhost:11434)                          │   │
+│  │  ├── LLM:     qwen3:4b       (chat, tools)       │   │
+│  │  ├── Vision:  qwen3-vl:4b    (image → text)      │   │
+│  │  ├── STT:     sendmeaiohyeah/whisper-large-v2 (audio → text)     │   │
+│  │  └── Image:   x/z-image-turbo (text → image)     │   │
+│  └──────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -75,21 +86,19 @@ jarvis_demo/
 │   ├── core/               # 核心引擎层
 │   │   ├── entities.py    # 领域实体
 │   │   ├── chat_engine.py # 对话引擎
-│   │   ├── voice_engine.py # 语音引擎
+│   │   ├── voice_engine.py # 语音引擎 (TTS + Pipeline)
 │   │   ├── task_engine.py # 任务执行引擎
 │   │   ├── hardware_bridge.py # 硬件桥接
 │   │   ├── memory_store.py # 记忆存储
 │   │   ├── mediator.py   # 中介者模式
 │   │   └── tool_parser.py # 工具解析
 │   └── services/           # 服务层
-│       ├── ollama_client.py
+│       ├── sub_model_processor.py # ★ 子模型处理器 (STT + Vision)
 │       ├── ai/             # AI Provider 模块
-│       │   ├── base.py
-│       │   ├── anthropic.py
-│       │   ├── minimax.py
-│       │   └── router.py
-│       ├── vision_processor.py
-│       └── tool_runner.py
+│       │   ├── base.py     # AIClient ABC (含 transcribe_audio)
+│       │   ├── models.py   # Model registry (whisper, vision)
+│       │   ├── router.py   # AIRouter — failover
+│       │   └── providers/  # OllamaAdapter etc.
 │
 ├── frontend/               # 前端 Vue3
 │   ├── src/
@@ -113,11 +122,12 @@ jarvis_demo/
 | **文字对话** | ✅ | POST /api/chat + /api/chat/stream |
 | **流式响应** | ✅ | SSE 流式输出 + 工具调用状态 |
 | **多 Provider** | ✅ | Ollama + Anthropic + MiniMax |
-| **语音识别** | ✅ | Web Speech API |
-| **语音对话** | ✅ | POST /api/voice |
+| **语音识别** | ✅ | Ollama sendmeaiohyeah/whisper-large-v2 子模型 + Web Speech API |
+| **语音对话** | ✅ | POST /api/voice → STT → ChatEngine → TTS |
 | **TTS 播报** | ✅ | 浏览器 SpeechSynthesis |
-| **摄像头捕获** | ✅ | WebRTC getUserMedia |
-| **视觉分析** | ✅ | Ollama Vision |
+| **摄像头捕获** | ✅ | WebRTC getUserMedia + 自动帧捕获 |
+| **视觉分析** | ✅ | Ollama qwen3-vl:4b 子模型 → 文本 → ChatEngine |
+| **多模态融合** | ✅ | SubModelProcessor → [语音/图片] 文本 → ChatEngine |
 | **记忆存储** | ✅ | SQLite + LanceDB |
 | **任务执行** | ✅ | Strategy Pattern |
 | **浏览器自动化** | ✅ | Playwright |
@@ -153,11 +163,12 @@ jarvis_demo/
 | 模式 | 模块 | 用途 |
 |------|------|------|
 | **Mediator** | `core/mediator.py` | 协调各引擎事件路由 |
-| **Pipeline** | `core/voice_engine.py` | 音频处理链 |
+| **Facade** | `services/sub_model_processor.py` | 多模态子模型查找和调用, 返回纯文本 |
+| **Pipeline** | `core/voice_engine.py` | 音频处理链 (TTS) |
 | **Repository** | `core/memory_store.py` | SQLite + LanceDB 统一接口 |
-| **Strategy** | `core/task_engine.py` | 任务执行策略 |
+| **Strategy** | `core/task_engine.py`, `services/ai/` | 任务执行策略 + AI Provider 多态 |
 | **Observer** | `core/hardware_bridge.py` | 硬件状态变更通知 |
-| **Factory** | `services/ai/` | AI 客户端动态创建 |
+| **Registry** | `services/ai/registry.py` | Provider 注册 + Factory 创建 |
 
 详细说明见 [DESIGN_PATTERNS.md](./DESIGN_PATTERNS.md)
 

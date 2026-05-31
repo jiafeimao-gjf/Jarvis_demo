@@ -51,10 +51,11 @@ cd frontend && npm run build
 | Real-time | WebSocket + SSE (Server-Sent Events) |
 | AI providers | Ollama (local), OpenAI, Anthropic, MiniMax |
 | AI orchestration | AIRouter with automatic failover chain |
-| Voice STT | Browser Web Speech API |
-| Voice TTS | Qwen3-TTS (mlx-audio) or browser TTS (via `speak` skill) |
+| Voice STT | Ollama sendmeaiohyeah/whisper-large-v2 (sub-model) + Browser Web Speech API |
+| Voice TTS | Browser TTS (frontend SpeechSynthesis) |
 | Image generation | x/z-image-turbo via Ollama (1024×1024) |
-| Vision analysis | Ollama qwen3-vl:4b |
+| Vision analysis | Ollama qwen3-vl:4b (sub-model pipeline) |
+| Multimodal routing | SubModelProcessor — STT/Vision sub-models → text → ChatEngine |
 | Memory storage | SQLite + LanceDB vector search |
 | Task execution | Playwright, Claude Code MCP tools |
 
@@ -68,21 +69,19 @@ Frontend (Vue3 :8529) ──proxy──▶ Backend (FastAPI :9529)
                       │   (coordinates all engines)    │
                       └───┬────┬────┬────┬────┬───────┘
                           │    │    │    │    │
-                     ┌────┘    │    │    │    └──────┐
-                     ▼         ▼    ▼    ▼           ▼
-               ChatEngine  Voice  Task  Memory   Vision
-               (LLM calls) Engine Engine Store   Processor
-                                                      │
-                     AI Providers (Strategy Pattern)   │
-                     ┌──────────────────────────┐     │
-                     │   AIRouter (with         │     │
-                     │   automatic failover)    │     │
-                     ├──────────────────────────┤     │
-                     │ OllamaAdapter (local)    │     │
-                     │ OpenAIAdapter            │     │
-                     │ AnthropicAdapter         │     │
-                     │ MiniMaxAdapter           │     │
-                     └──────────────────────────┘     │
+            ┌─────────────┤    │    │    │    └──────────┐
+            ▼             ▼    ▼    ▼    ▼               ▼
+      SubModelProcessor Voice Task Memory ChatEngine
+      (STT + Vision      Engine Engine Store (LLM calls)
+       sub-models)                                      │
+            │              AI Providers                 │
+            │         (Strategy + Registry)             │
+            ├──────► AIRouter ──────┐                   │
+            │        │              │                   │
+            │   OllamaAdapter  OpenAIAdapter            │
+            │   AnthropicAdapter                       │
+            │   (whisper, vision, chat, tools)         │
+            └──────────────────────────────────────────┘
                                                       │
                External Services                      │
                ┌──────────────────────────┐           │
@@ -118,8 +117,9 @@ jarvis/                         # Backend (Python)
 │   ├── tool_result_formatter.py# Format LLM tool results for frontend display
 │   └── notification.py         # Event notification system
 ├── services/                   # External service adapters
-│   ├── ollama_client.py        # Raw HTTP client to Ollama API
-│   ├── vision_processor.py     # Image frame analysis pipeline
+│   ├── sub_model_processor.py # SubModelProcessor — STT+Vision sub-model facade
+│   ├── ollama_client.py        # Raw HTTP client to Ollama API (legacy)
+│   ├── vision_processor.py     # Image frame analysis (legacy, subsumed by SubModelProcessor)
 │   └── ai/                     # AI Provider module (Strategy + Registry Pattern)
 │       ├── base.py             # AIClient ABC, AIResponse, TokenUsage
 │       ├── config.py           # AI provider configuration
@@ -177,15 +177,51 @@ TODO.md                         # Feature priorities (P0/P1/P2)
 
 ## Key Design Patterns
 
-1. **Mediator Pattern** — `JarvisMediator` in `core/mediator.py` coordinates all engines (chat, voice, task, hardware, memory, vision). API routes delegate to mediator; engines never call each other directly.
+1. **Mediator Pattern** — `JarvisMediator` in `core/mediator.py` coordinates all engines (chat, voice, task, hardware, memory, sub_model). API routes delegate to mediator; engines never call each other directly.
 
-2. **Strategy Pattern** — AI providers implement `AIClient` base class (`services/ai/base.py`). Adapters in `services/ai/providers/` implement Ollama, OpenAI, and Anthropic strategies. `TaskEngine` uses the same pattern for different execution strategies (browser, system, code).
+2. **Facade Pattern** — `SubModelProcessor` in `services/sub_model_processor.py` encapsulates STT and Vision sub-model lookup and invocation, returning plain text for injection into the main chat pipeline. This isolates multimodal complexity from the mediator.
 
-3. **Repository Pattern** — `MemoryRepository` abstract class in `core/memory_store.py` with `SQLiteMemoryRepository` and `LanceDBMemoryRepository` implementations. Isolates persistence from business logic.
+3. **Strategy Pattern** — AI providers implement `AIClient` base class (`services/ai/base.py`). Adapters in `services/ai/providers/` implement Ollama, OpenAI, and Anthropic strategies for `chat()`, `vision_analyze()`, and `transcribe_audio()`. `TaskEngine` uses the same pattern for execution strategies.
 
-4. **Registry Pattern** — `ProviderRegistry` in `services/ai/registry.py` registers provider adapter classes and creates clients. `ToolRegistry` in `core/tool_registry.py` registers all tools with parameter schemas.
+4. **Repository Pattern** — `MemoryRepository` abstract class in `core/memory_store.py` with `SQLiteMemoryRepository` and `LanceDBMemoryRepository` implementations. Isolates persistence from business logic.
 
-5. **Event-Driven** — `JarvisEvent` entities flow through the mediator. Frontend SSE streams deliver token-by-token responses + tool call/result lifecycle events.
+5. **Registry Pattern** — `ProviderRegistry` in `services/ai/registry.py` registers provider adapter classes and creates clients. `ToolRegistry` in `core/tool_registry.py` registers all tools with parameter schemas.
+
+6. **Event-Driven** — `JarvisEvent` entities flow through the mediator. Frontend SSE streams deliver token-by-token responses + tool call/result lifecycle events.
+
+## Multimodal Sub-Model Pipeline
+
+Audio (STT) and image (Vision) are processed by dedicated Ollama sub-models, then the generated text is injected into the main chat conversation.
+
+```
+🎤 Audio Bytes ──► SubModelProcessor.process_audio()
+                      │  _get_client("ollama", "sendmeaiohyeah/whisper-large-v2")
+                      │  ⟩ transcribe_audio(audio_bytes)
+                      ▼
+                   Text ("今天天气怎么样")
+                      │  [语音输入] prefix
+                      ▼
+                   ChatEngine.chat("[语音输入] 今天天气怎么样")
+                      │
+                      ▼  LLM 回复
+
+📷 Image Bytes ──► SubModelProcessor.process_image()
+                      │  AIRouter.vision_analyze(image, prompt)
+                      │  ⟩ OllamaAdapter.vision_analyze() → qwen3-vl:4b
+                      ▼
+                   Text ("一只橙色的猫坐在窗台上...")
+                      │  [图片分析] prefix
+                      ▼
+                   ChatEngine.chat("[图片分析] 一只橙色的猫...")
+                      │
+                      ▼  LLM 回复
+```
+
+- **SubModelProcessor** (`services/sub_model_processor.py`): Facade that finds audio/vision sub-models, calls them, returns text
+- **Mediator integration**: `_handle_voice_input` and `_handle_camera_frame` now route through `SubModelProcessor` before `ChatEngine`
+- **Frontend**: CameraPreview auto-captures frames every 5s; ChatWindow has a mic button for voice recording
+- **Models**: STT uses `sendmeaiohyeah/whisper-large-v2`; Vision uses `qwen3-vl:4b`; both configurable in `OllamaConfig`
+- **Fallback**: If whisper model unavailable, returns empty string and error is logged
 
 ## AI Provider System
 

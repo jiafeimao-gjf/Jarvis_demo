@@ -14,6 +14,7 @@ class OllamaConfig(BaseModel):
     base_url: str = "http://localhost:11434"
     model: str = "qwen3:4b"
     vision_model: str = "qwen3-vl:4b"
+    stt_model: str = "sendmeaiohyeah/whisper-large-v2"
     t2i_model: str = "x/z-image-turbo"
     timeout: float = 60.0
     max_retries: int = 3

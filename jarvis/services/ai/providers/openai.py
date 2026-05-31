@@ -153,6 +153,14 @@ class OpenAIAdapter(AIClient):
             logger.error(f"OpenAI chat stream error: {e}")
             yield f"Error: {str(e)}"
 
+    async def transcribe_audio(
+        self,
+        audio_data: bytes,
+        **kwargs,
+    ) -> str:
+        """OpenAI does not yet support transcribe_audio in this adapter"""
+        return ""
+
     async def vision_analyze(
         self,
         image_data: bytes,

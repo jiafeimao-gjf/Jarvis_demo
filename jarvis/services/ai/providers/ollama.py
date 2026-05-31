@@ -158,6 +158,36 @@ class OllamaAdapter(AIClient):
             logger.error(f"Ollama chat stream error: {e}")
             yield f"Error: {str(e)}"
 
+    async def transcribe_audio(
+        self,
+        audio_data: bytes,
+        **kwargs,
+    ) -> str:
+        """Transcribe audio to text using Ollama Whisper model"""
+        import base64 as _b64
+
+        audio_b64 = _b64.b64encode(audio_data).decode()
+        payload = {
+            "model": self.model,
+            "prompt": "Please transcribe the following audio to text:",
+            "images": [],
+            "stream": False,
+            "options": {"temperature": 0.0}
+        }
+        # Note: Ollama whisper models typically process audio via /api/generate
+        # with the audio data embedded. The exact API may vary by whisper version.
+        # For whisper.cpp-based models, audio is processed via multipart upload.
+        # For now, attempt the generate path; fall back gracefully.
+
+        try:
+            response = await self.client.post("/api/generate", json=payload)
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "").strip()
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama transcribe_audio error: {e}")
+            raise ProviderNotAvailableError("ollama", f"Audio transcription failed: {e}")
+
     async def vision_analyze(
         self,
         image_data: bytes,

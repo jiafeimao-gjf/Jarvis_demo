@@ -3,13 +3,16 @@ import { ref, watch, nextTick, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
 import { useApi } from '@/composables/useApi'
+import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
 import ChatMessage from './ChatMessage.vue'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const api = useApi()
+const speech = useSpeechRecognition()
 const inputValue = ref('')
 const isLoading = ref(false)
+const isRecording = ref(false)
 const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done'
 const currentResponse = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -126,6 +129,32 @@ async function handleSend() {
   }
 }
 
+async function handleVoiceInput() {
+  if (isRecording.value || isLoading.value) return
+
+  try {
+    isRecording.value = true
+    // Use captureAudio directly to get both transcript and LLM reply
+    const audioBase64 = await speech.captureAudio()
+    isRecording.value = false
+
+    if (!audioBase64) return
+
+    const response = await api.voice(audioBase64)
+    if (response.text) {
+      // Show transcribed text as user message
+      chatStore.addMessage('user', `🎤 ${response.text}`)
+    }
+    if (response.response) {
+      // Show LLM reply as assistant message
+      chatStore.addMessage('assistant', response.response)
+    }
+  } catch (e) {
+    isRecording.value = false
+    console.error('Voice input failed:', e)
+  }
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -202,6 +231,22 @@ onMounted(() => {
           :disabled="isLoading"
           @keydown="handleKeydown"
         >
+        <button
+          class="btn btn-cyber border text-sm rounded-full px-3 py-2 transition-colors"
+          :class="isRecording
+            ? 'bg-red-500/30 border-red-500 text-red-400 animate-pulse'
+            : 'bg-accent/10 border-accent/30 text-accent hover:bg-accent/20'"
+          :disabled="isLoading"
+          @click="handleVoiceInput"
+          title="语音输入"
+        >
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </button>
         <button
           class="btn btn-cyber bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 disabled:opacity-30 disabled:cursor-not-allowed"
           :disabled="isLoading || !inputValue.trim()"

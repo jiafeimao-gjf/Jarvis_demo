@@ -20,6 +20,7 @@ class ModelInfo:
     model_id: str  # Provider-specific ID
     display_name: str
     supports_vision: bool = False
+    supports_audio: bool = False
     supports_streaming: bool = True
     context_window: Optional[int] = None
     per_1k_cost: Optional[float] = None
@@ -48,6 +49,13 @@ MODELS: dict[str, ModelInfo] = {
         provider=Provider.OLLAMA,
         model_id="llama3:8b",
         display_name="Llama3 8B",
+    ),
+    # Ollama Whisper (STT)
+    "sendmeaiohyeah/whisper-large-v2": ModelInfo(
+        provider=Provider.OLLAMA,
+        model_id="sendmeaiohyeah/whisper-large-v2",
+        display_name="Whisper Large v2",
+        supports_audio=True,
     ),
     # OpenAI
     "gpt-4o-mini": ModelInfo(
@@ -126,5 +134,13 @@ def find_vision_model(provider: Provider) -> Optional[str]:
     """Find first vision-capable model for a provider"""
     for mid, mi in MODELS.items():
         if mi.provider == provider and mi.supports_vision:
+            return mid
+    return None
+
+
+def find_audio_model(provider: Provider) -> Optional[str]:
+    """Find first audio-capable (STT) model for a provider"""
+    for mid, mi in MODELS.items():
+        if mi.provider == provider and mi.supports_audio:
             return mid
     return None
