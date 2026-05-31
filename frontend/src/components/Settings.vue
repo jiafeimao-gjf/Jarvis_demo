@@ -41,7 +41,7 @@ const isLoadingModels = ref(false)
 const ollamaModels = ref<ModelOption[]>([])
 
 // Models — Ollama loaded from API, cloud providers hardcoded reference
-const providerModels: Record<string, ModelOption[]> = {
+const providerModels = ref<Record<string, ModelOption[]>>({
   ollama: [],
   openai: [
     { name: 'gpt-4o-mini', provider: 'openai' },
@@ -51,7 +51,7 @@ const providerModels: Record<string, ModelOption[]> = {
     { name: 'claude-3-haiku', provider: 'anthropic' },
     { name: 'claude-3-5-sonnet', provider: 'anthropic' },
   ],
-}
+})
 
 // Form bound directly to settings store
 const form = computed(() => settingsStore.settings)
@@ -59,14 +59,14 @@ const form = computed(() => settingsStore.settings)
 // Current models based on selected provider
 const availableModels = computed(() => {
   const provider = form.value.ai_default_provider
-  return providerModels[provider] || []
+  return providerModels.value[provider] || []
 })
 
 // Watch provider change to reset model if not available for new provider
 watch(() => form.value.ai_default_provider, (newProvider, oldProvider) => {
   if (oldProvider && newProvider !== oldProvider) {
     const currentModel = form.value.ai_default_model
-    const validModels = providerModels[newProvider] || []
+    const validModels = providerModels.value[newProvider] || []
     const modelExists = validModels.some(m => m.name === currentModel)
     if (!modelExists && validModels.length > 0) {
       form.value.ai_default_model = validModels[0].name
@@ -167,7 +167,7 @@ async function loadOllamaModels() {
     if (res.ok) {
       const data = await res.json()
       // Update ollama models from backend
-      providerModels.ollama = (data.models || []).map((m: any) => ({
+      providerModels.value.ollama = (data.models || []).map((m: any) => ({
         name: m.name || m.model,
         provider: 'ollama'
       }))
