@@ -124,6 +124,13 @@ onUnmounted(() => { document.body.style.overflow = '' })
           />
         </div>
       </Teleport>
+      <!-- Thinking (collapsible) -->
+      <details v-if="!isUser && message.thinking" class="mb-2 text-xs">
+        <summary class="text-primary/40 cursor-pointer hover:text-primary/60 transition-colors select-none">思考过程</summary>
+        <div class="mt-1 text-primary/30 bg-black/20 rounded-lg p-2 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+          {{ message.thinking }}
+        </div>
+      </details>
       <!-- User message: plain text -->
       <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
       <!-- Assistant message: rendered markdown -->

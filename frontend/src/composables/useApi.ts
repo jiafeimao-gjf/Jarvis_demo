@@ -39,7 +39,8 @@ export function useApi() {
     request: ChatRequest,
     onToken: (token: string) => void,
     onDone?: () => void,
-    onStatus?: (status: string) => void
+    onStatus?: (status: string) => void,
+    onThinking?: (chunk: string) => void
   ): Promise<void> {
     error.value = null
     try {
@@ -86,6 +87,10 @@ export function useApi() {
                 } else if (data.type === 'tool_result') {
                   // Handle tool result events from backend
                   onStatus?.(`tool_result:${data.tool}:${data.action}:${data.status}`)
+                } else if (data.type === 'thinking') {
+                  onThinking?.(data.content)
+                } else if (data.type === 'thinking_start') {
+                  onThinking?.('')
                 }
               } catch {
                 // Incomplete JSON, will be completed in next chunk

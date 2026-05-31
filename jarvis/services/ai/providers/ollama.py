@@ -98,16 +98,19 @@ class OllamaAdapter(AIClient):
                 response.raise_for_status()
                 data = response.json()
 
-                # /v1/messages returns Anthropic format: {content: [{type:"text", text:"..."}]}
+                # /v1/messages returns content blocks: text, thinking, tool_use
                 content = ""
+                thinking = ""
                 content_blocks = data.get("content", [])
                 for block in content_blocks:
                     if block.get("type") == "text":
                         content = block.get("text", "")
-                        break
+                    elif block.get("type") == "thinking":
+                        thinking = block.get("thinking", "")
 
                 return AIResponse(
                     content=content,
+                    thinking=thinking,
                     model=self.model,
                     provider="ollama",
                     done=True,

@@ -304,7 +304,8 @@ class ChatEngine:
                         break
 
         # 8. 添加助手消息（最终响应）
-        self.current_conversation.add_message("assistant", final_response)
+        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
+        self.current_conversation.add_message("assistant", final_response, thinking=thinking)
         logger.info(f"[Chat] 对话完成 | total_messages={len(self.current_conversation.messages)}")
 
         # 9. 保存对话历史到 DB
@@ -491,7 +492,8 @@ class ChatEngine:
         final_response = self._resolve_image_paths(final_response)
 
         # 8. 保存对话历史
-        self.current_conversation.add_message("assistant", final_response)
+        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
+        self.current_conversation.add_message("assistant", final_response, thinking=thinking)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
@@ -503,7 +505,16 @@ class ChatEngine:
         # 8. 保存对话到 JSON 文件
         await self._save_conversation_to_file()
 
-        # 9. 流式返回最终响应
+        # 9. 流式返回 thinking（如果有）
+        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
+        if thinking:
+            logger.info(f"[StreamChat] 流式返回 thinking | len={len(thinking)}")
+            yield json.dumps({"type": "thinking_start", "content": ""})
+            for chunk in self._chunk_text(thinking, 8):
+                yield json.dumps({"type": "thinking", "content": chunk})
+            yield json.dumps({"type": "thinking_end", "content": ""})
+
+        # 10. 流式返回最终响应
         logger.info(f"[StreamChat] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
@@ -670,7 +681,8 @@ class ChatEngine:
         final_response = self._resolve_image_paths(final_response)
 
         # 8. 保存对话历史
-        self.current_conversation.add_message("assistant", final_response)
+        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
+        self.current_conversation.add_message("assistant", final_response, thinking=thinking)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
             self.current_conversation.user_id,
@@ -682,11 +694,26 @@ class ChatEngine:
         # 8. 保存对话到 JSON 文件
         await self._save_conversation_to_file()
 
-        # 9. 流式返回最终响应
+        # 9. 流式返回 thinking（如果有）
+        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
+        if thinking:
+            logger.info(f"[StreamChatWithMsgs] 流式返回 thinking | len={len(thinking)}")
+            yield json.dumps({"type": "thinking_start", "content": ""})
+            for chunk in self._chunk_text(thinking, 8):
+                yield json.dumps({"type": "thinking", "content": chunk})
+            yield json.dumps({"type": "thinking_end", "content": ""})
+
+        # 10. 流式返回最终响应
         logger.info(f"[StreamChatWithMsgs] 开始流式返回 | response_len={len(final_response)}")
         for token in final_response:
             yield token
         logger.info("[StreamChatWithMsgs] 流式返回完成")
+
+    @staticmethod
+    def _chunk_text(text: str, size: int = 8):
+        """Yield text in chunks for streaming"""
+        for i in range(0, len(text), size):
+            yield text[i:i + size]
 
     def _resolve_image_paths(self, text: str) -> str:
         """将响应中的本地图片路径替换为 base64 data URL.

@@ -12,6 +12,8 @@ const inputValue = ref('')
 const isLoading = ref(false)
 const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done'
 const currentResponse = ref('')
+const currentThinking = ref('')
+const showThinking = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const showScrollBtn = ref(false)
 const isAtBottom = ref(true)
@@ -53,6 +55,8 @@ async function handleSend() {
   isLoading.value = true
   thinkingStatus.value = 'thinking'
   currentResponse.value = ''
+  currentThinking.value = ''
+  showThinking.value = false
 
   try {
     // Add empty assistant message that we'll update
@@ -102,21 +106,18 @@ async function handleSend() {
         if (status === 'thinking') {
           thinkingStatus.value = 'thinking'
         } else if (status.startsWith('tool_call:')) {
-          // Display tool call in progress
           const parts = status.split(':')
-          const tool = parts[1]
-          const action = parts[2]
-          // Add a system message showing tool call
-          chatStore.addMessage('system', `🔧 正在执行工具: ${tool}.${action}`)
+          chatStore.addMessage('system', `🔧 正在执行工具: ${parts[1]}.${parts[2]}`)
         } else if (status.startsWith('tool_result:')) {
-          // Display tool result
           const parts = status.split(':')
-          const tool = parts[1]
-          const action = parts[2]
-          const resultStatus = parts[3]
-          const icon = resultStatus === 'success' ? '✅' : '❌'
-          chatStore.addMessage('system', `${icon} 工具完成: ${tool}.${action}`)
+          const icon = parts[3] === 'success' ? '✅' : '❌'
+          chatStore.addMessage('system', `${icon} 工具完成: ${parts[1]}.${parts[2]}`)
         }
+      },
+      (chunk: string) => {
+        // Thinking stream
+        if (!showThinking.value) showThinking.value = true
+        currentThinking.value += chunk
       }
     )
   } catch (e) {
@@ -213,6 +214,20 @@ onMounted(() => {
         :key="msg.id"
         :message="msg"
       />
+
+      <!-- Thinking 折叠显示 -->
+      <div v-if="showThinking && (currentThinking || isLoading)" class="px-4 py-2">
+        <button
+          class="flex items-center gap-2 text-xs text-primary/50 hover:text-primary/70 transition-colors mb-1"
+          @click="showThinking = !showThinking"
+        >
+          <span>{{ showThinking ? '▼' : '▶' }} 思考过程</span>
+          <span v-if="isLoading && currentThinking" class="text-primary/30">...</span>
+        </button>
+        <div v-if="showThinking && currentThinking" class="text-xs text-primary/40 bg-black/20 rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+          {{ currentThinking }}
+        </div>
+      </div>
 
       <div v-if="isLoading && thinkingStatus !== 'done'" class="flex items-center gap-2">
         <div class="typing-indicator-cyber">

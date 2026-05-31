@@ -31,6 +31,7 @@ class AIResponse:
     metrics: Optional[ResponseMetrics] = None
     raw: Optional[dict] = None
     content_blocks: Optional[list] = None  # For tool_use blocks in Anthropic
+    thinking: Optional[str] = None  # Model reasoning/thinking content
 
 
 class AIClient(ABC):

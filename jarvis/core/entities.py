@@ -51,7 +51,8 @@ class Message:
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     role: str = "user"  # user | assistant | system
     content: str = ""
-    image: Optional[str] = None  # Base64 image data (camera frames)
+    image: Optional[str] = None
+    thinking: Optional[str] = None  # Model reasoning/thinking
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: dict = field(default_factory=dict)
 
@@ -61,6 +62,7 @@ class Message:
             "role": self.role,
             "content": self.content,
             "image": self.image,
+            "thinking": self.thinking,
             "timestamp": self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
             "metadata": self.metadata
         }
@@ -85,9 +87,9 @@ class Conversation:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
-    def add_message(self, role: str, content: str) -> Message:
+    def add_message(self, role: str, content: str, image: str = None, thinking: str = None) -> Message:
         """添加消息"""
-        msg = Message(role=role, content=content)
+        msg = Message(role=role, content=content, image=image, thinking=thinking)
         self.messages.append(msg)
         self.updated_at = datetime.now()
         return msg

@@ -3,7 +3,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp: Date
-  image?: string  // Base64 image data (for camera analysis cards)
+  image?: string
+  thinking?: string  // Model reasoning/thinking content
 }
 
 export interface Conversation {
