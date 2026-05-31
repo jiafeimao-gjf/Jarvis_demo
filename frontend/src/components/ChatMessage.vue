@@ -10,6 +10,20 @@ const props = defineProps<{
 }>()
 
 const isUser = computed(() => props.message.role === 'user')
+const isTool = computed(() => props.message.role === 'tool')
+const isToolResult = computed(() => props.message.role === 'tool_result')
+
+const toolInfo = computed(() => {
+  if (!isTool.value) return null
+  try { return JSON.parse(props.message.content) } catch { return null }
+})
+const toolResultInfo = computed(() => {
+  if (!isToolResult.value) return { text: props.message.content }
+  const t = props.message.content
+  const m = t.match(/^\[(工具结果|工具错误)\]\s*(\S+?):\s*(.*)/s)
+  if (m) return { status: m[1] === '工具结果' ? 'success' : 'error', tool: m[2], detail: m[3] }
+  return { status: 'info', tool: '', detail: t }
+})
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -83,7 +97,9 @@ onUnmounted(() => { document.body.style.overflow = '' })
         'rounded-2xl px-4 py-3 relative overflow-hidden',
         isUser
           ? 'bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/30'
-          : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
+          : isTool || isToolResult
+            ? 'bg-black/20 border border-primary/10 max-w-[85%]'
+            : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
       ]"
     >
       <!-- 图片预览：摄像头分析结果的视频帧 -->
@@ -124,20 +140,37 @@ onUnmounted(() => { document.body.style.overflow = '' })
           />
         </div>
       </Teleport>
-      <!-- Thinking (collapsible) -->
-      <details v-if="!isUser && message.thinking" class="mb-2 text-xs">
+      <!-- Thinking (collapsible) — not for tool messages -->
+      <details v-if="!isUser && !isTool && !isToolResult && message.thinking" class="mb-2 text-xs">
         <summary class="text-primary/40 cursor-pointer hover:text-primary/60 transition-colors select-none">思考过程</summary>
         <div class="mt-1 text-primary/30 bg-black/20 rounded-lg p-2 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
           {{ message.thinking }}
         </div>
       </details>
+      <!-- Tool call card -->
+      <div v-if="isTool && toolInfo" class="flex items-start gap-2 text-xs">
+        <span class="text-primary/60 mt-0.5">🔧</span>
+        <div>
+          <span class="text-primary/80 font-medium">{{ toolInfo.tool }}.{{ toolInfo.action }}</span>
+          <pre class="text-primary/40 mt-1 text-[11px] whitespace-pre-wrap">{{ JSON.stringify(toolInfo.params, null, 2) }}</pre>
+        </div>
+      </div>
+      <!-- Tool result card -->
+      <div v-else-if="isToolResult" class="flex items-start gap-2 text-xs">
+        <span class="mt-0.5">{{ toolResultInfo.status === 'success' ? '✅' : toolResultInfo.status === 'error' ? '❌' : 'ℹ️' }}</span>
+        <div>
+          <span :class="toolResultInfo.status === 'success' ? 'text-green-400' : 'text-red-400'" class="font-medium">{{ toolResultInfo.tool }}</span>
+          <pre class="text-primary/40 mt-1 text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">{{ toolResultInfo.detail }}</pre>
+        </div>
+      </div>
       <!-- User message: plain text -->
-      <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
+      <p v-else-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
       <!-- Assistant message: rendered markdown -->
       <div v-else class="text-sm leading-relaxed markdown-content text-foreground" v-html="renderedContent"></div>
     </div>
 
     <span
+      v-if="!isTool && !isToolResult"
       :class="[
         'text-[10px] mt-1 tracking-wider',
         isUser ? 'text-primary/60 text-right' : 'text-primary/40 text-left'
