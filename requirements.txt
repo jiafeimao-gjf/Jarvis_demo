@@ -19,6 +19,9 @@ lancedb==0.8.0
 pyarrow>=14.0.0
 numpy>=1.26.0
 
+# STT（语音转文字）
+openai-whisper>=20240930
+
 # 可选依赖（根据需要安装）
 # playwright==1.42.0   # 浏览器自动化 (需: playwright install chromium)
 # pyautogui==0.9.54    # 桌面自动化

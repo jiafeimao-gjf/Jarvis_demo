@@ -21,9 +21,9 @@ class VoiceRequest(BaseModel):
 
 class VoiceResponse(BaseModel):
     """语音响应模型"""
-    text: str
-    response: str
-    tts: dict
+    text: str = ""
+    response: Optional[str] = None
+    tts: Optional[dict] = None
 
 
 @router.post("")

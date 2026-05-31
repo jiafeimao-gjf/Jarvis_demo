@@ -1,6 +1,8 @@
 # jarvis/services/ai/providers/ollama.py
 """Ollama Provider Adapter"""
 import json
+import os
+import tempfile
 import httpx
 from typing import Optional, AsyncIterator
 from jarvis.services.ai.base import AIClient, AIResponse
@@ -9,6 +11,10 @@ from jarvis.services.ai.exceptions import ProviderNotAvailableError, ModelNotSup
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Lazily-load whisper model (global, loaded once on first STT call)
+_whisper_model = None
+_WHISPER_SIZE = "base"  # tiny/base/small/medium/large
 
 
 class OllamaAdapter(AIClient):
@@ -163,30 +169,68 @@ class OllamaAdapter(AIClient):
         audio_data: bytes,
         **kwargs,
     ) -> str:
-        """Transcribe audio to text using Ollama Whisper model"""
-        import base64 as _b64
+        """Transcribe audio using local openai-whisper model.
 
-        audio_b64 = _b64.b64encode(audio_data).decode()
-        payload = {
-            "model": self.model,
-            "prompt": "Please transcribe the following audio to text:",
-            "images": [],
-            "stream": False,
-            "options": {"temperature": 0.0}
-        }
-        # Note: Ollama whisper models typically process audio via /api/generate
-        # with the audio data embedded. The exact API may vary by whisper version.
-        # For whisper.cpp-based models, audio is processed via multipart upload.
-        # For now, attempt the generate path; fall back gracefully.
+        Frontend records audio/webm (Opus) → ffmpeg decodes to 16kHz mono
+        WAV → whisper transcribes.
+        """
+        import asyncio
 
+        global _whisper_model
+
+        # Lazy-load whisper model (once)
+        if _whisper_model is None:
+            import whisper
+            _whisper_model = whisper.load_model(_WHISPER_SIZE)
+            logger.info(f"[whisper] loaded model: {_WHISPER_SIZE}")
+
+        raw_path = None
+        wav_path = None
         try:
-            response = await self.client.post("/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("response", "").strip()
-        except httpx.HTTPError as e:
-            logger.error(f"Ollama transcribe_audio error: {e}")
-            raise ProviderNotAvailableError("ollama", f"Audio transcription failed: {e}")
+            # Write raw audio (WebM/Opus) to temp file
+            with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
+                f.write(audio_data)
+                raw_path = f.name
+
+            # Decode to 16kHz mono WAV via ffmpeg
+            wav_path = raw_path + ".wav"
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-i", raw_path,
+                "-ar", "16000", "-ac", "1", "-f", "wav", wav_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0 or not os.path.exists(wav_path):
+                err = stderr.decode()[:200] if stderr else "unknown"
+                raise RuntimeError(f"ffmpeg decode failed: {err}")
+
+            wav_size = os.path.getsize(wav_path)
+            logger.info(
+                f"[whisper] {len(audio_data)} bytes WebM → {wav_size} bytes WAV"
+            )
+
+            # Run whisper in thread pool (CPU-bound)
+            result = await asyncio.to_thread(
+                _whisper_model.transcribe,
+                wav_path,
+                language="zh",
+                fp16=False,
+            )
+            text = result["text"].strip()
+            logger.info(f"[whisper] result ({len(text)} chars): {text[:120]}")
+            return text
+
+        except Exception as e:
+            logger.error(f"[whisper] error: {type(e).__name__}: {e}")
+            raise ProviderNotAvailableError("ollama", f"Whisper error: {e}")
+        finally:
+            for p in [raw_path, wav_path]:
+                if p and os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
 
     async def vision_analyze(
         self,
