@@ -34,6 +34,19 @@ const showViewer = ref(false)
 const viewerZoom = ref(1)
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4
+const isSpeaking = ref(false)
+
+function speakContent() {
+  if (!('speechSynthesis' in window)) return
+  window.speechSynthesis.cancel()
+  const utterance = new SpeechSynthesisUtterance(props.message.content)
+  utterance.lang = 'zh-CN'
+  utterance.rate = 1.0
+  isSpeaking.value = true
+  utterance.onend = () => { isSpeaking.value = false }
+  utterance.onerror = () => { isSpeaking.value = false }
+  speechSynthesis.speak(utterance)
+}
 
 function openViewer() {
   viewerZoom.value = 1
@@ -124,6 +137,13 @@ onUnmounted(() => { document.body.style.overflow = '' })
       ]"
     >
       {{ formatTime(message.timestamp) }}
+      <button
+        v-if="!isUser"
+        class="ml-2 align-middle opacity-50 hover:opacity-100 transition-opacity"
+        :class="isSpeaking ? 'text-primary' : ''"
+        @click="speakContent"
+        :title="isSpeaking ? '播放中...' : '朗读'"
+      >{{ isSpeaking ? '🔊' : '🔈' }}</button>
     </span>
   </div>
 </template>
