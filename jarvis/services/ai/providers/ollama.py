@@ -35,11 +35,11 @@ class OllamaAdapter(AIClient):
 
     @property
     def client(self) -> httpx.AsyncClient:
-        """Lazy-loaded HTTP client"""
+        """Lazy-loaded HTTP client — connect=10s, read=self.timeout"""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
-                timeout=httpx.Timeout(self.timeout)
+                timeout=httpx.Timeout(10.0, read=self.timeout, write=30.0, pool=10.0)
             )
         return self._client
 
@@ -250,7 +250,11 @@ class OllamaAdapter(AIClient):
 
         try:
             t0 = time.time()
-            response = await self.client.post("/v1/messages", json=payload)
+            # Vision can be slow — per-request timeout (read=180s)
+            response = await self.client.post(
+                "/v1/messages", json=payload,
+                timeout=httpx.Timeout(10.0, read=180.0, write=30.0),
+            )
             response.raise_for_status()
             data = response.json()
 
