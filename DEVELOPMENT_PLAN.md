@@ -94,6 +94,7 @@ jarvis_demo/
 │   │   └── tool_parser.py # 工具解析
 │   └── services/           # 服务层
 │       ├── sub_model_processor.py # ★ 子模型处理器 (STT + Vision)
+│       ├── skill_loader.py    # ★ 技能加载器 (workspace/skills)
 │       ├── ai/             # AI Provider 模块
 │       │   ├── base.py     # AIClient ABC (含 transcribe_audio)
 │       │   ├── models.py   # Model registry (whisper, vision)
@@ -133,6 +134,8 @@ jarvis_demo/
 | **摄像头自动分析** | ✅ | 30s 间隔, 启动/停止切换, 队列 (最大 2), 帧缓存去重 |
 | **图片持久化** | ✅ | 按对话存储 JPEG 到磁盘, message.image 存 URL 路径 |
 | **记忆存储** | ✅ | SQLite + LanceDB |
+| **技能系统** | ✅ | workspace/skills/*/skill.md YAML frontmatter → system prompt |
+| **Workspace 文件** | ✅ | persona.md 等角色设定文件, 编辑即生效 |
 | **任务执行** | ✅ | Strategy Pattern (file, bash, browser, desktop, api, tool) |
 | **对话历史** | ✅ | localStorage + 后端 SQLite 持久化 + 图片文件存储 |
 

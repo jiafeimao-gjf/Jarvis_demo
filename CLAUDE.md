@@ -245,6 +245,45 @@ Copy `.env.example` to `.env`. Key vars:
 - `AI__OPENAI__API_KEY` / `AI__ANTHROPIC__API_KEY` — optional cloud providers
 - `AI__DEFAULT_PROVIDER` / `AI__DEFAULT_MODEL` — active selection
 
+## Workspace & Skills System
+
+`workspace/` directory holds user-editable configuration and skills.
+
+```
+workspace/
+├── persona.md          ← 角色设定 (Markdown, 编辑后重启生效)
+├── abilities.md        ← 能力说明
+├── memory.md           ← 记忆说明
+├── tools.md            ← 额外工具说明
+└── skills/             ← 技能目录
+    └── my-skill/
+        └── skill.md    ← YAML frontmatter + 技能文档
+```
+
+### Skill Format
+
+```yaml
+---
+name: my-skill
+description: 一句话描述技能能力（注入 system prompt）
+---
+## 详细说明
+...markdown body (LLM 可读取完整文件)...
+```
+
+### System Prompt Injection
+
+对话开始时:
+1. `load_skills()` 扫描 `workspace/skills/*/skill.md`
+2. 解析 YAML frontmatter → 提取 `name` + `description`
+3. 注入: `## 可用技能\n- **name**: description`
+4. Workspace 文件优先级 > DB 设置 (persona.md 覆盖 DB)
+
+### Workflow
+- 新增/修改 skill: 创建 `workspace/skills/<name>/skill.md` → 重启生效
+- 修改角色: 编辑 `workspace/persona.md` → 重启生效
+- 保存设置: 同时写入 DB + workspace/*.md 文件
+
 ## Documentation
 
 - `DEVELOPMENT_PLAN.md` — Architecture docs, tech stack, directory structure, API design
