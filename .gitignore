@@ -58,7 +58,12 @@ htmlcov/
 
 # Runtime data
 conversations/
-workspace/
+
+# Workspace — track skills and prompt files only
+workspace/about.html
+workspace/settings/
+!workspace/skills/
+!workspace/*.md
 
 # Temporary files
 tmp/
