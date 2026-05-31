@@ -10,6 +10,7 @@ const api = useApi()
 
 const isCapturing = ref(false)
 const isProcessing = ref(false)
+const autoCapture = ref(true)   // auto mode on by default
 const queueLength = ref(0)
 const captureError = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -20,6 +21,28 @@ const MAX_QUEUE = 2
 function handleClose() {
   stopCapture()
   hardware.stopCamera()
+}
+
+function toggleAutoCapture() {
+  if (autoCapture.value) {
+    stopAutoTimer()
+    autoCapture.value = false
+  } else {
+    startAutoTimer()
+    autoCapture.value = true
+  }
+}
+
+function stopAutoTimer() {
+  if (captureTimer) {
+    clearInterval(captureTimer)
+    captureTimer = null
+  }
+}
+
+function startAutoTimer() {
+  if (captureTimer) return
+  captureTimer = setInterval(analyzeAndChat, 30000)
 }
 
 function captureFrame(): string | null {
@@ -94,21 +117,20 @@ async function processQueue() {
 
 function startCapture() {
   if (captureTimer) return
-  captureTimer = setInterval(analyzeAndChat, 30000)
+  autoCapture.value = true
+  startAutoTimer()
 }
 
 function stopCapture() {
-  if (captureTimer) {
-    clearInterval(captureTimer)
-    captureTimer = null
-  }
+  stopAutoTimer()
+  autoCapture.value = false
   frameQueue = []
   queueLength.value = 0
   isCapturing.value = false
   isProcessing.value = false
 }
 
-// Start/stop capture when camera state changes
+// Auto-start capture when camera activates
 watch(
   () => hardware.hardware.camera,
   (active) => {
@@ -144,31 +166,47 @@ onUnmounted(() => stopCapture())
         class="w-full h-48 object-cover"
       />
       <div class="p-3 space-y-2">
-        <div class="flex items-center justify-between">
+        <!-- Controls row -->
+        <div class="flex items-center gap-2">
           <button
-            class="w-7 h-7 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-black/90 transition-colors"
+            class="w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-red-500 transition-colors shrink-0"
             @click="handleClose"
           >
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 6L6 18M6 6l12 12"/>
             </svg>
           </button>
-          <span class="text-xs text-white/80">摄像头</span>
+
+          <span class="text-xs text-white/80 truncate flex-1">摄像头</span>
+
+          <!-- Stop/start auto toggle -->
           <button
-            class="px-2 py-1 text-xs rounded-full transition-colors"
+            class="px-2 py-0.5 text-xs rounded-full transition-colors shrink-0"
+            :class="autoCapture
+              ? 'bg-red-500/30 text-red-400 border border-red-500/50 hover:bg-red-500/50'
+              : 'bg-green-500/30 text-green-400 border border-green-500/50 hover:bg-green-500/50'"
+            @click="toggleAutoCapture"
+          >
+            {{ autoCapture ? '⏸ 停止' : '▶ 开始' }}
+          </button>
+
+          <!-- Manual snap button -->
+          <button
+            class="px-2 py-0.5 text-xs rounded-full transition-colors shrink-0"
             :class="isCapturing
               ? 'bg-primary/30 text-primary border border-primary/50'
-              : 'bg-white/10 text-white/60 border border-white/20'"
+              : 'bg-white/10 text-white/60 border border-white/20 hover:bg-white/20'"
             @click="analyzeAndChat"
-            :disabled="isCapturing || chatStore.isLoading"
+            :disabled="isCapturing"
           >
-            {{ isCapturing ? '分析中...' : '📸 分析' }}
+            {{ isCapturing ? '分析中...' : '📸' }}
           </button>
         </div>
+
         <p v-if="captureError" class="text-xs text-red-400">{{ captureError }}</p>
         <p class="text-xs text-white/50">
-          每 30 秒自动分析 → 对话
-          <span v-if="queueLength > 0" class="text-primary ml-1">(队列: {{ queueLength }})</span>
+          {{ autoCapture ? '每 30s 自动分析' : '已暂停自动分析' }}
+          <span v-if="queueLength > 0" class="text-primary ml-1">({{ queueLength }})</span>
         </p>
       </div>
     </div>
