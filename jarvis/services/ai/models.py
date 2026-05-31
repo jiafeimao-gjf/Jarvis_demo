@@ -39,10 +39,10 @@ MODELS: dict[str, ModelInfo] = {
         model_id="qwen3:8b",
         display_name="Qwen3 8B",
     ),
-    "qwen3-vl:4b": ModelInfo(
+    "qwen3.5:9b-q8_0": ModelInfo(
         provider=Provider.OLLAMA,
-        model_id="qwen3-vl:4b",
-        display_name="Qwen3 VL 4B",
+        model_id="qwen3.5:9b-q8_0",
+        display_name="Qwen3.5 9B Q8",
         supports_vision=True,
     ),
     "llama3:8b": ModelInfo(

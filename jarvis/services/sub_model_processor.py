@@ -22,7 +22,7 @@ class SubModelProcessor:
     """子模型处理器: STT / Vision → 文本 → 注入主对话
 
     职责:
-      - 查找合适的子模型 (sendmeaiohyeah/whisper-large-v2 for STT, qwen3-vl for vision)
+      - 查找合适的子模型 (sendmeaiohyeah/whisper-large-v2 for STT, qwen3.5:9b-q8_0 for vision)
       - 调用子模型进行原始输入→文本转换
       - 返回纯文本, 由调用方注入 chat_engine
     """

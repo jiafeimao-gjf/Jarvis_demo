@@ -46,7 +46,7 @@ const providerModels: Record<string, ModelOption[]> = {
   ollama: [
     { name: 'qwen3:4b', provider: 'ollama' },
     { name: 'qwen3:8b', provider: 'ollama' },
-    { name: 'qwen3-vl:4b', provider: 'ollama' },
+    { name: 'qwen3.5:9b-q8_0', provider: 'ollama' },
     { name: 'llama3:8b', provider: 'ollama' },
   ],
   openai: [
@@ -393,7 +393,7 @@ async function loadOllamaModels() {
         </div>
 
         <div class="mt-4 text-sm text-muted-foreground">
-          可用模型: qwen3:4b, qwen3:8b, qwen3-vl:4b, llama3:8b, gpt-4o-mini, claude-3-haiku
+          可用模型: qwen3:4b, qwen3:8b, qwen3.5:9b-q8_0, llama3:8b, whisper-large-v2, gpt-4o-mini, claude-3-haiku
         </div>
       </section>
 

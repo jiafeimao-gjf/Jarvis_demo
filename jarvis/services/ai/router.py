@@ -154,7 +154,7 @@ class AIRouter:
         provider: Optional[str] = None,
         **kwargs
     ) -> str:
-        """Analyze image with vision-capable model"""
+        """Analyze image with vision-capable model (per-provider model resolution)"""
         model_id = model or self.config.default_model
         model_info = get_model(model_id)
 
@@ -165,6 +165,7 @@ class AIRouter:
             if fallback_model:
                 logger.info(f"Model {model_id} doesn't support vision, using {fallback_model}")
                 model_id = fallback_model
+                model_info = get_model(model_id)
 
         # Build provider chain for vision
         providers = self._build_provider_chain(model_id, provider)
@@ -172,7 +173,18 @@ class AIRouter:
         errors = []
         for prov in providers:
             try:
-                client = self._get_client(prov, model_id)
+                # Resolve the model for THIS provider (not the original model's provider)
+                prov_model_id = model_id
+                if model_info and model_info.provider.value != prov:
+                    # Model belongs to a different provider — find this provider's vision model
+                    prov_enum = Provider(prov)
+                    fallback = find_vision_model(prov_enum)
+                    if not fallback:
+                        continue  # this provider has no vision model
+                    prov_model_id = fallback
+                    model_info = get_model(prov_model_id)  # update for next iteration
+
+                client = self._get_client(prov, prov_model_id)
                 return await client.vision_analyze(image_data, prompt, **kwargs)
             except AIProviderError as e:
                 logger.warning(f"Vision provider {prov} failed: {e}")

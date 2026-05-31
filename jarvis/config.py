@@ -13,7 +13,7 @@ class OllamaConfig(BaseModel):
     """Ollama 配置"""
     base_url: str = "http://localhost:11434"
     model: str = "qwen3:4b"
-    vision_model: str = "qwen3-vl:4b"
+    vision_model: str = "qwen3.5:9b-q8_0"
     stt_model: str = "sendmeaiohyeah/whisper-large-v2"
     t2i_model: str = "x/z-image-turbo"
     timeout: float = 60.0
