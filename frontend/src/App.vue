@@ -22,7 +22,7 @@ onMounted(async () => {
     if (status) {
       hardware.updateSystemStatus({
         server: status.status === 'online',
-        ollama: (status.systems as any)?.chatEngine?.ollama_connected ?? false
+        ollama: (status.systems as any)?.['chat_engine']?.ollama_connected ?? false
       })
     }
   } catch (e) {
@@ -36,7 +36,7 @@ onMounted(async () => {
       if (status) {
         hardware.updateSystemStatus({
           server: status.status === 'online',
-          ollama: (status.systems as any)?.chatEngine?.ollama_connected ?? false
+          ollama: (status.systems as any)?.['chat_engine']?.ollama_connected ?? false
         })
       }
     } catch {
