@@ -55,12 +55,9 @@ class ProviderRegistry:
         config = cls._config_cache.get(model_info.provider, {})
         config.update(kwargs)
 
-        # Strip kwargs that don't apply to this provider (e.g. use_minimax
-        # passed by AIRouter fallback chain; it only makes sense for
-        # AnthropicAdapter/MiniMax)
-        if model_info.provider not in (Provider.ANTHROPIC, Provider.MINIMAX):
-            config.pop("use_minimax", None)
-        if model_info.provider not in (Provider.OPENAI, Provider.ANTHROPIC, Provider.MINIMAX):
+        # Strip kwargs that don't apply to this provider
+        if model_info.provider != Provider.OLLAMA:
+            config.pop("base_url", None)
             config.pop("api_key", None)
 
         return adapter_class(model=model_info.model_id, **config)

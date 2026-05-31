@@ -19,9 +19,6 @@ interface Config {
     fallback_chain: string[]
     providers: {
       ollama: { base_url: string; model: string; vision_model: string }
-      openai: { has_api_key: boolean }
-      anthropic: { has_api_key: boolean }
-      minimax: { has_api_key: boolean }
     }
   }
   hardware: Record<string, number>
@@ -50,17 +47,6 @@ const providerModels: Record<string, ModelOption[]> = {
     { name: 'llama3:8b', provider: 'ollama' },
   ],
   openai: [
-    { name: 'gpt-4o-mini', provider: 'openai' },
-    { name: 'gpt-4o', provider: 'openai' },
-  ],
-  anthropic: [
-    { name: 'claude-3-haiku', provider: 'anthropic' },
-    { name: 'claude-3-sonnet', provider: 'anthropic' },
-    { name: 'claude-3-5-sonnet', provider: 'anthropic' },
-  ],
-  minimax: [
-    { name: 'MiniMax-M2.7', provider: 'minimax' },
-  ]
 }
 
 // Form bound directly to settings store
@@ -267,9 +253,6 @@ async function loadOllamaModels() {
               class="w-full bg-background rounded px-3 py-2 border border-border"
             >
               <option value="ollama">Ollama (本地)</option>
-              <option value="openai">OpenAI (云)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-              <option value="minimax">MiniMax</option>
             </select>
           </div>
 
@@ -393,7 +376,7 @@ async function loadOllamaModels() {
         </div>
 
         <div class="mt-4 text-sm text-muted-foreground">
-          可用模型: qwen3:4b, qwen3:8b, qwen3.5:9b, llama3:8b, whisper-large-v2, gpt-4o-mini, claude-3-haiku
+          可用模型: qwen3:4b, qwen3:8b, qwen3.5:9b, llama3:8b, whisper-large-v2
         </div>
       </section>
 
