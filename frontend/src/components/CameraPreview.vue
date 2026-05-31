@@ -10,7 +10,7 @@ const api = useApi()
 
 const isCapturing = ref(false)
 const isProcessing = ref(false)
-const autoCapture = ref(true)   // auto mode on by default
+const autoCapture = ref(false)
 const queueLength = ref(0)
 const captureError = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -23,26 +23,19 @@ function handleClose() {
   hardware.stopCamera()
 }
 
-function toggleAutoCapture() {
+function toggleCapture() {
   if (autoCapture.value) {
-    stopAutoTimer()
+    // Stop
+    if (captureTimer) { clearInterval(captureTimer); captureTimer = null }
     autoCapture.value = false
+    captureError.value = ''
+    queueLength.value = 0
   } else {
-    startAutoTimer()
+    // Start
+    captureError.value = ''
+    captureTimer = setInterval(analyzeAndChat, 30000)
     autoCapture.value = true
   }
-}
-
-function stopAutoTimer() {
-  if (captureTimer) {
-    clearInterval(captureTimer)
-    captureTimer = null
-  }
-}
-
-function startAutoTimer() {
-  if (captureTimer) return
-  captureTimer = setInterval(analyzeAndChat, 30000)
 }
 
 function captureFrame(): string | null {
@@ -115,14 +108,8 @@ async function processQueue() {
   isProcessing.value = false
 }
 
-function startCapture() {
-  if (captureTimer) return
-  autoCapture.value = true
-  startAutoTimer()
-}
-
 function stopCapture() {
-  stopAutoTimer()
+  if (captureTimer) { clearInterval(captureTimer); captureTimer = null }
   autoCapture.value = false
   frameQueue = []
   queueLength.value = 0
@@ -130,13 +117,10 @@ function stopCapture() {
   isProcessing.value = false
 }
 
-// Auto-start capture when camera activates
+// Clean up when camera turns off
 watch(
   () => hardware.hardware.camera,
-  (active) => {
-    if (active) startCapture()
-    else stopCapture()
-  },
+  (active) => { if (!active) stopCapture() },
   { immediate: true }
 )
 
@@ -166,48 +150,30 @@ onUnmounted(() => stopCapture())
         class="w-full h-48 object-cover"
       />
       <div class="p-3 space-y-2">
-        <!-- Controls row -->
         <div class="flex items-center gap-2">
           <button
             class="w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-red-500 transition-colors shrink-0"
             @click="handleClose"
           >
-            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6L6 18M6 6l12 12"/>
-            </svg>
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
           </button>
+          <span class="text-xs text-white/80 flex-1 truncate">摄像头</span>
 
-          <span class="text-xs text-white/80 truncate flex-1">摄像头</span>
-
-          <!-- Stop/start auto toggle -->
           <button
-            class="px-2 py-0.5 text-xs rounded-full transition-colors shrink-0"
+            class="px-2 py-0.5 text-xs rounded-full transition-colors shrink-0 border"
             :class="autoCapture
-              ? 'bg-red-500/30 text-red-400 border border-red-500/50 hover:bg-red-500/50'
-              : 'bg-green-500/30 text-green-400 border border-green-500/50 hover:bg-green-500/50'"
-            @click="toggleAutoCapture"
+              ? 'bg-red-500/20 text-red-400 border-red-500/50'
+              : 'bg-primary/20 text-primary border-primary/40 hover:bg-primary/30'"
+            @click="toggleCapture"
           >
-            {{ autoCapture ? '⏸ 停止' : '▶ 开始' }}
-          </button>
-
-          <!-- Manual snap button -->
-          <button
-            class="px-2 py-0.5 text-xs rounded-full transition-colors shrink-0"
-            :class="isCapturing
-              ? 'bg-primary/30 text-primary border border-primary/50'
-              : 'bg-white/10 text-white/60 border border-white/20 hover:bg-white/20'"
-            @click="analyzeAndChat"
-            :disabled="isCapturing"
-          >
-            {{ isCapturing ? '分析中...' : '📸' }}
+            <template v-if="autoCapture">
+              停止 · {{ queueLength > 0 ? `队列${queueLength}` : (isCapturing ? '分析中' : '等待中') }}
+            </template>
+            <template v-else>开始分析</template>
           </button>
         </div>
 
         <p v-if="captureError" class="text-xs text-red-400">{{ captureError }}</p>
-        <p class="text-xs text-white/50">
-          {{ autoCapture ? '每 30s 自动分析' : '已暂停自动分析' }}
-          <span v-if="queueLength > 0" class="text-primary ml-1">({{ queueLength }})</span>
-        </p>
       </div>
     </div>
   </Transition>
