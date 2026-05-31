@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { useHardwareStore } from '@/stores/hardware'
+import { useChatStore } from '@/stores/chat'
 import { useSpeechRecognition } from '@/composables/useSpeechRecognition'
+import { useApi } from '@/composables/useApi'
 import { ref } from 'vue'
 
 const hardware = useHardwareStore()
+const chatStore = useChatStore()
 const speech = useSpeechRecognition()
+const api = useApi()
 
 const isProcessingVoice = ref(false)
 
@@ -21,10 +25,27 @@ async function handleVoiceInput() {
 
   isProcessingVoice.value = true
   try {
-    const response = await speech.processVoiceInput()
-    if (response) {
-      speech.speak(response)
+    // 1. Capture audio from microphone (WebM → base64)
+    const audioBase64 = await speech.captureAudio()
+    if (!audioBase64) return
+
+    // 2. Send to backend: STT → ChatEngine → LLM reply
+    const response = await api.voice(audioBase64)
+
+    // 3. Add transcript as user message in chat
+    if (response.text) {
+      chatStore.addMessage('user', `🎤 ${response.text}`)
     }
+    // 4. Add LLM reply as assistant message in chat
+    if (response.response) {
+      chatStore.addMessage('assistant', response.response)
+    }
+    // 5. TTS speak the response
+    if (response.response) {
+      speech.speak(response.response)
+    }
+  } catch (e) {
+    console.error('Voice input failed:', e)
   } finally {
     isProcessingVoice.value = false
   }
