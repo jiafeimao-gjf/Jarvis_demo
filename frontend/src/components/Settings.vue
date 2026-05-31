@@ -38,7 +38,6 @@ const isLoading = ref(false)
 const isSaving = ref(false)
 const message = ref('')
 const isLoadingModels = ref(false)
-const ollamaModels = ref<ModelOption[]>([])
 
 // Models — Ollama loaded from API, cloud providers hardcoded reference
 const providerModels = ref<Record<string, ModelOption[]>>({
@@ -355,8 +354,8 @@ async function loadOllamaModels() {
               class="w-full bg-background rounded px-3 py-2 border border-border"
             >
               <option v-if="isLoadingModels" value="" disabled>加载中...</option>
-              <option v-else-if="ollamaModels.length === 0" value="">无可用模型</option>
-              <option v-for="m in ollamaModels" :key="m.name" :value="m.name">
+              <option v-else-if="providerModels.ollama.length === 0" value="">无可用模型</option>
+              <option v-for="m in providerModels.ollama" :key="m.name" :value="m.name">
                 {{ m.name }}
               </option>
             </select>
