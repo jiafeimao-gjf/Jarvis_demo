@@ -1,6 +1,8 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
 import json
+import base64
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
@@ -342,7 +344,7 @@ class ChatEngine:
         if iteration_count >= MAX_TOOL_ITERATIONS - 1:
             logger.warning(f"[Chat] 达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
 
-        return final_response
+        return self._resolve_image_paths(final_response)
 
     async def stream_chat(
         self,
@@ -501,7 +503,10 @@ class ChatEngine:
                         logger.debug(f"[StreamChat] 后续响应中发现 tool_use block")
                         break
 
-        # 7. 保存对话历史
+        # 7. 解析响应中的本地图片路径 → base64
+        final_response = self._resolve_image_paths(final_response)
+
+        # 8. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
@@ -677,7 +682,10 @@ class ChatEngine:
                         logger.debug(f"[StreamChatWithMsgs] 后续响应中发现 tool_use block")
                         break
 
-        # 7. 保存对话历史
+        # 7. 解析响应中的本地图片路径 → base64
+        final_response = self._resolve_image_paths(final_response)
+
+        # 8. 保存对话历史
         self.current_conversation.add_message("assistant", final_response)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
@@ -695,6 +703,36 @@ class ChatEngine:
         for token in final_response:
             yield token
         logger.info("[StreamChatWithMsgs] 流式返回完成")
+
+    def _resolve_image_paths(self, text: str) -> str:
+        """将响应中的本地图片路径替换为 base64 data URL.
+
+        匹配: ![alt](workspace/xxx.png) 或 ![alt](./xxx.png)
+        """
+        img_re = re.compile(r'!\[([^\]]*)\]\(([^)]+)\)')
+
+        def replacer(match: re.Match) -> str:
+            alt = match.group(1)
+            filepath = match.group(2)
+            # Try to resolve relative to work_folder
+            path = Path(filepath)
+            if not path.is_absolute():
+                path = Path(self.work_folder) / path
+            if not path.exists():
+                return match.group(0)  # leave as-is
+            try:
+                data = path.read_bytes()
+                ext = path.suffix.lower()
+                mime = {".png": "image/png", ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg", ".gif": "image/gif",
+                        ".webp": "image/webp", ".bmp": "image/bmp"}.get(ext, "image/png")
+                b64 = base64.b64encode(data).decode()
+                return f"![{alt}](data:{mime};base64,{b64})"
+            except Exception as e:
+                logger.warning(f"Failed to resolve image {path}: {e}")
+                return match.group(0)
+
+        return img_re.sub(replacer, text)
 
     async def _save_conversation_to_file(self):
         """将会话保存为 JSON 文件到工作目录"""
