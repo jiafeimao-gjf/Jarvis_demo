@@ -53,7 +53,7 @@ const renderedContent = computed(() => {
         <img
           :src="message.image"
           alt="分析画面"
-          class="w-full max-h-64 object-cover rounded-t-2xl border-b border-primary/20"
+          class="w-full max-h-80 object-contain rounded-t-2xl border-b border-primary/20 bg-black/50"
           loading="lazy"
         />
         <div class="text-[10px] text-primary/40 px-4 mt-1">📸 分析画面</div>
