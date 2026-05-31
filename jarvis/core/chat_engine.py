@@ -13,6 +13,7 @@ from jarvis.core.tool_registry import tool_registry
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
 from jarvis.services.ai.models import Provider
+from jarvis.services.skill_loader import load_skills, load_prompt_files
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +63,14 @@ class ChatEngine:
         # 2. 工具描述（固定从 tool_registry 获取）
         parts.append(tool_registry.build_schema_for_llm())
 
+        # 2.5. 技能列表 — 从 workspace/skills/ 加载
+        skills = load_skills()
+        if skills:
+            skill_lines = ["## 可用技能\n你可以使用以下技能辅助完成任务："]
+            for s in skills:
+                skill_lines.append(f"- **{s.name}**: {s.description}")
+            parts.append("\n".join(skill_lines))
+
         # 3. 额外工具说明
         if settings and settings.tools:
             parts.append(f"## 额外工具说明\n{settings.tools}")
@@ -103,12 +112,14 @@ class ChatEngine:
         return "\n\n".join(parts)
 
     async def _load_prompt_settings(self) -> SystemPromptSettings:
-        """从存储加载 Prompt 设置"""
+        """从存储 + workspace 文件加载 Prompt 设置"""
         try:
             all_settings = await memory_store.get_all_settings()
+            # Workspace 文件覆盖 DB 设置
+            file_prompts = load_prompt_files()
             work_folder = all_settings.get("work_folder", "")
             return SystemPromptSettings(
-                persona=all_settings.get("persona_prompt", ""),
+                persona=file_prompts.get("persona") or all_settings.get("persona_prompt", ""),
                 abilities=all_settings.get("abilities_prompt", ""),
                 memory=all_settings.get("memory_prompt", ""),
                 tools=all_settings.get("tools_prompt", ""),

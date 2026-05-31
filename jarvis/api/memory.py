@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, Any
 
 from jarvis.core.mediator import mediator
+from jarvis.services.skill_loader import save_prompt_file
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -171,10 +172,21 @@ async def get_setting(key: str):
 
 @router.put("/settings/{key}")
 async def save_setting(key: str, request: Request):
-    """保存设置"""
+    """保存设置 — 同时写入 workspace 文件 (persona.md 等)"""
     try:
         value = await request.json()
+        # Save to DB
         success = await mediator.memory_store.save_setting(key, value)
+        # Optionally save to workspace files
+        prompt_map = {
+            "persona_prompt": "persona",
+            "abilities_prompt": "abilities",
+            "memory_prompt": "memory",
+            "tools_prompt": "tools",
+            "work_folder": "work_folder",
+        }
+        if key in prompt_map:
+            save_prompt_file(prompt_map[key], str(value) if not isinstance(value, str) else value)
         return {"success": success, "key": key}
     except Exception as e:
         logger.error(f"Save setting error: {e}")
