@@ -40,14 +40,9 @@ const message = ref('')
 const isLoadingModels = ref(false)
 const ollamaModels = ref<ModelOption[]>([])
 
-// Predefined models for each provider
+// Models — Ollama loaded from API, cloud providers hardcoded reference
 const providerModels: Record<string, ModelOption[]> = {
-  ollama: [
-    { name: 'qwen3:4b', provider: 'ollama' },
-    { name: 'qwen3:8b', provider: 'ollama' },
-    { name: 'qwen3.5:9b', provider: 'ollama' },
-    { name: 'llama3:8b', provider: 'ollama' },
-  ],
+  ollama: [],
   openai: [
     { name: 'gpt-4o-mini', provider: 'openai' },
     { name: 'gpt-4o', provider: 'openai' },
@@ -376,7 +371,7 @@ async function loadOllamaModels() {
         </div>
 
         <div class="mt-4 text-sm text-muted-foreground">
-          本地: qwen3:4b, qwen3:8b, qwen3.5:9b, llama3:8b | 云端: gpt-4o-mini, gpt-4o, claude-3-haiku, claude-3-5-sonnet
+          Ollama 模型从 API 动态加载 | 云端: gpt-4o-mini, gpt-4o, claude-3-haiku, claude-3-5-sonnet
         </div>
       </section>
 
