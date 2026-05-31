@@ -94,19 +94,59 @@ export function useSpeechRecognition() {
     return transcript.value
   }
 
-  async function captureAudio(): Promise<string | null> {
-    audioChunks = []
+  let _audioStream: MediaStream | null = null
+  let _resolveCapture: ((v: string | null) => void) | null = null
 
+  async function startCapture(): Promise<boolean> {
+    audioChunks = []
+    try {
+      _audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaRecorder = new MediaRecorder(_audioStream)
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) audioChunks.push(event.data)
+      }
+      mediaRecorder.start()
+      isRecording.value = true
+      return true
+    } catch (e) {
+      error.value = (e as Error).message
+      return false
+    }
+  }
+
+  function stopCapture(): Promise<string | null> {
+    return new Promise((resolve) => {
+      _resolveCapture = resolve
+      if (mediaRecorder?.state === 'recording') {
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(audioChunks, { type: 'audio/webm' })
+          const reader = new FileReader()
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1] || null
+            _audioStream?.getTracks().forEach(t => t.stop())
+            _audioStream = null
+            isRecording.value = false
+            resolve(base64)
+          }
+          reader.readAsDataURL(blob)
+        }
+        mediaRecorder.stop()
+      } else {
+        isRecording.value = false
+        resolve(null)
+      }
+    })
+  }
+
+  async function captureAudio(): Promise<string | null> {
+    // Legacy: auto-stop after 5s (kept for backward compat)
+    audioChunks = []
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       mediaRecorder = new MediaRecorder(stream)
-
       mediaRecorder.ondataavailable = (event: BlobEvent) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data)
-        }
+        if (event.data.size > 0) audioChunks.push(event.data)
       }
-
       mediaRecorder.start()
       return new Promise((resolve) => {
         mediaRecorder!.onstop = async () => {
@@ -119,17 +159,12 @@ export function useSpeechRecognition() {
           }
           reader.readAsDataURL(blob)
         }
-
-        // Stop after 5 seconds max
         setTimeout(() => {
-          if (mediaRecorder?.state === 'recording') {
-            mediaRecorder.stop()
-          }
+          if (mediaRecorder?.state === 'recording') mediaRecorder.stop()
         }, 5000)
       })
     } catch (e) {
       error.value = (e as Error).message
-      console.error('Failed to capture audio:', e)
       return null
     }
   }
@@ -197,6 +232,8 @@ export function useSpeechRecognition() {
     startRecording,
     stopRecording,
     captureAudio,
+    startCapture,
+    stopCapture,
     processVoiceInput,
     speak,
     stopSpeaking
