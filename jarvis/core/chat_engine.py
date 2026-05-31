@@ -743,9 +743,16 @@ class ChatEngine:
 
     def to_dict(self) -> dict:
         """导出状态"""
+        # Sync-check Ollama health (cached; no async here)
         return {
             "current_conversation": {
                 "conversation_id": self.current_conversation.conversation_id if self.current_conversation else None,
                 "messages_count": len(self.current_conversation.messages) if self.current_conversation else 0
-            }
+            },
+            "ollama_connected": self._cached_ollama_ok,
         }
+
+    @property
+    def _cached_ollama_ok(self) -> bool:
+        """Cached Ollama health — updated by health check polling."""
+        return getattr(self, '_ollama_ok', True)  # default True until proven otherwise
