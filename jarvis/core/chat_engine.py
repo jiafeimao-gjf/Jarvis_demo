@@ -60,10 +60,7 @@ class ChatEngine:
         if settings and settings.persona:
             parts.append(f"## 角色设定\n{settings.persona}")
 
-        # 2. 工具描述（固定从 tool_registry 获取）
-        parts.append(tool_registry.build_schema_for_llm())
-
-        # 2.5. 技能列表 — 从 workspace/skills/ 加载
+        # 2. 技能列表 — 从 workspace/skills/ 加载
         skills = load_skills()
         if skills:
             skill_lines = ["## 可用技能\n你可以使用以下技能辅助完成任务："]

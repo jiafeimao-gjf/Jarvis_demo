@@ -66,9 +66,7 @@ class TestBuildSystemPrompt:
         """测试无设置时的 prompt 构建"""
         settings = SystemPromptSettings()
         prompt = engine._build_system_prompt(settings)
-        assert "## 可用工具" in prompt
-        assert "tool: file" in prompt
-        assert "tool: bash" in prompt
+        # Tool schema no longer in system prompt (too many tokens)
         assert "## 工作目录" in prompt
         assert "## 工具调用格式" in prompt
 
