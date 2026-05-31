@@ -11,7 +11,7 @@ from jarvis.core.tool_parser import ToolCallParser, ToolCall
 from jarvis.core.tool_result_formatter import ToolResultFormatter
 from jarvis.core.tool_registry import tool_registry
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
-from jarvis.services.ai.providers import OllamaAdapter
+from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
 from jarvis.services.ai.models import Provider
 from jarvis.utils.logger import get_logger
 
@@ -35,8 +35,10 @@ class ChatEngine:
     """对话引擎 - 管理对话上下文和 LLM 调用"""
 
     def __init__(self):
-        # Register provider
+        # Register providers — adapter per API format, model → provider from registry
         ProviderRegistry.register(Provider.OLLAMA, OllamaAdapter)
+        ProviderRegistry.register(Provider.OPENAI, OpenAIAdapter)
+        ProviderRegistry.register(Provider.ANTHROPIC, AnthropicAdapter)
 
         # Initialize AI config
         self.ai_config = AIConfig()

@@ -19,6 +19,8 @@ interface Config {
     fallback_chain: string[]
     providers: {
       ollama: { base_url: string; model: string; vision_model: string }
+      openai: { configured: boolean }
+      anthropic: { configured: boolean }
     }
   }
   hardware: Record<string, number>
@@ -47,6 +49,13 @@ const providerModels: Record<string, ModelOption[]> = {
     { name: 'llama3:8b', provider: 'ollama' },
   ],
   openai: [
+    { name: 'gpt-4o-mini', provider: 'openai' },
+    { name: 'gpt-4o', provider: 'openai' },
+  ],
+  anthropic: [
+    { name: 'claude-3-haiku', provider: 'anthropic' },
+    { name: 'claude-3-5-sonnet', provider: 'anthropic' },
+  ],
 }
 
 // Form bound directly to settings store
@@ -253,6 +262,8 @@ async function loadOllamaModels() {
               class="w-full bg-background rounded px-3 py-2 border border-border"
             >
               <option value="ollama">Ollama (本地)</option>
+              <option value="openai">OpenAI (云端)</option>
+              <option value="anthropic">Anthropic Claude (云端)</option>
             </select>
           </div>
 
@@ -376,7 +387,7 @@ async function loadOllamaModels() {
         </div>
 
         <div class="mt-4 text-sm text-muted-foreground">
-          可用模型: qwen3:4b, qwen3:8b, qwen3.5:9b, llama3:8b, whisper-large-v2
+          本地: qwen3:4b, qwen3:8b, qwen3.5:9b, llama3:8b | 云端: gpt-4o-mini, gpt-4o, claude-3-haiku, claude-3-5-sonnet
         </div>
       </section>
 

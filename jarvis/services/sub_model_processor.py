@@ -62,7 +62,7 @@ class SubModelProcessor:
             return ""
 
         try:
-            client = self._router._get_client(self.stt_model)
+            client = self._router._get_client("ollama", self.stt_model)
             text = await client.transcribe_audio(audio_data)
             result = text.strip() if text else ""
             logger.info(f"STT result ({len(result)} chars): {result[:100]}...")

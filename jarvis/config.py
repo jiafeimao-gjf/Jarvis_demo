@@ -20,16 +20,34 @@ class OllamaConfig(BaseModel):
     max_retries: int = 3
 
 
+class OpenAIConfig(BaseModel):
+    """OpenAI 配置 — API key from env only, no default"""
+    api_key: Optional[str] = None
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    timeout: float = 60.0
+
+
+class AnthropicConfig(BaseModel):
+    """Anthropic 配置 — API key from env only, no default"""
+    api_key: Optional[str] = None
+    base_url: str = "https://api.anthropic.com/v1"
+    model: str = "claude-3-haiku-20240307"
+    timeout: float = 60.0
+
+
 # ============== AI Configuration ==============
 
 class AIConfig(BaseModel):
-    """AI 配置 — Ollama only"""
+    """AI 配置 — Ollama primary, OpenAI/Anthropic optional via env keys"""
     default_provider: str = "ollama"
     default_model: str = "qwen3:4b"
     enable_fallback: bool = False
     fallback_chain: List[str] = ["ollama"]
 
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
+    anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
 
     def get_provider_config(self, provider: str) -> Dict[str, Any]:
         """获取 provider 配置字典"""
@@ -132,6 +150,12 @@ class Settings(BaseSettings):
                         "model": self.ai.ollama.model,
                         "vision_model": self.ai.ollama.vision_model,
                         "stt_model": self.ai.ollama.stt_model,
+                    },
+                    "openai": {
+                        "configured": bool(self.ai.openai.api_key),
+                    },
+                    "anthropic": {
+                        "configured": bool(self.ai.anthropic.api_key),
                     },
                 }
             },

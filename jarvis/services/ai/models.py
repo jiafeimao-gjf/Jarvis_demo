@@ -1,13 +1,15 @@
 # jarvis/services/ai/models.py
-"""Ollama Models and Provider Definitions"""
+"""AI Models and Provider Definitions"""
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
 
 class Provider(Enum):
-    """AI provider — Ollama only (all local)"""
+    """Supported AI providers"""
     OLLAMA = "ollama"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
 
 
 @dataclass(frozen=True)
@@ -24,7 +26,7 @@ class ModelInfo:
 
 # Model registry
 MODELS: dict[str, ModelInfo] = {
-    # Chat
+    # ── Ollama (local) ──
     "qwen3:4b": ModelInfo(
         provider=Provider.OLLAMA,
         model_id="qwen3:4b",
@@ -46,12 +48,40 @@ MODELS: dict[str, ModelInfo] = {
         model_id="llama3:8b",
         display_name="Llama3 8B",
     ),
-    # STT — handled by local openai-whisper, listed for reference
     "sendmeaiohyeah/whisper-large-v2": ModelInfo(
         provider=Provider.OLLAMA,
         model_id="sendmeaiohyeah/whisper-large-v2",
         display_name="Whisper Large v2",
         supports_audio=True,
+    ),
+    # ── OpenAI (cloud) ──
+    "gpt-4o-mini": ModelInfo(
+        provider=Provider.OPENAI,
+        model_id="gpt-4o-mini",
+        display_name="GPT-4o Mini",
+        context_window=128000,
+    ),
+    "gpt-4o": ModelInfo(
+        provider=Provider.OPENAI,
+        model_id="gpt-4o",
+        display_name="GPT-4o",
+        supports_vision=True,
+        context_window=128000,
+    ),
+    # ── Anthropic (cloud) ──
+    "claude-3-haiku": ModelInfo(
+        provider=Provider.ANTHROPIC,
+        model_id="claude-3-haiku-20240307",
+        display_name="Claude 3 Haiku",
+        supports_vision=True,
+        context_window=200000,
+    ),
+    "claude-3-5-sonnet": ModelInfo(
+        provider=Provider.ANTHROPIC,
+        model_id="claude-3-5-sonnet-20241022",
+        display_name="Claude 3.5 Sonnet",
+        supports_vision=True,
+        context_window=200000,
     ),
 }
 
@@ -78,3 +108,4 @@ def find_audio_model(provider: Provider) -> Optional[str]:
         if mi.provider == provider and mi.supports_audio:
             return mid
     return None
+
