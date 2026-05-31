@@ -63,49 +63,48 @@ class TestBuildSystemPrompt:
             return engine
 
     def test_build_prompt_with_no_settings(self, engine):
-        """测试无设置时的 prompt 构建"""
+        """Prompt files loaded from workspace/prompts/"""
         settings = SystemPromptSettings()
         prompt = engine._build_system_prompt(settings)
-        # Tool schema no longer in system prompt (too many tokens)
-        assert "## 工作目录" in prompt
-        assert "## 工具调用格式" in prompt
+        # No prompt files in test work_folder → only dynamic sections
+        assert isinstance(prompt, str)
 
     def test_build_prompt_with_persona(self, engine):
-        """测试带角色设定的 prompt"""
+        """测试带角色设定的 prompt（动态注入）"""
         settings = SystemPromptSettings(persona="你是贾维斯，一个智能助手")
         prompt = engine._build_system_prompt(settings)
         assert "## 角色设定" in prompt
         assert "你是贾维斯，一个智能助手" in prompt
 
     def test_build_prompt_with_abilities(self, engine):
-        """测试带能力说明的 prompt"""
+        """测试带能力说明的 prompt（动态注入）"""
         settings = SystemPromptSettings(abilities="可以帮助写代码、回答问题")
         prompt = engine._build_system_prompt(settings)
         assert "## 能力说明" in prompt
         assert "可以帮助写代码、回答问题" in prompt
 
     def test_build_prompt_with_memory(self, engine):
-        """测试带记忆说明的 prompt"""
+        """测试带记忆说明的 prompt（动态注入）"""
         settings = SystemPromptSettings(memory="会记住用户的偏好设置")
         prompt = engine._build_system_prompt(settings)
         assert "## 记忆说明" in prompt
         assert "会记住用户的偏好设置" in prompt
 
     def test_build_prompt_with_tools_extra(self, engine):
-        """测试带额外工具说明的 prompt"""
-        settings = SystemPromptSettings(tools="额外说明：使用前请确认文件存在")
+        """Tools extra removed from dynamic injection — now in prompt files"""
+        settings = SystemPromptSettings(tools="test")
         prompt = engine._build_system_prompt(settings)
-        assert "## 额外工具说明" in prompt
-        assert "额外说明：使用前请确认文件存在" in prompt
+        # Tools moved to file-based prompts, not injected dynamically
+        assert isinstance(prompt, str)
 
     def test_build_prompt_with_work_folder(self, engine):
-        """测试带工作目录的 prompt"""
+        """Work folder substituted via {work_folder} in prompt files (no files→empty)"""
         settings = SystemPromptSettings(work_folder="/home/project")
         prompt = engine._build_system_prompt(settings)
-        assert "/home/project" in prompt
+        assert isinstance(prompt, str)
 
     def test_build_prompt_with_all_settings(self, engine):
-        """测试带所有设置的 prompt"""
+        """测试带所有动态设置的 prompt"""
         settings = SystemPromptSettings(
             persona="你是助手",
             abilities="帮助Coding",
@@ -117,8 +116,6 @@ class TestBuildSystemPrompt:
         assert "## 角色设定" in prompt
         assert "## 能力说明" in prompt
         assert "## 记忆说明" in prompt
-        assert "## 额外工具说明" in prompt
-        assert "/custom/path" in prompt
 
 
 class TestChatMethod:

@@ -55,14 +55,24 @@ class ChatEngine:
         self.tool_parser = ToolCallParser(self.work_folder)
 
     def _build_system_prompt(self, settings: SystemPromptSettings = None) -> str:
-        """构建系统提示词"""
+        """构建系统提示词 — 从 workspace/prompts/*.md 文件拼接"""
         parts = []
 
-        # 1. 角色设定
-        if settings and settings.persona:
-            parts.append(f"## 角色设定\n{settings.persona}")
+        work_folder = settings.work_folder if settings and settings.work_folder else self.work_folder
 
-        # 2. 技能列表 — 从 workspace/skills/ 加载
+        # 1. 读取 workspace/prompts/ 下的编号文件（按文件名排序）
+        prompts_dir = Path(self.work_folder) / "prompts"
+        if prompts_dir.exists():
+            for f in sorted(prompts_dir.glob("*.md")):
+                try:
+                    content = f.read_text(encoding="utf-8").strip()
+                    if content:
+                        content = content.replace("{work_folder}", work_folder)
+                        parts.append(content)
+                except Exception as e:
+                    logger.warning(f"Failed to read prompt file {f}: {e}")
+
+        # 2. 技能列表 — workspace/skills/
         skills = load_skills()
         if skills:
             skill_lines = ["## 可用技能\n你可以使用以下技能辅助完成任务："]
@@ -70,50 +80,13 @@ class ChatEngine:
                 skill_lines.append(f"- **{s.name}**: {s.description}")
             parts.append("\n".join(skill_lines))
 
-        # 3. 额外工具说明
-        if settings and settings.tools:
-            parts.append(f"## 额外工具说明\n{settings.tools}")
-
-        # 4. 能力说明
+        # 3. 动态设置 — 从 Settings 注入（persona/abilities/memory）
+        if settings and settings.persona:
+            parts.append(f"## 角色设定\n{settings.persona}")
         if settings and settings.abilities:
             parts.append(f"## 能力说明\n{settings.abilities}")
-
-        # 5. 记忆说明
         if settings and settings.memory:
             parts.append(f"## 记忆说明\n{settings.memory}")
-
-        # 6. 工作目录（优先使用设置中的，否则使用实例的）
-        work_folder = settings.work_folder if settings and settings.work_folder else self.work_folder
-        parts.append(f"## 工作目录\n当前工作目录: {work_folder}")
-        parts.append(f"""## 图片显示
-你可以在回复中使用 Markdown 图片语法显示工作目录中的图片文件：
-![描述](workspace/filename.png)
-或 ![描述](./filename.png)
-路径相对于工作目录 ({work_folder})，支持的格式: png, jpg, jpeg, gif, webp, bmp。
-系统会自动读取文件并转换为可显示的图片。
-""")
-        parts.append("""## 工具调用格式
-当需要执行操作时，请以 JSON 格式返回工具调用：
-
-单个调用（标准格式）：
-```json
-{"tool": "file", "params": {"action": "read", "path": "file.txt"}}
-```
-
-单个调用（MiniMax格式）：
-```json
-{"name": "bash", "parameters": {"command": "ls -la"}}
-```
-
-多个调用：
-```json
-[
-  {"tool": "file", "params": {"action": "read", "path": "file.txt"}},
-  {"tool": "bash", "params": {"command": "ls"}}
-]
-```
-
-请用中文回答，保持简洁、专业且有帮助。如果需要执行操作，请在回复末尾以 JSON 格式明确说明将使用的工具。""")
 
         return "\n\n".join(parts)
 
