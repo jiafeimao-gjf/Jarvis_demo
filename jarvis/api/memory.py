@@ -1,6 +1,10 @@
 # jarvis/api/memory.py
 """记忆相关 API"""
+import base64 as _b64
+import os
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, Any
 
@@ -9,6 +13,8 @@ from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+IMAGES_DIR = Path(__file__).parent.parent.parent / "memory" / "conversations"
 
 
 class MemoryRequest(BaseModel):
@@ -70,12 +76,32 @@ async def get_conversation(conversation_id: str):
 
 @router.post("/conversation/{conversation_id}")
 async def save_conversation(conversation_id: str, request: Request):
-    """保存对话历史"""
+    """保存对话历史 — 图片提取到磁盘, message 中存相对路径"""
     try:
         body = await request.json()
         user_id = body.get("user_id", "")
         messages = body.get("messages", [])
         context = body.get("context", {})
+
+        # Extract base64 images → save to disk → replace with path
+        img_dir = IMAGES_DIR / conversation_id / "images"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        for i, msg in enumerate(messages):
+            img = msg.get("image")
+            if img and img.startswith("data:image/"):
+                # Parse: data:image/jpeg;base64,xxxx
+                try:
+                    header, b64 = img.split(",", 1)
+                    fmt = header.split("/")[1].split(";")[0] or "jpeg"
+                    img_bytes = _b64.b64decode(b64)
+                    img_path = img_dir / f"{i}.{fmt}"
+                    img_path.write_bytes(img_bytes)
+                    # Replace with relative path the API can serve
+                    msg["image"] = f"/api/memory/conversation/{conversation_id}/image/{i}.{fmt}"
+                except Exception as e:
+                    logger.warning(f"Failed to save image for msg {i}: {e}")
+                    msg["image"] = None
+
         success = await mediator.memory_store.save_conversation(
             conversation_id, user_id, messages, context
         )
@@ -83,6 +109,15 @@ async def save_conversation(conversation_id: str, request: Request):
     except Exception as e:
         logger.error(f"Save conversation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversation/{conversation_id}/image/{filename}")
+async def get_conversation_image(conversation_id: str, filename: str):
+    """获取对话中保存的图片"""
+    img_path = IMAGES_DIR / conversation_id / "images" / filename
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(img_path)
 
 
 @router.get("/conversations")
