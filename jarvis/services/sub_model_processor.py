@@ -22,7 +22,7 @@ class SubModelProcessor:
     """子模型处理器: STT / Vision → 文本 → 注入主对话
 
     职责:
-      - 查找合适的子模型 (sendmeaiohyeah/whisper-large-v2 for STT, qwen3.5:9b-q8_0 for vision)
+      - 查找合适的子模型 (sendmeaiohyeah/whisper-large-v2 for STT, qwen3.5:9b for vision)
       - 调用子模型进行原始输入→文本转换
       - 返回纯文本, 由调用方注入 chat_engine
     """
@@ -81,20 +81,22 @@ class SubModelProcessor:
             logger.error("SubModelProcessor: no AI Router set")
             return ""
 
-        try:
-            # Base64-encode the image for Ollama vision API
-            image_base64 = base64.b64encode(image_data).decode()
+        logger.info(
+            f"[SubModel] vision request: {len(image_data)} bytes, "
+            f"model={self.vision_model}, prompt={prompt[:60]}"
+        )
 
+        try:
             result = await self._router.vision_analyze(
                 image_data,
                 prompt,
                 model=self.vision_model,
                 provider="ollama",
             )
-            logger.info(f"Vision result ({len(result)} chars): {result[:100]}...")
+            logger.info(f"[SubModel] vision result: {len(result)} chars — {result[:120]}...")
             return result
         except Exception as e:
-            logger.error(f"Image analysis failed: {e}")
+            logger.error(f"[SubModel] vision failed: {type(e).__name__}: {e}")
             return ""
 
     def get_status(self) -> dict:

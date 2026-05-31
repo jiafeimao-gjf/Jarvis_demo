@@ -92,6 +92,7 @@ class JarvisMediator:
 
     async def _handle_camera_frame(self, event: JarvisEvent) -> dict:
         """处理摄像头帧: 子模型 Vision → 文本 → 主对话引擎"""
+        import time
         frame_data = event.payload.get("frame_data")
         prompt = event.payload.get("prompt", "描述这张图片中的内容")
 
@@ -99,12 +100,17 @@ class JarvisMediator:
             return {"error": "No frame data"}
 
         # 1. Vision: Ollama vision 子模型分析图像
+        t0 = time.time()
+        logger.info(f"[mediator] vision start: {len(frame_data)} bytes, model={self.sub_model.vision_model}")
         analysis = await self.sub_model.process_image(frame_data, prompt)
+        logger.info(f"[mediator] vision done in {(time.time()-t0)*1000:.0f}ms, result_len={len(analysis)}")
 
         if analysis:
             # 2. 将分析结果作为用户消息注入主对话引擎
             chat_input = f"[图片分析] {analysis}"
+            t1 = time.time()
             response = await self.chat_engine.chat(chat_input)
+            logger.info(f"[mediator] chat done in {(time.time()-t1)*1000:.0f}ms, response_len={len(response)}")
             return {
                 "success": True,
                 "analysis": analysis,

@@ -194,7 +194,7 @@ class OllamaAdapter(AIClient):
         prompt: str,
     ) -> str:
         """Analyze image using vision model"""
-        import base64
+        import base64, time
 
         image_base64 = base64.b64encode(image_data).decode()
 
@@ -210,14 +210,31 @@ class OllamaAdapter(AIClient):
             "stream": False
         }
 
+        logger.info(
+            f"[Ollama] vision request: model={self.model}, "
+            f"image={len(image_data)} bytes (base64 {len(image_base64)} chars), "
+            f"payload_size={len(str(payload))}"
+        )
+
         try:
+            t0 = time.time()
             response = await self.client.post("/api/chat", json=payload)
             response.raise_for_status()
             data = response.json()
 
-            return data.get("message", {}).get("content", "")
+            content = data.get("message", {}).get("content", "")
+            elapsed = (time.time() - t0) * 1000
+            logger.info(
+                f"[Ollama] vision response: status={response.status_code}, "
+                f"elapsed={elapsed:.0f}ms, result_len={len(content)}"
+            )
+            return content
         except httpx.HTTPError as e:
-            logger.error(f"Ollama vision error: {e}")
+            logger.error(
+                f"[Ollama] vision error: model={self.model}, "
+                f"status={e.response.status_code if hasattr(e, 'response') else 'N/A'}, "
+                f"detail={str(e)[:200]}"
+            )
             raise ProviderNotAvailableError("ollama", str(e))
 
     async def health_check(self) -> bool:

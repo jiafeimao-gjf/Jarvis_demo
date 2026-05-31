@@ -180,14 +180,19 @@ class AIRouter:
                     prov_enum = Provider(prov)
                     fallback = find_vision_model(prov_enum)
                     if not fallback:
-                        continue  # this provider has no vision model
+                        logger.info(f"[Router] vision: skip {prov} (no vision model)")
+                        continue
+                    logger.info(f"[Router] vision fallback: {model_id}→{fallback} via {prov}")
                     prov_model_id = fallback
                     model_info = get_model(prov_model_id)  # update for next iteration
 
+                logger.info(f"[Router] vision: trying {prov}:{prov_model_id}")
                 client = self._get_client(prov, prov_model_id)
-                return await client.vision_analyze(image_data, prompt, **kwargs)
+                result = await client.vision_analyze(image_data, prompt, **kwargs)
+                logger.info(f"[Router] vision: {prov}:{prov_model_id} OK ({len(result)} chars)")
+                return result
             except AIProviderError as e:
-                logger.warning(f"Vision provider {prov} failed: {e}")
+                logger.warning(f"[Router] vision: {prov}:{prov_model_id} failed — {e}")
                 errors.append(e)
                 continue
 

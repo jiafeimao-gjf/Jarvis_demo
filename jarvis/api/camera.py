@@ -29,16 +29,28 @@ class CameraResponse(BaseModel):
 @router.post("/analyze")
 async def analyze_frame(request: CameraFrameRequest):
     """分析单帧图像"""
+    import time
+    t0 = time.time()
     try:
         frame_bytes = base64.b64decode(request.frame_data)
+        logger.info(
+            f"[/camera/analyze] received frame: {len(frame_bytes)} bytes, "
+            f"base64: {len(request.frame_data)} chars, prompt: {request.prompt[:50]}"
+        )
         result = await mediator.process_camera(frame_bytes, request.prompt)
+        elapsed = (time.time() - t0) * 1000
+        logger.info(
+            f"[/camera/analyze] done in {elapsed:.0f}ms, "
+            f"success={result.get('success')}, analysis_len={len(result.get('analysis') or '')}"
+        )
         return CameraResponse(
             success=result.get("success", False),
             analysis=result.get("analysis"),
             error=result.get("error")
         )
     except Exception as e:
-        logger.error(f"Camera analyze error: {e}")
+        elapsed = (time.time() - t0) * 1000
+        logger.error(f"[/camera/analyze] error after {elapsed:.0f}ms: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
