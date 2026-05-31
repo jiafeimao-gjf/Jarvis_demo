@@ -29,8 +29,8 @@ async function handleVoiceInput() {
     const audioBase64 = await speech.captureAudio()
     if (!audioBase64) return
 
-    // 2. Send to backend: STT → ChatEngine → LLM reply
-    const response = await api.voice(audioBase64)
+    // 2. Send to backend with current conversation (STT → ChatEngine → LLM)
+    const response = await api.voice(audioBase64, chatStore.currentConversationId || undefined)
 
     // 3. Add transcript as user message in chat
     if (response.text) {

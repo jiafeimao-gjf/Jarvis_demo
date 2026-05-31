@@ -14,6 +14,7 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 class VoiceRequest(BaseModel):
     """语音请求模型"""
     audioData: Optional[str] = Field(None, description="Base64 编码的音频")
+    conversationId: Optional[str] = Field(None, description="当前对话 ID")
 
     class Config:
         populate_by_name = True
@@ -36,7 +37,7 @@ async def voice_chat(request: VoiceRequest):
         import base64
         audio_data = base64.b64decode(request.audioData)
 
-        result = await mediator.process_voice(audio_data)
+        result = await mediator.process_voice(audio_data, request.conversationId)
         return VoiceResponse(
             text=result.get("text", ""),
             response=result.get("response", ""),

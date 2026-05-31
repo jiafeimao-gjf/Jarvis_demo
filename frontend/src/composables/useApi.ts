@@ -102,13 +102,13 @@ export function useApi() {
     }
   }
 
-  async function voice(audioBase64: string): Promise<VoiceResponse> {
+  async function voice(audioBase64: string, conversationId?: string): Promise<VoiceResponse> {
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/voice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audioData: audioBase64 })
+        body: JSON.stringify({ audioData: audioBase64, conversationId })
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       return res.json()

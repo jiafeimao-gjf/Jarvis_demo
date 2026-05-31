@@ -54,16 +54,17 @@ class JarvisMediator:
     async def _handle_voice_input(self, event: JarvisEvent) -> dict:
         """处理语音输入: 子模型 STT → 文本 → 主对话引擎"""
         audio_data = event.payload.get("audio_data")
+        conversation_id = event.payload.get("conversation_id")
         if not audio_data:
             return {"error": "No audio data"}
 
         # 1. STT: Ollama whisper 子模型转文字
         text = await self.sub_model.process_audio(audio_data)
 
-        # 2. 识别成功, 注入主对话引擎
+        # 2. 识别成功, 注入主对话引擎（复用当前 conversation）
         if text:
             chat_input = f"[语音输入] {text}"
-            response = await self.chat_engine.chat(chat_input)
+            response = await self.chat_engine.chat(chat_input, conversation_id)
             # 3. TTS 播放
             tts_result = await self.voice_engine.text_to_speech(response)
             return {
@@ -147,12 +148,12 @@ class JarvisMediator:
         )
         return await self._handle_chat_message(event)
 
-    async def process_voice(self, audio_data: bytes) -> dict:
+    async def process_voice(self, audio_data: bytes, conversation_id: str = None) -> dict:
         """便捷方法：处理语音"""
         event = JarvisEvent(
             event_id="",
             event_type=JarvisEventType.VOICE_INPUT,
-            payload={"audio_data": audio_data},
+            payload={"audio_data": audio_data, "conversation_id": conversation_id},
             metadata={}
         )
         return await self._handle_voice_input(event)

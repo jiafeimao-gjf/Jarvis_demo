@@ -58,7 +58,8 @@ export const useChatStore = defineStore('chat', () => {
             user_id: conversation.userId || '',
             messages: conversation.messages.map(m => ({
               role: m.role,
-              content: m.content
+              content: m.content,
+              image: m.image || undefined,
             })),
             context: conversation.context || {}
           })
@@ -123,7 +124,8 @@ export const useChatStore = defineStore('chat', () => {
               id: crypto.randomUUID(),
               role: m.role,
               content: m.content,
-              timestamp: new Date()
+              image: m.image || undefined,
+              timestamp: new Date(m.timestamp || Date.now())
             }))
           }
         }
