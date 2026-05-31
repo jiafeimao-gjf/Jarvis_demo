@@ -404,6 +404,9 @@ class ChatEngine:
                 logger.debug("[StreamChat] 无工具调用，结束迭代")
                 break
 
+            # Yield progress so frontend doesn't think it's stuck
+            yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
+
             tool_calls = self.tool_parser.parse(response_text)
 
             # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
@@ -597,6 +600,8 @@ class ChatEngine:
             if not has_tools:
                 logger.debug("[StreamChatWithMsgs] 无工具调用，结束迭代")
                 break
+
+            yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
 
             # 从响应文本或 content_blocks 解析工具调用
             tool_calls = self.tool_parser.parse(response_text)
