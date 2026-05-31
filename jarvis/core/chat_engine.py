@@ -85,6 +85,13 @@ class ChatEngine:
         # 6. 工作目录（优先使用设置中的，否则使用实例的）
         work_folder = settings.work_folder if settings and settings.work_folder else self.work_folder
         parts.append(f"## 工作目录\n当前工作目录: {work_folder}")
+        parts.append(f"""## 图片显示
+你可以在回复中使用 Markdown 图片语法显示工作目录中的图片文件：
+![描述](workspace/filename.png)
+或 ![描述](./filename.png)
+路径相对于工作目录 ({work_folder})，支持的格式: png, jpg, jpeg, gif, webp, bmp。
+系统会自动读取文件并转换为可显示的图片。
+""")
         parts.append("""## 工具调用格式
 当需要执行操作时，请以 JSON 格式返回工具调用：
 
