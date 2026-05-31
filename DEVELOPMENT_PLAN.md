@@ -133,6 +133,10 @@ jarvis_demo/
 | **图片粘贴** | ✅ | Ctrl+V 粘贴, 自动分析, 全屏查看器 (缩放 50%-400%) |
 | **摄像头自动分析** | ✅ | 30s 间隔, 启动/停止切换, 队列 (最大 2), 帧缓存去重 |
 | **图片持久化** | ✅ | 按对话存储 JPEG 到磁盘, message.image 存 URL 路径 |
+| **Thinking 思考链** | ✅ | /v1/messages thinking blocks → SSE 流式 → 前端折叠面板 |
+| **图片路径解析** | ✅ | LLM 回复中 ![alt](path) → 后端读取 → base64 data URL |
+| **System Prompt 文件化** | ✅ | workspace/prompts/*.md 文件拼接, 编辑即生效 |
+| **Ollama 模型列表** | ✅ | GET /api/chat/models → Ollama /api/tags 动态加载 |
 | **记忆存储** | ✅ | SQLite + LanceDB |
 | **技能系统** | ✅ | workspace/skills/*/skill.md YAML frontmatter → system prompt |
 | **Workspace 文件** | ✅ | persona.md 等角色设定文件, 编辑即生效 |

@@ -216,12 +216,19 @@ Primary: **Ollama** (local). OpenAI/Anthropic adapters exist but are not in fall
 
 ## Tool Call Flow
 
-1. LLM returns tool calls via `/v1/messages` response
-2. `ToolCallParser` extracts `{tool, action, params}` from text
+1. LLM returns tool calls via `/v1/messages` response (`tool_use` content blocks)
+2. `_extract_tool_calls_from_blocks()` or `ToolCallParser.parse()` extracts tools
 3. `ChatEngine` iterates (max 5), executes via `TaskExecutor`
-4. Results formatted as **plain text** (`[工具结果] file.read: ...`) — not Anthropic tool_result blocks
+4. Results formatted as **plain text** (`[工具结果] file.read: ...`)
 5. Fed back to LLM for next reasoning cycle
 6. Frontend shows tool status via SSE events
+
+## Thinking (Reasoning)
+
+`/v1/messages` returns `thinking` content blocks (chain-of-thought).
+- Streaming: `thinking_start` → `thinking` chunks → `thinking_end` SSE events
+- Display: collapsible panel in ChatWindow (live) + ChatMessage (history)
+- Storage: `Message.thinking` field, saved to conversation DB
 
 ## Memory System
 
