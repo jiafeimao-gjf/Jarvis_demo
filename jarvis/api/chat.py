@@ -84,12 +84,21 @@ async def chat_stream(request: ChatRequest):
                     request.conversation_id,
                     request.user_id
                 ):
-                    # 检查是否是 JSON 事件（tool_call 或 tool_result）
+                    # JSON events: tool_call, tool_result, thinking, thinking_start, thinking_end
                     if content.startswith('{'):
-                        yield {
-                            "event": "tool",
-                            "data": content
-                        }
+                        try:
+                            evt = json.loads(content)
+                            evt_type = evt.get("type", "unknown")
+                            yield {
+                                "event": "tool" if evt_type.startswith("tool") else "token",
+                                "data": content
+                            }
+                        except json.JSONDecodeError:
+                            full_response += content
+                            yield {
+                                "event": "token",
+                                "data": json.dumps({"type": "token", "content": content})
+                            }
                     else:
                         full_response += content
                         yield {
