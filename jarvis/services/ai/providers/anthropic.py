@@ -11,11 +11,9 @@ from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-MINIMAX_CONFIG = {
-    "api_key": "sk-api-REDACTED-PLEASE-ROTATE-IN-MINIMAX-CONSOLE",
-    "base_url": "https://api.minimaxi.com/anthropic/v1",
-    "model": "MiniMax-M2.7",
-}
+# MiniMax defaults — api_key MUST come from settings/env, never hardcoded
+MINIMAX_BASE_URL = "https://api.minimaxi.com/anthropic/v1"
+MINIMAX_DEFAULT_MODEL = "MiniMax-M2.7"
 
 
 class AnthropicAdapter(AIClient):
@@ -33,9 +31,9 @@ class AnthropicAdapter(AIClient):
         use_minimax: bool = False,
     ):
         if use_minimax:
-            super().__init__(model=MINIMAX_CONFIG["model"], provider="minimax")
-            self.api_key = MINIMAX_CONFIG["api_key"]
-            self.base_url = "https://api.minimaxi.com/anthropic/v1"
+            super().__init__(model=model or MINIMAX_DEFAULT_MODEL, provider="minimax")
+            self.api_key = api_key or os.getenv("MINIMAX_API_KEY", "")
+            self.base_url = (base_url or MINIMAX_BASE_URL).rstrip("/")
         else:
             super().__init__(model=model or "claude-3-5-sonnet-20241022", provider="anthropic")
             self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")

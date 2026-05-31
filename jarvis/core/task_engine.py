@@ -471,21 +471,25 @@ class TaskEngine:
         logger.info("TaskEngine initialized")
 
     async def execute_task(self, task_description: str) -> Task:
-        """执行任务（单步简化为直接执行）"""
+        """执行任务 — 尝试 LLM 分解为多步骤，失败则单步执行"""
         task = Task(description=task_description)
         task.status = TaskStatus.RUNNING
 
         logger.info(f"Executing task: {task_description}")
 
-        # 简化实现：创建单个步骤
-        step = Step(tool="tool", params={"description": task_description})
-        task.steps.append(step)
+        # 尝试 LLM 分解任务为步骤
+        steps = await self.plan_steps(task_description)
+        if not steps:
+            # 回退到单步简化执行
+            step = Step(tool="tool", params={"description": task_description})
+            steps = [step]
+
+        task.steps = steps
 
         try:
-            result = await self.executor.execute_step(step)
-            step.result = result
+            results = await self.execute_steps(steps)
             task.status = TaskStatus.COMPLETED
-            task.result = str(result)
+            task.result = str(results)
             logger.info(f"Task completed: {task.task_id}")
         except Exception as e:
             logger.error(f"Task failed: {e}")

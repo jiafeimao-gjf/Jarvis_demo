@@ -154,7 +154,7 @@ class OllamaClient(AIClient):
                 logger.error(f"Ollama chat error (attempt {attempt + 1}/3): {e}")
                 if attempt == 2:
                     return AIResponse(content=f"Error: {str(e)}", model=self.model)
-                asyncio.sleep(1)
+                await asyncio.sleep(1)
         return AIResponse(content="Error: Max retries exceeded", model=self.model)
 
     async def vision_analyze(self, image_data: bytes, prompt: str) -> str:

@@ -92,7 +92,7 @@ async def file_operation(request: FileRequest):
 
         # 如果是设置工作文件夹，同步到 chat_engine
         if request.action == "set_work_folder" and request.folder:
-            mediator.chat_engine.set_work_folder(request.folder)
+            mediator.chat_engine.work_folder = request.folder
 
         return result
     except Exception as e:

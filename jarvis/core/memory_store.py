@@ -354,12 +354,18 @@ class LanceDBMemoryRepository(MemoryRepository):
             logger.error(f"Failed to retrieve from LanceDB: {e}")
             return []
 
+    @staticmethod
+    def _sanitize_key(key: str) -> str:
+        """Sanitize key to prevent LanceDB filter injection"""
+        return key.replace("'", "''")
+
     async def delete(self, key: str) -> bool:
         """删除记忆"""
         if not self._client:
             return False
         try:
-            self._table.delete(f"key = '{key}'")
+            safe_key = self._sanitize_key(key)
+            self._table.delete(f"key = '{safe_key}'")
             return True
         except Exception as e:
             logger.error(f"Failed to delete from LanceDB: {e}")
@@ -370,7 +376,8 @@ class LanceDBMemoryRepository(MemoryRepository):
         if not self._client:
             return None
         try:
-            results = self._table.search(f"key = '{key}'").limit(1).to_list()
+            safe_key = self._sanitize_key(key)
+            results = self._table.search(f"key = '{safe_key}'").limit(1).to_list()
             if results:
                 r = results[0]
                 return {

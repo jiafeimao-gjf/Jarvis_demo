@@ -1,7 +1,6 @@
 # jarvis/core/mediator.py
 """中介者模式 - 协调各引擎之间的通信"""
 from typing import Optional, Any, Callable, Awaitable
-from dataclasses import dataclass
 from jarvis.core.entities import JarvisEvent, JarvisEventType
 from jarvis.core.chat_engine import ChatEngine
 from jarvis.core.voice_engine import VoiceEngine
@@ -12,15 +11,6 @@ from jarvis.services.vision_processor import VisionProcessor
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class JarvisEvent:
-    """贾维斯事件"""
-    event_id: str
-    event_type: JarvisEventType
-    payload: dict
-    metadata: dict
 
 
 class JarvisMediator:

@@ -163,6 +163,9 @@ class Settings(BaseSettings):
                     },
                     "anthropic": {
                         "has_api_key": bool(self.ai.anthropic.api_key),
+                    },
+                    "minimax": {
+                        "has_api_key": bool(self.ai.minimax.api_key),
                     }
                 }
             },

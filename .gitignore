@@ -52,6 +52,14 @@ dist/
 .pytest_cache/
 htmlcov/
 
+# Coverage
+.coverage
+htmlcov/
+
+# Runtime data
+conversations/
+workspace/
+
 # Temporary files
 tmp/
 temp/

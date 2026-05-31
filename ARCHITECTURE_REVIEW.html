@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS 架构设计 &amp; 代码实现评估报告</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0b0e18;
+    --surface: #12172b;
+    --surface2: #1a2140;
+    --border: #283070;
+    --text: #e0e6f0;
+    --text-dim: #7a88b0;
+    --accent: #5a9cff;
+    --accent2: #7c5cff;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --orange: #fb923c;
+    --red: #f87171;
+    --cyan: #22d3ee;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Header */
+  .hero {
+    background: linear-gradient(135deg, #0b0e18 0%, #141b3a 50%, #0f1a2e 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 80px 24px 60px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at 50% 50%, rgba(90,156,255,0.06) 0%, transparent 60%);
+    pointer-events: none;
+  }
+  .hero h1 {
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero .subtitle {
+    margin-top: 12px;
+    color: var(--text-dim);
+    font-size: 1rem;
+  }
+  .hero .meta-grid {
+    display: inline-flex;
+    gap: 24px;
+    margin-top: 28px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .hero .meta-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    color: var(--text-dim);
+    background: rgba(26,33,64,0.6);
+    padding: 6px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+  .hero .meta-item .val { color: var(--text); font-weight: 600; }
+
+  /* Score */
+  .score-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 32px;
+    padding: 16px 32px;
+    background: linear-gradient(135deg, rgba(90,156,255,0.1), rgba(124,92,255,0.1));
+    border: 1px solid rgba(90,156,255,0.25);
+    border-radius: 16px;
+  }
+  .score-badge .score-number {
+    font-size: 3rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+  }
+  .score-badge .score-label { font-size: 0.875rem; color: var(--text-dim); text-align: left; }
+  .score-badge .score-label .max { color: var(--text-dim); font-size: 0.8rem; }
+
+  /* Nav */
+  .toc-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(11,14,24,0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .toc-bar::-webkit-scrollbar { height: 0; }
+  .toc-bar nav {
+    display: flex;
+    gap: 4px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 10px 0;
+  }
+  .toc-bar nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.8rem;
+    padding: 6px 14px;
+    border-radius: 8px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .toc-bar nav a:hover { background: var(--surface2); color: var(--text); }
+
+  /* Main content */
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+  }
+
+  /* Sections */
+  section {
+    margin-bottom: 56px;
+  }
+  h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 20px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+    color: var(--accent);
+  }
+  h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 28px 0 14px;
+    color: var(--text);
+  }
+  h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 20px 0 10px;
+    color: var(--text);
+  }
+
+  p { margin-bottom: 14px; color: var(--text); line-height: 1.8; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0;
+  }
+
+  /* Code blocks */
+  code {
+    font-family: var(--mono);
+    font-size: 0.84em;
+    background: var(--surface2);
+    padding: 2px 7px;
+    border-radius: 4px;
+    color: var(--cyan);
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 16px 0 20px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.6;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+    font-size: inherit;
+  }
+
+  /* Inline info boxes */
+  .info-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 14px 0;
+    font-size: 0.92rem;
+  }
+  .info-box .icon { font-size: 1.1rem; flex-shrink: 0; line-height: 1.5; }
+  .info-box.good { border-left: 3px solid var(--green); }
+  .info-box.warn { border-left: 3px solid var(--yellow); }
+  .info-box.bad  { border-left: 3px solid var(--red); }
+
+  /* Priority badges */
+  .priority { display: inline-block; padding: 2px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.03em; margin-right: 6px; }
+  .priority.p0 { background: rgba(248,113,113,0.18); color: var(--red); }
+  .priority.p1 { background: rgba(251,146,60,0.18); color: var(--orange); }
+  .priority.p2 { background: rgba(34,211,238,0.15); color: var(--cyan); }
+  .issue-tag { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
+  .issue-tag.crash { background: rgba(248,113,113,0.15); color: var(--red); }
+  .issue-tag.sec   { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .issue-tag.arch  { background: rgba(34,211,238,0.12); color: var(--cyan); }
+  .issue-tag.quality { background: rgba(250,204,21,0.12); color: var(--yellow); }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 0.9rem;
+  }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(40,48,112,0.4);
+    vertical-align: top;
+  }
+  tr:hover td { background: rgba(26,33,64,0.3); }
+
+  /* Starlist — 5-star ratings */
+  .stars {
+    color: var(--yellow);
+    letter-spacing: 1px;
+    font-size: 0.85rem;
+  }
+
+  /* Arch diagram */
+  .arch-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 20px;
+    margin: 16px 0 24px;
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--text);
+  }
+  .arch-diagram .hl-accent { color: var(--accent); }
+  .arch-diagram .hl-green { color: var(--green); }
+  .arch-diagram .hl-cyan { color: var(--cyan); }
+  .arch-diagram .hl-dim { color: var(--text-dim); }
+
+  /* Issues list */
+  .issue-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+  .issue-card .issue-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .issue-card .issue-header .issue-num { color: var(--text-dim); font-weight: 600; font-size: 0.8rem; }
+  .issue-card .issue-header h4 { margin: 0; font-size: 0.95rem; }
+  .issue-card .issue-loc {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-family: var(--mono);
+  }
+
+  /* TOC */
+  .toc-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px;
+    list-style: none;
+    margin: 16px 0 24px;
+  }
+  .toc-list li a {
+    display: block;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.88rem;
+    transition: all 0.2s;
+  }
+  .toc-list li a:hover {
+    background: var(--surface2);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+
+  /* Summary boxes */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 20px 0;
+  }
+  .summary-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+  }
+  .summary-box h3 { margin-top: 0; font-size: 1rem; }
+  .summary-box ul { list-style: none; padding: 0; }
+  .summary-box ul li {
+    padding: 5px 0;
+    font-size: 0.9rem;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .summary-box ul li .icon { flex-shrink: 0; }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 1.6rem; }
+    .summary-grid { grid-template-columns: 1fr; }
+    .toc-list { grid-template-columns: 1fr; }
+    .meta-grid { flex-direction: column; align-items: center; }
+    .score-badge { flex-direction: column; text-align: center; }
+    .score-badge .score-label { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<header class="hero">
+  <h1>JARVIS 架构设计 &amp; 代码实现评估报告</h1>
+  <p class="subtitle">贾维斯智能助手系统 · 全量代码审阅</p>
+
+  <div class="meta-grid">
+    <span class="meta-item">📅 <span class="val">2026-05-31</span></span>
+    <span class="meta-item">📦 <span class="val">v0.1.0</span></span>
+    <span class="meta-item">📏 <span class="val">~23,000 lines</span></span>
+  </div>
+
+  <div class="score-badge">
+    <span class="score-number">7.5</span>
+    <span class="score-label">
+      / 10<br>
+      <span class="max">Architecture &amp; Code Quality</span>
+    </span>
+  </div>
+</header>
+
+<!-- TOC Bar -->
+<div class="toc-bar">
+  <nav>
+    <a href="#overall">总体评价</a>
+    <a href="#architecture">架构设计</a>
+    <a href="#modules">模块评估</a>
+    <a href="#issues">具体问题</a>
+    <a href="#security">安全性</a>
+    <a href="#coverage">测试覆盖</a>
+    <a href="#performance">性能</a>
+    <a href="#recommendations">改进建议</a>
+    <a href="#appendix">附录</a>
+  </nav>
+</div>
+
+<!-- Content -->
+<div class="container">
+
+<!-- 1. Overall -->
+<section id="overall">
+<h2>1. 总体评价</h2>
+<p>架构设计方面较为出色，代码实现在核心模块上有扎实的基础，但在一致性、测试覆盖和细节处理上有明显改进空间。</p>
+
+<div class="summary-grid">
+  <div class="summary-box">
+    <h3 style="color:var(--green)">✅ 优点</h3>
+    <ul>
+      <li><span class="icon">🔷</span> <strong>架构设计成熟</strong> — Mediator + Strategy + Registry + Repository 多模式组合，解耦合理</li>
+      <li><span class="icon">🔷</span> <strong>AI Provider 抽象层优秀</strong> — <code>AIClient ABC → ProviderRegistry → AIRouter</code> 层次清晰</li>
+      <li><span class="icon">🔷</span> <strong>事件驱动模型合理</strong> — <code>JarvisEvent + Mediator</code> 组合方便扩展</li>
+      <li><span class="icon">🔷</span> <strong>工具循环安全</strong> — <code>MAX_TOOL_ITERATIONS = 5</code> 防止无限循环</li>
+      <li><span class="icon">🔷</span> <strong>中文注释完善</strong> — 核心逻辑都有注释</li>
+    </ul>
+  </div>
+  <div class="summary-box">
+    <h3 style="color:var(--red)">⚠️ 主要短板</h3>
+    <ul>
+      <li><span class="icon">🔴</span> <strong>AI Provider 双体系</strong> — <code>services/ai/</code> 与 <code>ollama_client.py</code> 两套并存</li>
+      <li><span class="icon">🔴</span> <strong>测试覆盖不足</strong> — AI providers 层仅 17-22%，前端 0%</li>
+      <li><span class="icon">🔴</span> <strong>部分模块过重</strong> — NotificationManager 线程模型、未使用的策略类</li>
+      <li><span class="icon">🔴</span> <strong>前后端松耦合</strong> — SSE 事件类型字符串紧耦合，无类型化协议</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<!-- 2. Architecture -->
+<section id="architecture">
+<h2>2. 架构设计评估</h2>
+
+<h3>2.1 层次结构</h3>
+<div class="arch-diagram"><span class="hl-accent">Frontend</span> <span class="hl-dim">(Vue 3 :8529)</span>
+    │ <span class="hl-dim">HTTP / SSE / WebSocket</span>
+    ▼
+<span class="hl-accent">API Layer</span> <span class="hl-dim">(api/*.py)</span>         ← 路由定义，请求/响应模型
+    │
+    ▼
+<span class="hl-accent">Mediator</span> <span class="hl-dim">(mediator.py)</span>       ← 中央协调器
+    │
+    ├──► <span class="hl-green">ChatEngine</span>           ← 对话 + 工具调用
+    ├──► <span class="hl-green">VoiceEngine</span>          ← 语音 I/O
+    ├──► <span class="hl-green">TaskEngine</span>           ← 任务执行策略
+    ├──► <span class="hl-green">MemoryStore</span>          ← 持久化 (SQLite + LanceDB)
+    ├──► <span class="hl-green">VisionProcessor</span>     ← 图像分析
+    └──► <span class="hl-green">HardwareBridge</span>      ← 硬件抽象</div>
+<p>层次清晰，依赖方向正确（API → Mediator → Engines → Services）。</p>
+
+<h3>2.2 设计模式使用</h3>
+<table>
+  <tr><th>模式</th><th>位置</th><th>评估</th></tr>
+  <tr>
+    <td><strong>Mediator</strong></td>
+    <td><code>core/mediator.py</code></td>
+    <td><span class="stars">★★★★★</span> 核心模式，正确解耦各引擎</td>
+  </tr>
+  <tr>
+    <td><strong>Strategy</strong></td>
+    <td><code>services/ai/providers/*.py</code></td>
+    <td><span class="stars">★★★★☆</span> AI 层优秀，TaskEngine 策略未实际使用</td>
+  </tr>
+  <tr>
+    <td><strong>Repository</strong></td>
+    <td><code>core/memory_store.py</code></td>
+    <td><span class="stars">★★★★☆</span> SQLite 实现完整，LanceDB 实现脆弱</td>
+  </tr>
+  <tr>
+    <td><strong>Registry</strong></td>
+    <td><code>services/ai/registry.py</code>, <code>core/tool_registry.py</code></td>
+    <td><span class="stars">★★★★★</span> 注册 + 工厂组合非常实用</td>
+  </tr>
+  <tr>
+    <td><strong>Observer</strong></td>
+    <td><code>core/notification.py</code>, <code>core/hardware_bridge.py</code></td>
+    <td><span class="stars">★★★☆☆</span> 实现正确但 notification 过重</td>
+  </tr>
+  <tr>
+    <td><strong>Factory</strong></td>
+    <td><code>services/ollama_client.py</code></td>
+    <td><span class="stars">★★☆☆☆</span> 与上层 AI 体系重复，应废弃</td>
+  </tr>
+</table>
+
+<h3>2.3 关键架构决策</h3>
+
+<div class="info-box warn">
+  <span class="icon">⚠️</span>
+  <div><strong>Mediator 单例模式</strong> — 所有引擎在 mediator 初始化时创建，启动开销约 200ms；<br>
+  构造函数中硬编码 <code>_event_handlers</code> 字典，扩展新事件类型需修改 mediator 本身。</div>
+</div>
+
+<div class="info-box good">
+  <span class="icon">✅</span>
+  <div><strong>AI Provider 故障转移</strong> — <code>fallback_chain</code> (ollama → openai → anthropic) 实现优雅降级；<br>
+  <code>_client_cache</code> 缓存 provider 客户端实例避免重复创建。</div>
+</div>
+
+<div class="info-box warn">
+  <span class="icon">⚠️</span>
+  <div><strong>双存储设计</strong> — SQLite 适合结构化记忆，LanceDB 适合语义搜索，各取所长；<br>
+  但 LanceDB 初始化不稳定（TODO P1），<code>MemoryRepository</code> 抽象接口风格不一致。</div>
+</div>
+</section>
+
+<!-- 3. Modules -->
+<section id="modules">
+<h2>3. 模块级评估</h2>
+
+<h3>3.1 后端核心 (core/)</h3>
+<table>
+  <tr><th>文件</th><th>行数</th><th>评分</th><th>简评</th></tr>
+  <tr><td><code>chat_engine.py</code></td><td>756</td><td><span class="stars">★★★★☆</span></td><td>核心逻辑完整，工具循环设计良好，但三重代码重复</td></tr>
+  <tr><td><code>mediator.py</code></td><td>48</td><td><span class="stars">★★★★★</span></td><td>简洁高效，职责清晰</td></tr>
+  <tr><td><code>entities.py</code></td><td>80</td><td><span class="stars">★★★★★</span></td><td>dataclass 正确，类型明确</td></tr>
+  <tr><td><code>task_engine.py</code></td><td>546</td><td><span class="stars">★★★☆☆</span></td><td>Strategy 结构好，但过多策略未实现</td></tr>
+  <tr><td><code>memory_store.py</code></td><td>440</td><td><span class="stars">★★★★☆</span></td><td>Repository 模式正确，LanceDB 注入风险</td></tr>
+  <tr><td><code>tool_parser.py</code></td><td>76</td><td><span class="stars">★★★★★</span></td><td>高质量，测试覆盖好</td></tr>
+  <tr><td><code>tool_registry.py</code></td><td>73</td><td><span class="stars">★★★★★</span></td><td>100% 测试覆盖</td></tr>
+  <tr><td><code>notification.py</code></td><td>295</td><td><span class="stars">★★☆☆☆</span></td><td>设计过重，线程模型有问题</td></tr>
+  <tr><td><code>hardware_bridge.py</code></td><td>175</td><td><span class="stars">★★★☆☆</span></td><td>Observer 模式但大部分为桩</td></tr>
+</table>
+
+<h3>3.2 AI Provider 服务层</h3>
+<table>
+  <tr><th>文件</th><th>评分</th><th>简评</th></tr>
+  <tr><td><code>base.py</code></td><td><span class="stars">★★★★★</span></td><td>ABC 接口定义清晰</td></tr>
+  <tr><td><code>router.py</code></td><td><span class="stars">★★★★☆</span></td><td>故障转移逻辑正确，覆盖率仅 17%</td></tr>
+  <tr><td><code>anthropic.py</code></td><td><span class="stars">★★☆☆☆</span></td><td><strong>硬编码 API Key</strong></td></tr>
+  <tr><td><code>ollama.py</code></td><td><span class="stars">★★★☆☆</span></td><td>实现基本正确, 测试覆盖率 19%</td></tr>
+  <tr><td><code>openai.py</code></td><td><span class="stars">★★★☆☆</span></td><td>实现基本正确, 测试覆盖率 22%</td></tr>
+</table>
+
+<h3>3.3 API 层</h3>
+<table>
+  <tr><th>端点</th><th>评分</th><th>简评</th></tr>
+  <tr><td><code>chat.py</code></td><td><span class="stars">★★★★☆</span></td><td>SSE 流式实现正确</td></tr>
+  <tr><td><code>voice.py</code></td><td><span class="stars">★★★☆☆</span></td><td>TTS 集成不完整</td></tr>
+  <tr><td><code>camera.py</code></td><td><span class="stars">★★★☆☆</span></td><td>WebSocket 处理正确</td></tr>
+  <tr><td><code>memory.py</code></td><td><span class="stars">★★★★☆</span></td><td>CRUD 完整，支持持久化</td></tr>
+  <tr><td><code>execute.py</code></td><td><span class="stars">★★★☆☆</span></td><td>简化实现，调用了不存在的方法</td></tr>
+</table>
+
+<h3>3.4 前端</h3>
+<table>
+  <tr><th>文件</th><th>评分</th><th>简评</th></tr>
+  <tr><td><code>useApi.ts</code></td><td><span class="stars">★★★★☆</span></td><td>SSE 解析正确，错误处理良好</td></tr>
+  <tr><td><code>chat.ts</code> (store)</td><td><span class="stars">★★★★☆</span></td><td>状态管理清晰，有重试机制</td></tr>
+  <tr><td><code>useSpeechRecognition.ts</code></td><td><span class="stars">★★★☆☆</span></td><td>降级处理不足</td></tr>
+  <tr><td>Components</td><td><span class="stars">★★★★☆</span></td><td>结构清晰，Tailwind + CVA</td></tr>
+</table>
+</section>
+
+<!-- 4. Issues -->
+<section id="issues">
+<h2>4. 发现的具体问题</h2>
+
+<h3 style="color:var(--red)">🔴 P0 — 需立即修复</h3>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag sec">SECURITY</span>
+    <h4>硬编码的 MiniMax API Key</h4>
+  </div>
+  <p>一个有效的 MiniMax API Key 明文硬编码在 <code>anthropic.py:14-18</code>，已提交到 git 仓库。任何有仓库访问权限的人都可使用此密钥。</p>
+  <pre><code>MINIMAX_CONFIG = {
+    "api_key": "sk-api-9Sx1Qn6TY8mjI5O9ozIXj2G0Js850U5ItBY6ZWxMns8LUg...",
+    ...
+}</code></pre>
+  <div class="issue-loc">📁 <code>jarvis/services/ai/providers/anthropic.py:14-18</code></div>
+</div>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag crash">CRASH</span>
+    <h4><code>asyncio.sleep</code> 未 await — 重试退避完全失效</h4>
+  </div>
+  <pre><code>asyncio.sleep(1)  # ← 缺少 await!</code></pre>
+  <div class="issue-loc">📁 <code>jarvis/services/ollama_client.py:157</code></div>
+</div>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag crash">CRASH</span>
+    <h4>异步方法未 await — 序列化返回 coroutine 对象</h4>
+  </div>
+  <pre><code>"ollama_connected": self.ollama.check_health()  # ← 未 await</code></pre>
+  <div class="issue-loc">📁 <code>jarvis/services/vision_processor.py:86</code></div>
+</div>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag crash">CRASH</span>
+    <h4>调用了 <code>ChatEngine</code> 上不存在的方法</h4>
+  </div>
+  <pre><code>mediator.chat_engine.set_work_folder(request.folder)  # ← AttributeError</code></pre>
+  <div class="issue-loc">📁 <code>jarvis/api/execute.py:95</code></div>
+</div>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag sec">SECURITY</span>
+    <h4>LanceDB 删除操作存在注入漏洞</h4>
+  </div>
+  <pre><code>self._table.delete(f"key = '{key}'")  # ← 可注入</code></pre>
+  <div class="issue-loc">📁 <code>jarvis/core/memory_store.py:362, 373</code></div>
+</div>
+
+<div class="issue-card">
+  <div class="issue-header">
+    <span class="priority p0">P0</span>
+    <span class="issue-tag sec">SECURITY</span>
+    <h4><code>/api/config</code> 可能泄漏 API Key</h4>
+  </div>
+  <p>GET 返回 <code>config_manager.to_dict()</code>，需要审计 <code>to_dict()</code> 是否正确屏蔽了 <code>api_key</code> 字段。PUT 无认证可直接修改任意配置项。</p>
+  <div class="issue-loc">📁 <code>jarvis/config.py</code> + <code>jarvis/main.py</code></div>
+</div>
+
+<h3 style="color:var(--orange)">🟡 P1 — 中优先级</h3>
+
+<table>
+  <tr><th>#</th><th>问题</th><th>文件</th><th>说明</th></tr>
+  <tr>
+    <td>7</td>
+    <td><code>TaskEngine.execute_task</code> 简化过度</td>
+    <td><code>task_engine.py:480-481</code></td>
+    <td>所有任务退化为单步桩，<code>plan_steps()</code> 存在但未调用</td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td>NotificationManager 线程安全</td>
+    <td><code>notification.py:87-124</code></td>
+    <td>后台线程为每个 handler 创建新事件循环，可能导致 WebSocket 连接在错误 loop 中运行</td>
+  </tr>
+  <tr>
+    <td>9</td>
+    <td>AI Provider 双体系</td>
+    <td><code>ollama_client.py</code> vs <code>services/ai/</code></td>
+    <td>两套独立的 <code>AIClient</code> ABC + Factory，<code>VisionProcessor</code> 绕过新体系</td>
+  </tr>
+  <tr>
+    <td>10</td>
+    <td>Observer 模式风格不一致</td>
+    <td><code>notification.py</code> vs <code>hardware_bridge.py</code></td>
+    <td><code>subscribe/unsubscribe</code> vs <code>attach/detach</code> 两种风格并存</td>
+  </tr>
+  <tr>
+    <td>11</td>
+    <td><code>format_batch</code> 元组索引脆弱</td>
+    <td><code>tool_result_formatter.py:68-76</code></td>
+    <td>魔法数字 3/4 硬编码，混合处理元组和对象</td>
+  </tr>
+  <tr>
+    <td>12</td>
+    <td><code>JarvisEvent</code> 类重复定义</td>
+    <td><code>mediator.py:18</code> + <code>entities.py:30</code></td>
+    <td>两个版本字段不同，造成混淆</td>
+  </tr>
+</table>
+
+<h3 style="color:var(--cyan)">🔵 P2 — 低优先级</h3>
+<table>
+  <tr><th>#</th><th>问题</th><th>说明</th></tr>
+  <tr><td>13</td><td>三个未使用的策略</td><td><code>DesktopControlStrategy</code> / <code>APICallStrategy</code> / <code>ToolRunnerStrategy</code> 仅返回 <code>simulated</code></td></tr>
+  <tr><td>14</td><td>LanceDB 初始化无重试</td><td>Table 创建直接抛异常，无降级到 SQLite-only</td></tr>
+  <tr><td>15</td><td>SSE 事件类型未类型化</td><td>前后端通过字符串紧耦合，修改不同步会静默失败</td></tr>
+  <tr><td>16</td><td>硬编码记忆关键词</td><td><code>chat_engine.py:331</code> 仅对硬编码的 "记住" 触发记忆保存</td></tr>
+  <tr><td>17</td><td>前端 SSE 解析容错不足</td><td><code>useApi.ts:97</code> JSON 解析错误被静默吞噬</td></tr>
+</table>
+</section>
+
+<!-- 5. Security -->
+<section id="security">
+<h2>5. 安全性评估</h2>
+
+<h3>✅ 已实现的安全措施</h3>
+<table>
+  <tr><th>措施</th><th>位置</th><th>说明</th></tr>
+  <tr><td>路径穿越防护</td><td><code>task_engine.py:242-253</code></td><td><code>Path.resolve()</code> + <code>relative_to()</code> 双重检查</td></tr>
+  <tr><td>高危命令黑名单</td><td><code>task_engine.py:138-158</code></td><td>16 条正则规则阻止 rm -rf, mkfs, wget|sh 等</td></tr>
+  <tr><td>Bash 超时机制</td><td><code>task_engine.py:200-209</code></td><td>默认 30 秒超时并 kill 进程</td></tr>
+  <tr><td>文件编码安全</td><td><code>task_engine.py:304-320</code></td><td>UnicodeDecodeError 时降级到 Base64 传输</td></tr>
+</table>
+
+<h3 style="color:var(--red)">⚠️ 安全隐患</h3>
+<table>
+  <tr><th>#</th><th>漏洞</th><th>文件</th><th>严重度</th></tr>
+  <tr><td>S1</td><td>硬编码 API Key</td><td><code>anthropic.py:14-18</code></td><td>🔴 极度严重 — 密钥已提交到 git</td></tr>
+  <tr><td>S2</td><td>LanceDB 注入</td><td><code>memory_store.py:362</code></td><td>🔴 高危 — f-string 拼接可删除所有记忆</td></tr>
+  <tr><td>S3</td><td><code>/api/config</code> 泄漏密钥</td><td><code>main.py:51-52</code></td><td>🟡 中危 — 需审计 <code>to_dict()</code> 是否过滤</td></tr>
+  <tr><td>S4</td><td>高危命令黑名单绕过</td><td><code>task_engine.py:138</code></td><td>🟡 中危 — 正则存在绕过可能</td></tr>
+  <tr><td>S5</td><td>无速率限制</td><td>所有 API 端点</td><td>🟡 中危 — 无限流保护</td></tr>
+</table>
+</section>
+
+<!-- 6. Coverage -->
+<section id="coverage">
+<h2>6. 测试覆盖分析</h2>
+
+<div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:20px;">
+  <div style="background:var(--surface); padding:18px 24px; border-radius:14px; border:1px solid var(--border); text-align:center; flex:1; min-width:120px;">
+    <div style="font-size:2.5rem; font-weight:800; color:var(--accent);">63%</div>
+    <div style="color:var(--text-dim); font-size:0.82rem; margin-top:4px;">总体覆盖率</div>
+  </div>
+  <div style="background:var(--surface); padding:18px 24px; border-radius:14px; border:1px solid var(--border); text-align:center; flex:1; min-width:120px;">
+    <div style="font-size:2.5rem; font-weight:800; color:var(--green);">67</div>
+    <div style="color:var(--text-dim); font-size:0.82rem; margin-top:4px;">测试用例 / 全部通过</div>
+  </div>
+  <div style="background:var(--surface); padding:18px 24px; border-radius:14px; border:1px solid var(--border); text-align:center; flex:1; min-width:120px;">
+    <div style="font-size:2.5rem; font-weight:800; color:var(--red);">17-22%</div>
+    <div style="color:var(--text-dim); font-size:0.82rem; margin-top:4px;">AI Provider 层</div>
+  </div>
+  <div style="background:var(--surface); padding:18px 24px; border-radius:14px; border:1px solid var(--border); text-align:center; flex:1; min-width:120px;">
+    <div style="font-size:2.5rem; font-weight:800; color:var(--red);">0%</div>
+    <div style="color:var(--text-dim); font-size:0.82rem; margin-top:4px;">前端 + API 层</div>
+  </div>
+</div>
+
+<table>
+  <tr><th>模块</th><th>覆盖率</th><th>评估</th></tr>
+  <tr><td><code>chat_engine.py</code></td><td>68%</td><td>核心逻辑有测试，工具执行路径不足</td></tr>
+  <tr><td><code>task_engine.py</code></td><td>16%</td><td>仅导入测试，逻辑基本未测</td></tr>
+  <tr><td><code>memory_store.py</code></td><td>58%</td><td>SQLite 完整，LanceDB 无测试</td></tr>
+  <tr><td><code>notification.py</code></td><td>66%</td><td>线程逻辑未覆盖</td></tr>
+  <tr><td><code>router.py</code></td><td>17%</td><td>故障转移逻辑未测试</td></tr>
+  <tr><td><code>tool_parser.py</code></td><td>83%</td><td>✅ 高质量</td></tr>
+  <tr><td><code>tool_registry.py</code></td><td>100%</td><td>✅ 完全覆盖</td></tr>
+</table>
+</section>
+
+<!-- 7. Performance -->
+<section id="performance">
+<h2>7. 性能观察</h2>
+
+<h3 style="color:var(--red)">潜在瓶颈</h3>
+<ol style="padding-left:20px;">
+  <li style="margin-bottom:8px;"><strong>SSE 高频序列化</strong> — 每个 token <code>json.dumps()</code> 一次，GIL 可能成瓶颈</li>
+  <li style="margin-bottom:8px;"><strong>无滑动窗口</strong> — 长对话无 token 计数截断，可能导致内存膨胀</li>
+  <li style="margin-bottom:8px;"><strong>Memory 双存储</strong> — 每次记忆操作同步写入 SQLite + LanceDB，增加延迟</li>
+  <li style="margin-bottom:8px;"><strong>SQLite 单次连接</strong> — 每次数据库操作新开连接，无连接池</li>
+  <li style="margin-bottom:8px;"><strong>浏览器每次启动</strong> — <code>BrowserAutomationStrategy</code> 每步新开 Chromium 实例</li>
+</ol>
+
+<h3 style="color:var(--green)">良好实践</h3>
+<ul style="padding-left:20px;">
+  <li style="margin-bottom:6px;">✅ 懒加载 HTTP 客户端 — <code>OllamaClient.client</code> 属性</li>
+  <li style="margin-bottom:6px;">✅ Provider 客户端缓存 — <code>AIRouter._client_cache</code></li>
+  <li style="margin-bottom:6px;">✅ 异步核心 — 几乎所有 IO 操作使用 <code>async/await</code></li>
+</ul>
+</section>
+
+<!-- 8. Recommendations -->
+<section id="recommendations">
+<h2>8. 改进建议（按优先级排序）</h2>
+
+<h3 style="color:var(--red); margin-top:0;">🔴 紧急修复 (P0)</h3>
+<table>
+  <tr><th>#</th><th>建议</th><th>文件</th><th>影响</th></tr>
+  <tr><td>1</td><td><strong>移除硬编码 API Key</strong>，改用 <code>.env</code> 环境变量</td><td><code>anthropic.py:14-18</code></td><td>安全 — 有效密钥在源码中</td></tr>
+  <tr><td>2</td><td><code>asyncio.sleep(1)</code> 加 <code>await</code></td><td><code>ollama_client.py:157</code></td><td>重试无退避</td></tr>
+  <tr><td>3</td><td><code>check_health()</code> 加 <code>await</code></td><td><code>vision_processor.py:86</code></td><td>返回 coroutine 对象</td></tr>
+  <tr><td>4</td><td>移除不存在的 <code>set_work_folder()</code> 调用或实现此方法</td><td><code>execute.py:95</code></td><td>运行时 AttributeError</td></tr>
+  <tr><td>5</td><td>LanceDB delete 改用参数化查询</td><td><code>memory_store.py:362,373</code></td><td>注入漏洞</td></tr>
+  <tr><td>6</td><td>审计 <code>config_manager.to_dict()</code> 是否过滤 <code>api_key</code></td><td><code>main.py:51-52</code></td><td>信息泄漏</td></tr>
+</table>
+
+<h3 style="color:var(--orange);">🟡 架构改进 (P1)</h3>
+<table>
+  <tr><th>#</th><th>建议</th><th>工作量</th><th>说明</th></tr>
+  <tr><td>7</td><td><strong>合并 AI Provider 双体系</strong></td><td>中</td><td>废弃 <code>ollama_client.py</code> 旧体系，统一使用 <code>services/ai/</code></td></tr>
+  <tr><td>8</td><td><strong>废弃 NotificationManager 线程模型</strong></td><td>小</td><td>改为纯 asyncio 实现（<code>asyncio.Queue</code> + 后台 task）</td></tr>
+  <tr><td>9</td><td><strong>提取 chat_engine.py 三重重复代码</strong></td><td>中</td><td>三个 chat/stream 方法共享 ~70% 逻辑</td></tr>
+  <tr><td>10</td><td>实现 <code>TaskEngine.execute_task</code> 真正多步执行</td><td>中</td><td>调用 <code>plan_steps()</code> 而不是退化到单步</td></tr>
+  <tr><td>11</td><td>统一 Observer/Subscriber 风格</td><td>小</td><td><code>notification.py</code> 和 <code>hardware_bridge.py</code> 统一</td></tr>
+</table>
+
+<h3 style="color:var(--green);">🟢 测试提升</h3>
+<table>
+  <tr><th>#</th><th>建议</th><th>工作量</th><th>说明</th></tr>
+  <tr><td>12</td><td>AI Provider 单元测试</td><td>中</td><td>三个 adapter 各 10-15 用例，覆盖错误路径</td></tr>
+  <tr><td>13</td><td>API 集成测试</td><td>中</td><td>FastAPI <code>TestClient</code> 覆盖核心端点</td></tr>
+  <tr><td>14</td><td>Router 故障转移测试</td><td>小</td><td>当前仅 17% 覆盖率</td></tr>
+  <tr><td>15</td><td>前端 Vitest 初始化</td><td>小</td><td>从 chat store 和 useApi 开始</td></tr>
+</table>
+
+<h3 style="color:var(--cyan);">🔵 代码质量 (P2)</h3>
+<table>
+  <tr><th>#</th><th>建议</th><th>工作量</th></tr>
+  <tr><td>16</td><td>SSE 事件定义为枚举或常量</td><td>小</td></tr>
+  <tr><td>17</td><td><code>format_batch</code> 用命名元组重构</td><td>小</td></tr>
+  <tr><td>18</td><td>添加对话上下文滑动窗口（token 截断）</td><td>中</td></tr>
+  <tr><td>19</td><td>LanceDB 初始化添加重试 + 降级</td><td>小</td></tr>
+</table>
+</section>
+
+<!-- Appendix -->
+<section id="appendix">
+<h2>附录 A: 代码统计</h2>
+<table>
+  <tr><th>层级</th><th>行数</th><th>测试行数</th><th>覆盖行数</th><th>覆盖率</th></tr>
+  <tr><td>Backend Python</td><td>20,403</td><td>1,224</td><td>1,801</td><td>63%</td></tr>
+  <tr><td>&nbsp;&nbsp;└─ core/</td><td>11,278</td><td>938</td><td>2,468</td><td>65%</td></tr>
+  <tr><td>&nbsp;&nbsp;└─ services/</td><td>2,543</td><td>0</td><td>457</td><td>20%</td></tr>
+  <tr><td>&nbsp;&nbsp;└─ api/</td><td>5,348</td><td>0</td><td>0</td><td>N/A</td></tr>
+  <tr><td>Frontend TS/Vue</td><td>2,595</td><td>0</td><td>0</td><td>0%</td></tr>
+  <tr><td>Tests</td><td>5 files</td><td>67 cases</td><td>67 pass</td><td>100% pass</td></tr>
+</table>
+
+<h2>附录 B: 关键依赖</h2>
+<table>
+  <tr><th>依赖</th><th>版本</th><th>用途</th></tr>
+  <tr><td>FastAPI</td><td>0.115.0</td><td>Web 框架</td></tr>
+  <tr><td>uvicorn</td><td>0.30.0</td><td>ASGI 服务器</td></tr>
+  <tr><td>httpx</td><td>0.27.0</td><td>HTTP 客户端</td></tr>
+  <tr><td>LanceDB</td><td>0.8.0</td><td>向量数据库</td></tr>
+  <tr><td>pydantic</td><td>2.8.0</td><td>数据验证</td></tr>
+  <tr><td>Vue 3</td><td>^3.4.0</td><td>前端框架</td></tr>
+  <tr><td>Pinia</td><td>^2.1.0</td><td>状态管理</td></tr>
+  <tr><td>Tailwind CSS</td><td>^3.4.0</td><td>CSS 框架</td></tr>
+</table>
+
+<hr>
+<p style="color:var(--text-dim); text-align:center; font-size:0.85rem;">
+  本报告基于代码静态分析生成，建议配合实际运行测试验证所有结论。
+</p>
+</section>
+
+</div>
+</body>
+</html>

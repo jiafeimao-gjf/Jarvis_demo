@@ -82,6 +82,18 @@ class VisionProcessor:
 
     def to_dict(self) -> dict:
         """导出状态"""
+        # check_health() is async — use cached status instead of calling it directly
         return {
-            "ollama_connected": self.ollama.check_health() if hasattr(self.ollama, 'check_health') else False
+            "ollama_connected": self._cached_health,
         }
+
+    def _cached_health(self) -> bool:
+        """Sync accessor for cached health status. Call update_health() first."""
+        return getattr(self, '_health_cache', False)
+
+    async def update_health(self):
+        """Update cached health status (call this from async context)."""
+        try:
+            self._health_cache = await self.ollama.check_health()
+        except Exception:
+            self._health_cache = False
