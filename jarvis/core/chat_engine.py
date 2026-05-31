@@ -48,7 +48,7 @@ class ChatEngine:
         self.router = AIRouter(self.ai_config)
         self.memory = memory_store
         self.current_conversation: Optional[Conversation] = None
-        self.work_folder: str = str(Path.cwd())
+        self.work_folder: str = str(Path.cwd() / "workspace")
 
         # 工具执行器
         self.task_executor = TaskExecutor(self.work_folder)
@@ -272,6 +272,10 @@ class ChatEngine:
                     logger.debug(f"[Chat] 执行工具: {tool_call.tool}.{tool_call.action}")
                     result = await self.task_executor.execute_step(step)
                     status = result.get("status") if isinstance(result, dict) else "success"
+                    err_detail = ""
+                    if isinstance(result, dict) and status == "error":
+                        err_detail = result.get("stderr") or result.get("message") or ""
+                        logger.warning(f"[Chat] 工具错误详情: {str(err_detail)[:300]}")
                     logger.info(f"[Chat] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
                     if isinstance(result, dict) and 'content' in result:
                         logger.debug(f"[Chat] 工具结果内容: {str(result['content'])[:100]}...")
