@@ -16,7 +16,7 @@ class OllamaConfig(BaseModel):
     vision_model: str = "qwen3.5:9b"
     stt_model: str = "sendmeaiohyeah/whisper-large-v2"
     t2i_model: str = "x/z-image-turbo"
-    timeout: float = 60.0
+    timeout: float = 120.0
     max_retries: int = 3
 
 
