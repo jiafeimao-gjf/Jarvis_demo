@@ -57,34 +57,9 @@ class OllamaAdapter(AIClient):
         max_tokens: int = 2048,
         system: Optional[str] = None,
     ) -> AIResponse:
-        """Generate text using /api/generate endpoint"""
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": stream,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            }
-        }
-        if system:
-            payload["system"] = system
-
-        try:
-            response = await self.client.post("/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            return AIResponse(
-                content=data.get("response", ""),
-                model=self.model,
-                provider="ollama",
-                done=data.get("done", True),
-                raw=data
-            )
-        except httpx.HTTPError as e:
-            logger.error(f"Ollama generate error: {e}")
-            raise ProviderNotAvailableError("ollama", str(e))
+        """Generate text — legacy, delegates to /v1/messages"""
+        messages = [{"role": "user", "content": prompt}]
+        return await self.chat(messages, stream, temperature, max_tokens)
 
     async def chat(
         self,
@@ -93,39 +68,46 @@ class OllamaAdapter(AIClient):
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> AIResponse:
-        """Chat completion using /api/chat endpoint"""
+        """Chat completion using Anthropic-compatible /v1/messages"""
         for attempt in range(self.max_retries):
             try:
                 payload = {
                     "model": self.model,
                     "messages": messages,
-                    "stream": stream,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                    }
+                    "max_tokens": max_tokens or 4096,
+                    "temperature": temperature,
+                    "stream": False,
                 }
 
-                response = await self.client.post("/api/chat", json=payload)
+                response = await self.client.post("/v1/messages", json=payload)
 
                 if response.status_code == 404:
                     if attempt == self.max_retries - 1:
                         raise ModelNotSupportedError(
-                            "ollama",
-                            f"Model {self.model} not found",
+                            "ollama", f"Model {self.model} not found",
                             {"model": self.model}
                         )
+                    await self._sleep(1)
                     continue
 
                 response.raise_for_status()
                 data = response.json()
 
+                # /v1/messages returns Anthropic format: {content: [{type:"text", text:"..."}]}
+                content = ""
+                content_blocks = data.get("content", [])
+                for block in content_blocks:
+                    if block.get("type") == "text":
+                        content = block.get("text", "")
+                        break
+
                 return AIResponse(
-                    content=data.get("message", {}).get("content", ""),
+                    content=content,
                     model=self.model,
                     provider="ollama",
-                    done=data.get("done", True),
-                    raw=data
+                    done=True,
+                    raw=data,
+                    content_blocks=content_blocks,
                 )
             except httpx.HTTPError as e:
                 logger.error(f"Ollama chat error (attempt {attempt + 1}/{self.max_retries}): {e}")
@@ -139,26 +121,28 @@ class OllamaAdapter(AIClient):
         self,
         messages: list[dict],
     ) -> AsyncIterator[str]:
-        """Stream chat completion tokens"""
+        """Stream chat via /v1/messages (SSE with Anthropic format)"""
         payload = {
             "model": self.model,
             "messages": messages,
-            "stream": True
+            "max_tokens": 4096,
+            "stream": True,
         }
 
         try:
-            async with self.client.stream("POST", "/api/chat", json=payload) as response:
+            async with self.client.stream(
+                "POST", "/v1/messages", json=payload
+            ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
-                    if line:
+                    if line.startswith("data: ") and line.strip() != "data: [DONE]":
                         try:
-                            data = json.loads(line)
-                            content = data.get("message", {}).get("content", "")
-                            if content:
-                                yield content
-                            if data.get("done"):
-                                break
-                        except json.JSONDecodeError:
+                            data = json.loads(line[6:])
+                            if data.get("type") == "content_block_delta":
+                                delta = data.get("delta", {})
+                                if "text" in delta:
+                                    yield delta["text"]
+                        except (json.JSONDecodeError, KeyError):
                             continue
         except httpx.HTTPError as e:
             logger.error(f"Ollama chat stream error: {e}")
@@ -237,36 +221,45 @@ class OllamaAdapter(AIClient):
         image_data: bytes,
         prompt: str,
     ) -> str:
-        """Analyze image using vision model"""
+        """Analyze image using /v1/messages (Anthropic vision format)"""
         import base64, time
 
         image_base64 = base64.b64encode(image_data).decode()
 
         payload = {
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": [image_base64]
-                }
-            ],
-            "stream": False
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": image_base64,
+                    }},
+                ],
+            }],
+            "max_tokens": 1024,
+            "stream": False,
         }
 
         logger.info(
             f"[Ollama] vision request: model={self.model}, "
-            f"image={len(image_data)} bytes (base64 {len(image_base64)} chars), "
-            f"payload_size={len(str(payload))}"
+            f"image={len(image_data)} bytes"
         )
 
         try:
             t0 = time.time()
-            response = await self.client.post("/api/chat", json=payload)
+            response = await self.client.post("/v1/messages", json=payload)
             response.raise_for_status()
             data = response.json()
 
-            content = data.get("message", {}).get("content", "")
+            content = ""
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    content = block.get("text", "")
+                    break
+
             elapsed = (time.time() - t0) * 1000
             logger.info(
                 f"[Ollama] vision response: status={response.status_code}, "
@@ -274,11 +267,7 @@ class OllamaAdapter(AIClient):
             )
             return content
         except httpx.HTTPError as e:
-            logger.error(
-                f"[Ollama] vision error: model={self.model}, "
-                f"status={e.response.status_code if hasattr(e, 'response') else 'N/A'}, "
-                f"detail={str(e)[:200]}"
-            )
+            logger.error(f"[Ollama] vision error: {e}")
             raise ProviderNotAvailableError("ollama", str(e))
 
     async def health_check(self) -> bool:

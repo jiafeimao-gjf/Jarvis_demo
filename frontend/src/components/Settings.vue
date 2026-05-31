@@ -112,58 +112,47 @@ async function saveConfig() {
   message.value = ''
 
   try {
-    // Save to localStorage (already done by watch, but explicit save for clarity)
     settingsStore.saveToStorage()
 
-    // Sync to backend config (runtime settings)
-    await fetch('/api/config?key=server.port&value=' + form.value.server_port, {
-      method: 'PUT'
-    })
+    const results = await Promise.allSettled([
+      // Runtime config
+      fetch(`/api/config?key=server.port&value=${form.value.server_port}`, { method: 'PUT' }),
+      fetch(`/api/config?key=ai.default_provider&value=${form.value.ai_default_provider}`, { method: 'PUT' }),
+      fetch(`/api/config?key=ai.default_model&value=${form.value.ai_default_model}`, { method: 'PUT' }),
+      fetch(`/api/config?key=ai.enable_fallback&value=${form.value.ai_enable_fallback}`, { method: 'PUT' }),
+      // Prompt & hardware → memory DB
+      fetch('/api/memory/settings/persona_prompt', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.persona_prompt)
+      }),
+      fetch('/api/memory/settings/abilities_prompt', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.abilities_prompt)
+      }),
+      fetch('/api/memory/settings/memory_prompt', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.memory_prompt)
+      }),
+      fetch('/api/memory/settings/tools_prompt', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.tools_prompt)
+      }),
+      fetch('/api/memory/settings/work_folder', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.work_folder)
+      }),
+      fetch('/api/memory/settings/hardware', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form.value.hardware)
+      }),
+    ])
 
-    await fetch('/api/config?key=ai.default_provider&value=' + form.value.ai_default_provider, {
-      method: 'PUT'
-    })
-
-    await fetch('/api/config?key=ai.default_model&value=' + form.value.ai_default_model, {
-      method: 'PUT'
-    })
-
-    await fetch('/api/config?key=ai.enable_fallback&value=' + form.value.ai_enable_fallback, {
-      method: 'PUT'
-    })
-
-    // Save prompt settings to memory DB
-    await fetch('/api/memory/settings/persona_prompt', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value.persona_prompt)
-    })
-
-    await fetch('/api/memory/settings/abilities_prompt', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value.abilities_prompt)
-    })
-
-    await fetch('/api/memory/settings/memory_prompt', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value.memory_prompt)
-    })
-
-    await fetch('/api/memory/settings/tools_prompt', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value.tools_prompt)
-    })
-
-    await fetch('/api/memory/settings/work_folder', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value.work_folder)
-    })
-
-    showMessage('配置已保存', 'success')
+    const failures = results.filter(r => r.status === 'rejected').length
+    if (failures > 0) {
+      showMessage(`已本地保存，${failures} 项后台同步失败`, 'error')
+    } else {
+      showMessage('配置已保存', 'success')
+    }
   } catch (e) {
     showMessage('保存配置失败', 'error')
   } finally {

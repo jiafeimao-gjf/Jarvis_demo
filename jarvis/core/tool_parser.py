@@ -87,9 +87,9 @@ class ToolCallParser:
             logger.warning(f"{tool_name} 的 params 参数类型无效")
             return None
 
-        # 提取 action（如果是标准格式）
+        # 提取 action — 保留在 params 中（FileOperationStrategy 需要从 params 读取）
         params = raw_params.copy()
-        action = params.pop("action", "") or call.get("action", "")
+        action = params.get("action", "") or call.get("action", "")
 
         return ToolCall(
             tool=tool_name,

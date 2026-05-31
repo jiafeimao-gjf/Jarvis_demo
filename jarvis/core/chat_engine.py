@@ -289,17 +289,16 @@ class ChatEngine:
                     logger.error(f"[Chat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果并添加到消息 - 使用 Anthropic tool_result 格式
-                result_message = ToolResultFormatter.format(
+                # 格式化结果 — Ollama 需要纯文本, 不能用 Anthropic tool_result 块
+                result_content = ToolResultFormatter.format_plain(
                     tool=tool_call.tool,
                     action=tool_call.action,
                     params=tool_call.params,
                     result=result,
-                    tool_use_id=tool_call.raw  # 暂用 raw 作为 id
                 )
-                self.current_conversation.add_message("tool_result", result_message["content"])
-                # 添加到 LLM 消息历史 - 使用正确的 tool_result 格式
-                messages.append({"role": "user", "content": result_message})
+                self.current_conversation.add_message("tool_result", result_content)
+                # 作为 user 消息追加 (Ollama 不支持 structured tool_result 格式)
+                messages.append({"role": "user", "content": result_content})
 
             # 检查后续响应是否也有工具调用
             has_tools = self.tool_parser.has_tool_calls(response_text)
@@ -460,16 +459,14 @@ class ChatEngine:
                     logger.error(f"[StreamChat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果并添加 - 使用 Anthropic tool_result 格式
-                result_message = ToolResultFormatter.format(
+                result_content = ToolResultFormatter.format_plain(
                     tool=tool_call.tool,
                     action=tool_call.action,
                     params=tool_call.params,
                     result=result,
-                    tool_use_id=tool_call.raw
                 )
-                self.current_conversation.add_message("tool_result", result_message["content"])
-                messages.append({"role": "user", "content": result_message})
+                self.current_conversation.add_message("tool_result", result_content)
+                messages.append({"role": "user", "content": result_content})
 
                 # Yield tool result event for frontend
                 yield json.dumps({
@@ -638,16 +635,14 @@ class ChatEngine:
                     logger.error(f"[StreamChatWithMsgs] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果并添加 - 使用 Anthropic tool_result 格式
-                result_message = ToolResultFormatter.format(
+                result_content = ToolResultFormatter.format_plain(
                     tool=tool_call.tool,
                     action=tool_call.action,
                     params=tool_call.params,
                     result=result,
-                    tool_use_id=tool_call.raw
                 )
-                self.current_conversation.add_message("tool_result", result_message["content"])
-                messages.append({"role": "user", "content": result_message})
+                self.current_conversation.add_message("tool_result", result_content)
+                messages.append({"role": "user", "content": result_content})
 
                 # Yield tool result event for frontend
                 yield json.dumps({

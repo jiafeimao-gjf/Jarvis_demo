@@ -37,6 +37,19 @@ class ToolResultFormatter:
     """格式化工具执行结果为 LLM 消息"""
 
     @staticmethod
+    def format_plain(tool: str, action: str, params: dict, result: Any) -> str:
+        """格式化为纯文本（Ollama 用）"""
+        output = result
+        status = "success"
+        if isinstance(result, dict):
+            status = result.get("status", "success")
+            output = result.get("result") or result.get("message") or result.get("content") or result
+        output_str = str(output) if not isinstance(output, str) else output
+        if status == "error":
+            return f"[工具错误] {tool}.{action}: {output_str[:500]}"
+        return f"[工具结果] {tool}.{action}: {output_str[:1000]}"
+
+    @staticmethod
     def format(tool: str, action: str, params: dict, result: Any, tool_use_id: str = "") -> dict:
         """格式化单个工具结果 - 返回 Anthropic tool_result 格式的字典"""
         status = "success"
