@@ -137,7 +137,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // Add message
-  function addMessage(role: Message['role'], content: string): Message | undefined {
+  function addMessage(role: Message['role'], content: string, image?: string): Message | undefined {
     if (!currentConversationId.value) {
       const conv = createConversation()
       if (!conv) return  // user_name not set
@@ -150,6 +150,7 @@ export const useChatStore = defineStore('chat', () => {
       id: crypto.randomUUID(),
       role,
       content,
+      image,
       timestamp: new Date()
     }
     conv.messages.push(msg)

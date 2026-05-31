@@ -42,12 +42,22 @@ const renderedContent = computed(() => {
     <!-- Chat bubble -->
     <div
       :class="[
-        'rounded-2xl px-4 py-3 relative',
+        'rounded-2xl px-4 py-3 relative overflow-hidden',
         isUser
           ? 'bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/30'
           : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
       ]"
     >
+      <!-- 图片预览：摄像头分析结果的视频帧 -->
+      <div v-if="message.image" class="mb-3 -mx-4 -mt-3">
+        <img
+          :src="message.image"
+          alt="分析画面"
+          class="w-full max-h-64 object-cover rounded-t-2xl border-b border-primary/20"
+          loading="lazy"
+        />
+        <div class="text-[10px] text-primary/40 px-4 mt-1">📸 分析画面</div>
+      </div>
       <!-- User message: plain text -->
       <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
       <!-- Assistant message: rendered markdown -->

@@ -14,7 +14,7 @@ const queueLength = ref(0)
 const captureError = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
 let captureTimer: ReturnType<typeof setInterval> | null = null
-let frameQueue: string[] = []
+let frameQueue: Array<{ apiData: string; displayUrl: string }> = []
 const MAX_QUEUE = 2
 
 function handleClose() {
@@ -48,15 +48,14 @@ function analyzeAndChat() {
     return
   }
 
-  // Enqueue frame (fixed-size: drop oldest if full)
+  // Enqueue frame + preview (drop oldest if full)
   if (frameQueue.length >= MAX_QUEUE) {
-    frameQueue.shift()  // drop oldest
+    frameQueue.shift()
   }
-  frameQueue.push(base64Data)
+  frameQueue.push({ apiData: base64Data, displayUrl: frameBase64 })
   queueLength.value = frameQueue.length
   captureError.value = ''
 
-  // Start processing if not already running
   if (!isProcessing.value) {
     processQueue()
   }
@@ -66,18 +65,24 @@ async function processQueue() {
   isProcessing.value = true
 
   while (frameQueue.length > 0) {
-    const frame = frameQueue[0]  // peek, don't pop yet
+    const item = frameQueue[0]
     isCapturing.value = true
 
     try {
-      const result = await api.analyzeCameraFrame(frame, '请描述这张图片中的内容')
+      const result = await api.analyzeCameraFrame(item.apiData, '请描述这张图片中的内容')
       if (result.analysis) {
-        chatStore.addMessage('assistant', `📷 [图片分析]\n\n${result.analysis}`)
+        chatStore.addMessage(
+          'assistant',
+          `📷 [图片分析]\n\n${result.analysis}`,
+          item.displayUrl
+        )
+      } else {
+        captureError.value = '分析返回空结果'
       }
-      frameQueue.shift()  // pop on success
+      frameQueue.shift()
     } catch (e) {
       captureError.value = `分析失败: ${(e as Error).message}`
-      frameQueue.shift()  // pop anyway to prevent stuck queue
+      frameQueue.shift()
     } finally {
       isCapturing.value = false
       queueLength.value = frameQueue.length
