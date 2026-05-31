@@ -381,10 +381,12 @@ class ChatEngine:
         messages.append({"role": "user", "content": user_input})
 
         # 5. 第一阶段：非流式调用以检测工具
+        import time as _t
+        _t0 = _t.time()
         logger.debug("[StreamChat] 调用 LLM (第一阶段)...")
         response = await self.router.chat(messages, model=model, stream=False)
         response_text = response.content
-        logger.info(f"[StreamChat] LLM 第一阶段响应 | len={len(response_text)}")
+        logger.info(f"[StreamChat] LLM 第一阶段响应 | len={len(response_text)} | 耗时={(_t.time()-_t0)*1000:.0f}ms")
 
         # 6. 检测并执行工具调用
         iteration_count = 0
@@ -519,8 +521,8 @@ class ChatEngine:
 
         # 10. 流式返回最终响应
         logger.info(f"[StreamChat] 开始流式返回 | response_len={len(final_response)}")
-        for token in final_response:
-            yield token
+        for chunk in self._chunk_text(final_response, 8):
+            yield chunk
         logger.info("[StreamChat] 流式返回完成")
 
     async def stream_chat_with_messages(
@@ -710,8 +712,8 @@ class ChatEngine:
 
         # 10. 流式返回最终响应
         logger.info(f"[StreamChatWithMsgs] 开始流式返回 | response_len={len(final_response)}")
-        for token in final_response:
-            yield token
+        for chunk in self._chunk_text(final_response, 8):
+            yield chunk
         logger.info("[StreamChatWithMsgs] 流式返回完成")
 
     @staticmethod

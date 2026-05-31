@@ -66,6 +66,8 @@ async def list_models(force_refresh: bool = False):
 async def chat_stream(request: ChatRequest):
     """流式对话响应"""
     async def event_generator():
+        import time as _time
+        t_start = _time.time()
         try:
             # 发送正在思考状态
             yield {
@@ -77,6 +79,7 @@ async def chat_stream(request: ChatRequest):
             if request.messages is not None:
                 # 使用传入的消息历史
                 full_response = ""
+                first_token = True
                 async for content in mediator.chat_engine.stream_chat_with_messages(
                     request.message,
                     request.messages,
@@ -84,6 +87,9 @@ async def chat_stream(request: ChatRequest):
                     request.conversation_id,
                     request.user_id
                 ):
+                    if first_token:
+                        logger.info(f"[SSE] 首个数据到达, 耗时={(_time.time()-t_start)*1000:.0f}ms")
+                        first_token = False
                     # JSON events: tool_call, tool_result, thinking, thinking_start, thinking_end
                     if content.startswith('{'):
                         try:
