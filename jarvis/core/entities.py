@@ -51,6 +51,7 @@ class Message:
     message_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     role: str = "user"  # user | assistant | system
     content: str = ""
+    image: Optional[str] = None  # Base64 image data (camera frames)
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: dict = field(default_factory=dict)
 
