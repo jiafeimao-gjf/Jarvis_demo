@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
@@ -28,6 +28,31 @@ const renderedContent = computed(() => {
   const raw = marked.parse(props.message.content) as string
   return DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR })
 })
+
+// ── Image fullscreen viewer ──────────────────────────────────────
+const showViewer = ref(false)
+const viewerZoom = ref(1)
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 4
+
+function openViewer() {
+  viewerZoom.value = 1
+  showViewer.value = true
+  document.body.style.overflow = 'hidden'
+}
+function closeViewer() {
+  showViewer.value = false
+  document.body.style.overflow = ''
+}
+function zoomIn()  { viewerZoom.value = Math.min(viewerZoom.value * 1.5, MAX_ZOOM) }
+function zoomOut() { viewerZoom.value = Math.max(viewerZoom.value / 1.5, MIN_ZOOM) }
+function zoomReset() { viewerZoom.value = 1 }
+function onWheel(e: WheelEvent) {
+  e.preventDefault()
+  e.deltaY < 0 ? zoomIn() : zoomOut()
+}
+
+onUnmounted(() => { document.body.style.overflow = '' })
 </script>
 
 <template>
@@ -53,11 +78,39 @@ const renderedContent = computed(() => {
         <img
           :src="message.image"
           alt="分析画面"
-          class="w-full max-h-80 object-contain rounded-t-2xl border-b border-primary/20 bg-black/50"
+          class="w-full max-h-80 object-contain rounded-t-2xl border-b border-primary/20 bg-black/50 cursor-zoom-in hover:opacity-90 transition-opacity"
           loading="lazy"
+          @click="openViewer"
         />
-        <div class="text-[10px] text-primary/40 px-4 mt-1">📸 分析画面</div>
+        <div class="text-[10px] text-primary/40 px-4 mt-1">📸 分析画面 · 点击放大</div>
       </div>
+
+      <!-- Fullscreen image viewer -->
+      <Teleport to="body">
+        <div
+          v-if="showViewer"
+          class="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center"
+          @click.self="closeViewer"
+          @wheel="onWheel"
+        >
+          <!-- Toolbar -->
+          <div class="absolute top-4 right-4 flex items-center gap-2 z-10">
+            <button class="w-9 h-9 rounded-full bg-white/10 text-white/80 hover:bg-white/20 flex items-center justify-center text-sm" @click="zoomOut" title="缩小">−</button>
+            <span class="text-white/60 text-xs w-12 text-center">{{ Math.round(viewerZoom * 100) }}%</span>
+            <button class="w-9 h-9 rounded-full bg-white/10 text-white/80 hover:bg-white/20 flex items-center justify-center text-sm" @click="zoomIn" title="放大">+</button>
+            <button class="w-9 h-9 rounded-full bg-white/10 text-white/80 hover:bg-white/20 flex items-center justify-center text-sm" @click="zoomReset" title="重置">⟲</button>
+            <button class="w-9 h-9 rounded-full bg-white/10 text-white/80 hover:bg-white/20 flex items-center justify-center ml-4" @click="closeViewer" title="关闭">✕</button>
+          </div>
+          <!-- Image -->
+          <img
+            :src="message.image"
+            alt="分析画面"
+            class="max-w-[95vw] max-h-[90vh] object-contain transition-transform duration-200 select-none"
+            :style="{ transform: `scale(${viewerZoom})` }"
+            draggable="false"
+          />
+        </div>
+      </Teleport>
       <!-- User message: plain text -->
       <p v-if="isUser" class="text-sm leading-relaxed whitespace-pre-wrap text-foreground">{{ message.content }}</p>
       <!-- Assistant message: rendered markdown -->
