@@ -51,7 +51,7 @@ cd frontend && npm run build
 | Real-time | WebSocket + SSE (Server-Sent Events) |
 | AI provider | Ollama (primary), OpenAI/Anthropic adapters config-driven |
 | AI orchestration | AIRouter — model registry → adapter → API |
-| Voice STT | Local openai-whisper (base model) with ffmpeg decode |
+| Voice STT | Local openai-whisper (base) with ffmpeg WebM→WAV decode |
 | Voice TTS | Browser SpeechSynthesis |
 | Vision analysis | Ollama qwen3.5:9b via /v1/messages (Anthropic-compatible) |
 | Multimodal routing | SubModelProcessor facade → sub-model → text → chat |
