@@ -9,9 +9,13 @@ const chatStore = useChatStore()
 const api = useApi()
 
 const isCapturing = ref(false)
+const isProcessing = ref(false)
+const queueLength = ref(0)
 const captureError = ref('')
 const videoRef = ref<HTMLVideoElement | null>(null)
 let captureTimer: ReturnType<typeof setInterval> | null = null
+let frameQueue: string[] = []
+const MAX_QUEUE = 2
 
 function handleClose() {
   stopCapture()
@@ -31,42 +35,61 @@ function captureFrame(): string | null {
   return canvas.toDataURL('image/jpeg', 0.7)
 }
 
-async function analyzeAndChat() {
-  if (isCapturing.value || chatStore.isLoading) return
-  isCapturing.value = true
-
-  try {
-    const frameBase64 = captureFrame()
-    if (!frameBase64) {
-      captureError.value = '无法获取摄像头画面'
-      isCapturing.value = false
-      return
-    }
-    // Remove data:image/jpeg;base64, prefix
-    const base64Data = frameBase64.split(',')[1]
-    if (!base64Data) {
-      captureError.value = '图像数据无效'
-      isCapturing.value = false
-      return
-    }
-
-    captureError.value = ''
-    const result = await api.analyzeCameraFrame(base64Data, '请描述这张图片中的内容')
-
-    if (result.analysis) {
-      chatStore.addMessage('user', `📷 [图片分析] ${result.analysis}`)
-    }
-  } catch (e) {
-    captureError.value = `分析失败: ${(e as Error).message}`
-  } finally {
-    isCapturing.value = false
+function analyzeAndChat() {
+  // Capture frame and enqueue — non-blocking
+  const frameBase64 = captureFrame()
+  if (!frameBase64) {
+    captureError.value = '无法获取摄像头画面'
+    return
   }
+  const base64Data = frameBase64.split(',')[1]
+  if (!base64Data) {
+    captureError.value = '图像数据无效'
+    return
+  }
+
+  // Enqueue frame (fixed-size: drop oldest if full)
+  if (frameQueue.length >= MAX_QUEUE) {
+    frameQueue.shift()  // drop oldest
+  }
+  frameQueue.push(base64Data)
+  queueLength.value = frameQueue.length
+  captureError.value = ''
+
+  // Start processing if not already running
+  if (!isProcessing.value) {
+    processQueue()
+  }
+}
+
+async function processQueue() {
+  isProcessing.value = true
+
+  while (frameQueue.length > 0) {
+    const frame = frameQueue[0]  // peek, don't pop yet
+    isCapturing.value = true
+
+    try {
+      const result = await api.analyzeCameraFrame(frame, '请描述这张图片中的内容')
+      if (result.analysis) {
+        chatStore.addMessage('assistant', `📷 [图片分析]\n\n${result.analysis}`)
+      }
+      frameQueue.shift()  // pop on success
+    } catch (e) {
+      captureError.value = `分析失败: ${(e as Error).message}`
+      frameQueue.shift()  // pop anyway to prevent stuck queue
+    } finally {
+      isCapturing.value = false
+      queueLength.value = frameQueue.length
+    }
+  }
+
+  isProcessing.value = false
 }
 
 function startCapture() {
   if (captureTimer) return
-  // Capture and analyze every 5 seconds
-  captureTimer = setInterval(analyzeAndChat, 5000)
+  captureTimer = setInterval(analyzeAndChat, 30000)
 }
 
 function stopCapture() {
@@ -74,7 +97,10 @@ function stopCapture() {
     clearInterval(captureTimer)
     captureTimer = null
   }
+  frameQueue = []
+  queueLength.value = 0
   isCapturing.value = false
+  isProcessing.value = false
 }
 
 // Start/stop capture when camera state changes
@@ -135,7 +161,10 @@ onUnmounted(() => stopCapture())
           </button>
         </div>
         <p v-if="captureError" class="text-xs text-red-400">{{ captureError }}</p>
-        <p class="text-xs text-white/50">每 5 秒自动分析 → 对话</p>
+        <p class="text-xs text-white/50">
+          每 30 秒自动分析 → 对话
+          <span v-if="queueLength > 0" class="text-primary ml-1">(队列: {{ queueLength }})</span>
+        </p>
       </div>
     </div>
   </Transition>
