@@ -95,10 +95,13 @@ async function handleSend() {
         }
       },
       () => {
-        // Done
+        // Done — save thinking to the assistant message
+        if (currentThinking.value && chatStore.messages[msgIndex]) {
+          chatStore.messages[msgIndex].thinking = currentThinking.value
+        }
         isLoading.value = false
         thinkingStatus.value = 'done'
-        // Final scroll to bottom
+        showThinking.value = false
         nextTick(() => scrollToBottom(false))
       },
       (status: string) => {
@@ -115,9 +118,12 @@ async function handleSend() {
         }
       },
       (chunk: string) => {
-        // Thinking stream
+        // Thinking stream — write to current message for inline display
         if (!showThinking.value) showThinking.value = true
         currentThinking.value += chunk
+        if (chatStore.messages[msgIndex]) {
+          chatStore.messages[msgIndex].thinking = currentThinking.value
+        }
       }
     )
   } catch (e) {
@@ -214,20 +220,6 @@ onMounted(() => {
         :key="msg.id"
         :message="msg"
       />
-
-      <!-- Thinking 折叠显示 -->
-      <div v-if="showThinking && (currentThinking || isLoading)" class="px-4 py-2">
-        <button
-          class="flex items-center gap-2 text-xs text-primary/50 hover:text-primary/70 transition-colors mb-1"
-          @click="showThinking = !showThinking"
-        >
-          <span>{{ showThinking ? '▼' : '▶' }} 思考过程</span>
-          <span v-if="isLoading && currentThinking" class="text-primary/30">...</span>
-        </button>
-        <div v-if="showThinking && currentThinking" class="text-xs text-primary/40 bg-black/20 rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
-          {{ currentThinking }}
-        </div>
-      </div>
 
       <div v-if="isLoading && thinkingStatus !== 'done'" class="flex items-center gap-2">
         <div class="typing-indicator-cyber">
