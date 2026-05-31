@@ -133,6 +133,51 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) continue
+
+      // Convert to base64
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const dataUrl = reader.result as string
+        const base64 = dataUrl.split(',')[1]
+        if (!base64) return
+
+        // Add placeholder
+        const placeholderIdx = chatStore.messages.length
+        chatStore.addMessage('assistant', '📷 正在分析图片...', dataUrl)
+
+        try {
+          const result = await api.analyzeCameraFrame(base64)
+          if (result.analysis) {
+            // Replace placeholder with analysis result
+            if (chatStore.messages[placeholderIdx]) {
+              chatStore.messages[placeholderIdx].content = `📷 [图片分析]\n\n${result.analysis}`
+            }
+          } else {
+            if (chatStore.messages[placeholderIdx]) {
+              chatStore.messages[placeholderIdx].content = '📷 图片分析失败'
+            }
+          }
+        } catch {
+          if (chatStore.messages[placeholderIdx]) {
+            chatStore.messages[placeholderIdx].content = '📷 图片分析失败'
+          }
+        }
+      }
+      reader.readAsDataURL(file)
+      return
+    }
+  }
+}
+
 watch(
   () => chatStore.messages.length,
   () => {
@@ -196,24 +241,13 @@ onMounted(() => {
       <div class="flex gap-3 relative z-10">
         <textarea
           v-model="inputValue"
-          placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
+          placeholder="输入指令回车发送，Shift+Enter 换行，可粘贴图片"
           class="flex-1 input-cyber rounded-2xl px-4 py-3 text-sm outline-none glow-border resize-none"
           :disabled="isLoading"
           rows="1"
           @keydown="handleKeydown"
+          @paste="handlePaste"
         ></textarea>
-        <button
-          class="btn btn-cyber bg-primary/20 border border-primary/50 text-primary hover:bg-primary/30 disabled:opacity-30 disabled:cursor-not-allowed"
-          :disabled="isLoading || !inputValue.trim()"
-          @click="handleSend"
-        >
-          <svg v-if="!isLoading" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-          </svg>
-          <svg v-else class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-          </svg>
-        </button>
       </div>
     </div>
   </div>
