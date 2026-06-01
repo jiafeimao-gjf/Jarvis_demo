@@ -39,7 +39,7 @@ export function useApi() {
     request: ChatRequest,
     onToken: (token: string) => void,
     onDone?: () => void,
-    onStatus?: (status: string) => void,
+    onStatus?: (status: string | Record<string, unknown>) => void,
     onThinking?: (chunk: string) => void,
     signal?: AbortSignal
   ): Promise<void> {
@@ -84,11 +84,22 @@ export function useApi() {
                 } else if (data.type === 'status' && data.content) {
                   onStatus?.(data.content)
                 } else if (data.type === 'tool_call') {
-                  // Handle tool call events from backend
-                  onStatus?.(`tool_call:${data.tool}:${data.action}`)
+                  // Pass full tool call data to frontend for rich display
+                  onStatus?.({
+                    type: 'tool_call',
+                    tool: data.tool,
+                    action: data.action,
+                    params: data.params || {},
+                  })
                 } else if (data.type === 'tool_result') {
-                  // Handle tool result events from backend
-                  onStatus?.(`tool_result:${data.tool}:${data.action}:${data.status}`)
+                  // Pass full tool result data for rich display
+                  onStatus?.({
+                    type: 'tool_result',
+                    tool: data.tool,
+                    action: data.action,
+                    status: data.status,
+                    result: data.result,
+                  })
                 } else if (data.type === 'thinking') {
                   onThinking?.(data.content)
                 } else if (data.type === 'thinking_start') {

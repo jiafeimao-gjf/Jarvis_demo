@@ -107,17 +107,36 @@ async function handleSend() {
         showThinking.value = false
         nextTick(() => scrollToBottom(false))
       },
-      (status: string) => {
+      (status: string | Record<string, unknown>) => {
         // Handle status updates from server
-        if (status === 'thinking') {
-          thinkingStatus.value = 'thinking'
-        } else if (status.startsWith('tool_call:')) {
-          const parts = status.split(':')
-          chatStore.addMessage('system', `🔧 正在执行工具: ${parts[1]}.${parts[2]}`)
-        } else if (status.startsWith('tool_result:')) {
-          const parts = status.split(':')
-          const icon = parts[3] === 'success' ? '✅' : '❌'
-          chatStore.addMessage('system', `${icon} 工具完成: ${parts[1]}.${parts[2]}`)
+        if (typeof status === 'string') {
+          if (status === 'thinking') {
+            thinkingStatus.value = 'thinking'
+          } else if (status.startsWith('tool_iter_')) {
+            // Tool iteration progress — ignore string, handled by tool events
+          } else if (status === 'tool_detected') {
+            // Tool detected during streaming — keep thinking indicator
+          }
+        } else {
+          // Structured tool event from SSE
+          if (status.type === 'tool_call') {
+            const tool = status.tool as string
+            const action = status.action as string
+            const params = status.params as Record<string, unknown> || {}
+            chatStore.addMessage('tool', JSON.stringify({
+              tool, action, params
+            }))
+          } else if (status.type === 'tool_result') {
+            const tool = status.tool as string
+            const action = status.action as string
+            const resultStatus = (status.status as string) || 'success'
+            const result = status.result as Record<string, unknown> || {}
+            // Format result content for display
+            const detail = result.stdout || result.content || result.message
+              || result.stderr || JSON.stringify(result)
+            const prefix = resultStatus === 'success' ? '[工具结果]' : '[工具错误]'
+            chatStore.addMessage('tool_result', `${prefix} ${tool}.${action}: ${detail}`)
+          }
         }
       },
       (chunk: string) => {

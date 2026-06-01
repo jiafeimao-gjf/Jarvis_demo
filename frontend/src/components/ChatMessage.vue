@@ -98,7 +98,7 @@ onUnmounted(() => { document.body.style.overflow = '' })
         isUser
           ? 'bg-gradient-to-br from-primary/30 to-primary/10 border border-primary/30'
           : isTool || isToolResult
-            ? 'bg-black/20 border border-primary/10 max-w-[85%]'
+            ? 'bg-muted border border-border max-w-[85%]'
             : 'bg-gradient-to-br from-secondary/80 to-secondary/40 border border-primary/20'
       ]"
     >
@@ -149,18 +149,18 @@ onUnmounted(() => { document.body.style.overflow = '' })
       </details>
       <!-- Tool call card -->
       <div v-if="isTool && toolInfo" class="flex items-start gap-2 text-xs">
-        <span class="text-primary/60 mt-0.5">🔧</span>
+        <span class="text-foreground/50 mt-0.5">🔧</span>
         <div>
-          <span class="text-primary/80 font-medium">{{ toolInfo.tool }}.{{ toolInfo.action }}</span>
-          <pre class="text-primary/40 mt-1 text-[11px] whitespace-pre-wrap">{{ JSON.stringify(toolInfo.params, null, 2) }}</pre>
+          <span class="text-foreground/80 font-medium">{{ toolInfo.tool }}.{{ toolInfo.action }}</span>
+          <pre class="text-muted-foreground mt-1 text-[11px] whitespace-pre-wrap">{{ JSON.stringify(toolInfo.params, null, 2) }}</pre>
         </div>
       </div>
       <!-- Tool result card -->
       <div v-else-if="isToolResult" class="flex items-start gap-2 text-xs">
         <span class="mt-0.5">{{ toolResultInfo.status === 'success' ? '✅' : toolResultInfo.status === 'error' ? '❌' : 'ℹ️' }}</span>
         <div>
-          <span :class="toolResultInfo.status === 'success' ? 'text-green-400' : 'text-red-400'" class="font-medium">{{ toolResultInfo.tool }}</span>
-          <pre class="text-primary/40 mt-1 text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">{{ toolResultInfo.detail }}</pre>
+          <span :class="toolResultInfo.status === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'" class="font-medium">{{ toolResultInfo.tool }}</span>
+          <pre class="text-muted-foreground mt-1 text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">{{ toolResultInfo.detail }}</pre>
         </div>
       </div>
       <!-- User message: plain text -->
@@ -173,7 +173,7 @@ onUnmounted(() => { document.body.style.overflow = '' })
       v-if="!isTool && !isToolResult"
       :class="[
         'text-[10px] mt-1 tracking-wider',
-        isUser ? 'text-primary/60 text-right' : 'text-primary/40 text-left'
+        isUser ? 'text-muted-foreground/60 text-right' : 'text-muted-foreground/50 text-left'
       ]"
     >
       {{ formatTime(message.timestamp) }}
@@ -191,25 +191,29 @@ onUnmounted(() => { document.body.style.overflow = '' })
 <style scoped>
 .markdown-content {
   word-break: break-word;
+  color: hsl(var(--foreground));
 }
 
+/* code blocks — use theme-aware muted bg, works in light & dark */
 .markdown-content :deep(pre) {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid hsl(var(--primary) / 0.2);
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
   border-radius: 0.5rem;
   padding: 0.75rem;
   margin: 0.5rem 0;
   overflow-x: auto;
   font-family: ui-monospace, monospace;
   font-size: 0.8em;
+  color: hsl(var(--foreground));
 }
 
 .markdown-content :deep(code) {
   font-family: ui-monospace, monospace;
   font-size: 0.875em;
-  background: rgba(0, 0, 0, 0.2);
+  background: hsl(var(--muted));
   padding: 0.15em 0.4em;
   border-radius: 0.25rem;
+  color: hsl(var(--foreground));
 }
 
 .markdown-content :deep(pre code) {
@@ -235,12 +239,16 @@ onUnmounted(() => { document.body.style.overflow = '' })
   color: hsl(var(--primary));
   text-decoration: underline;
 }
+/* darker link color in light mode for readability */
+.light .markdown-content :deep(a) {
+  color: hsl(189, 80%, 30%);
+}
 
 .markdown-content :deep(blockquote) {
   border-left: 3px solid hsl(var(--primary) / 0.5);
   padding-left: 0.75rem;
   margin: 0.5rem 0;
-  opacity: 0.8;
+  color: hsl(var(--muted-foreground));
 }
 
 .markdown-content :deep(table) {
@@ -256,6 +264,20 @@ onUnmounted(() => { document.body.style.overflow = '' })
 }
 
 .markdown-content :deep(th) {
-  background: hsl(var(--primary) / 0.1);
+  background: hsl(var(--muted));
+}
+
+.markdown-content :deep(hr) {
+  border-color: hsl(var(--border));
+  margin: 0.75rem 0;
+}
+
+.markdown-content :deep(h1),
+.markdown-content :deep(h2),
+.markdown-content :deep(h3),
+.markdown-content :deep(h4) {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  margin: 0.75rem 0 0.5rem;
 }
 </style>
