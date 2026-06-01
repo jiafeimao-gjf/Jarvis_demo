@@ -40,14 +40,16 @@ export function useApi() {
     onToken: (token: string) => void,
     onDone?: () => void,
     onStatus?: (status: string) => void,
-    onThinking?: (chunk: string) => void
+    onThinking?: (chunk: string) => void,
+    signal?: AbortSignal
   ): Promise<void> {
     error.value = null
     try {
       const res = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request)
+        body: JSON.stringify(request),
+        signal
       })
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`)

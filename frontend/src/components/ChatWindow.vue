@@ -10,6 +10,7 @@ const settingsStore = useSettingsStore()
 const api = useApi()
 const inputValue = ref('')
 const isLoading = ref(false)
+let abortController: AbortController | null = null
 const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done'
 const currentResponse = ref('')
 const currentThinking = ref('')
@@ -57,6 +58,7 @@ async function handleSend() {
   currentResponse.value = ''
   currentThinking.value = ''
   showThinking.value = false
+  abortController = new AbortController()
 
   try {
     // Add empty assistant message that we'll update
@@ -124,12 +126,28 @@ async function handleSend() {
         if (chatStore.messages[msgIndex]) {
           chatStore.messages[msgIndex].thinking = currentThinking.value
         }
-      }
+      },
+      abortController.signal
     )
   } catch (e) {
-    chatStore.addMessage('assistant', `抱歉，发生错误：${(e as Error).message}`)
+    if ((e as Error).name === 'AbortError') {
+      // User stopped — add placeholder for what we got so far
+      if (currentResponse.value && chatStore.messages[msgIndex]) {
+        chatStore.messages[msgIndex].content = currentResponse.value + '\n\n*[已停止]*'
+      }
+    } else {
+      chatStore.addMessage('assistant', `抱歉，发生错误：${(e as Error).message}`)
+    }
     isLoading.value = false
     thinkingStatus.value = 'done'
+    abortController = null
+  }
+}
+
+function handleStop() {
+  if (abortController) {
+    abortController.abort()
+    abortController = null
   }
 }
 
@@ -222,6 +240,10 @@ onMounted(() => {
       />
 
       <div v-if="isLoading && thinkingStatus !== 'done'" class="flex items-center gap-2">
+        <button
+          class="px-3 py-1 text-xs rounded-full bg-red-500/20 text-red-400 border border-red-500/50 hover:bg-red-500/30 transition-colors"
+          @click="handleStop"
+        >停止</button>
         <div class="typing-indicator-cyber">
           <span></span>
           <span></span>
