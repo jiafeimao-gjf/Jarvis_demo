@@ -95,7 +95,6 @@ export function useSpeechRecognition() {
   }
 
   let _audioStream: MediaStream | null = null
-  let _resolveCapture: ((v: string | null) => void) | null = null
 
   async function startCapture(): Promise<boolean> {
     audioChunks = []
@@ -116,7 +115,6 @@ export function useSpeechRecognition() {
 
   function stopCapture(): Promise<string | null> {
     return new Promise((resolve) => {
-      _resolveCapture = resolve
       if (mediaRecorder?.state === 'recording') {
         mediaRecorder.onstop = async () => {
           const blob = new Blob(audioChunks, { type: 'audio/webm' })

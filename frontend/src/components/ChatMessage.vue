@@ -142,8 +142,8 @@ onUnmounted(() => { document.body.style.overflow = '' })
       </Teleport>
       <!-- Thinking (collapsible) — not for tool messages -->
       <details v-if="!isUser && !isTool && !isToolResult && message.thinking" class="mb-2 text-xs">
-        <summary class="text-primary/40 cursor-pointer hover:text-primary/60 transition-colors select-none">思考过程</summary>
-        <div class="mt-1 text-primary/30 bg-black/20 rounded-lg p-2 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
+        <summary class="text-muted-foreground/60 cursor-pointer hover:text-muted-foreground transition-colors select-none">思考过程</summary>
+        <div class="mt-1 text-foreground/55 bg-muted rounded-lg p-2 max-h-32 overflow-y-auto whitespace-pre-wrap font-mono leading-relaxed">
           {{ message.thinking }}
         </div>
       </details>

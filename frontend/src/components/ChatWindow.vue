@@ -59,11 +59,12 @@ async function handleSend() {
   currentThinking.value = ''
   showThinking.value = false
   abortController = new AbortController()
+  let msgIndex = -1
 
   try {
     // Add empty assistant message that we'll update
     chatStore.addMessage('assistant', '')
-    const msgIndex = chatStore.messages.length - 1
+    msgIndex = chatStore.messages.length - 1
 
     // Use streaming API with current conversation context
     const messagesToSend = chatStore.messages.map(m => ({
@@ -249,7 +250,7 @@ onMounted(() => {
           <span></span>
           <span></span>
         </div>
-        <span class="text-sm text-primary/70">{{ statusText[thinkingStatus as keyof typeof statusText] }}</span>
+        <span class="text-sm text-foreground/60">{{ statusText[thinkingStatus as keyof typeof statusText] }}</span>
       </div>
     </div>
 
