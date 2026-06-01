@@ -240,11 +240,13 @@ class FileOperationStrategy(TaskStrategy):
         self.work_folder = work_folder or str(Path.cwd())
 
     def _resolve_path(self, path: str) -> Path:
-        """解析文件路径，支持相对路径和绝对路径，防止路径穿越"""
+        """解析文件路径，先相对于 work_folder 解析，防止路径穿越"""
         work = Path(self.work_folder).resolve()
-        p = Path(path).resolve()
+        # 先拼到 work_folder 再 resolve，这样 bare filename、./xxx
+        # 都会被正确解析到 work_folder 下，不会误判为路径穿越
+        p = (work / path).resolve()
 
-        # 路径穿越检测：确保解析后的路径在 work_folder 内
+        # 路径穿越检测：确保 normalize 后的路径在 work_folder 内
         try:
             p.relative_to(work)
         except ValueError:
