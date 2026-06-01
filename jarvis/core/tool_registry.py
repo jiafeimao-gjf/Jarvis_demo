@@ -42,11 +42,11 @@ class ToolRegistry:
         # File Tool
         self.register(ToolDefinition(
             name="file",
-            description="文件读写编辑删除等操作",
+            description="文件读写编辑删除等操作。所有路径相对于工作目录，bare filename 自动解析到工作目录下。",
             category="文件操作",
             parameters={
                 "action": ToolParam("action", "操作类型: read/write/edit/delete/list/mkdir/exists", required=True, enum=["read", "write", "edit", "delete", "list", "mkdir", "exists"]),
-                "path": ToolParam("path", "文件路径", required=True),
+                "path": ToolParam("path", "文件路径（相对于工作目录）", required=True),
                 "content": ToolParam("content", "文件内容（write/edit时使用）"),
                 "old_content": ToolParam("old_content", "要修改的旧内容（edit时使用）"),
                 "new_content": ToolParam("new_content", "新内容（edit时使用）"),
@@ -56,12 +56,12 @@ class ToolRegistry:
         # Bash Tool
         self.register(ToolDefinition(
             name="bash",
-            description="执行 Linux/Mac 系统命令",
+            description="执行 Linux/Mac 系统命令。默认在工作目录下执行，可通过 cwd 参数指定其他目录。高危命令会被拦截。",
             category="系统命令",
             parameters={
                 "command": ToolParam("command", "要执行的命令", required=True),
-                "timeout": ToolParam("timeout", "超时时间（秒）", type="number", default=30),
-                "cwd": ToolParam("cwd", "工作目录"),
+                "timeout": ToolParam("timeout", "超时时间（秒），默认30", type="number", default=30),
+                "cwd": ToolParam("cwd", "工作目录（默认使用系统工作目录）"),
             }
         ))
 

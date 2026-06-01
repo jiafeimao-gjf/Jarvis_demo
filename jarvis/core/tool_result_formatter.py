@@ -38,15 +38,37 @@ class ToolResultFormatter:
 
     @staticmethod
     def format_plain(tool: str, action: str, params: dict, result: Any) -> str:
-        """格式化为纯文本（Ollama 用）"""
+        """格式化为纯文本，提取有意义的错误信息回传给 LLM 推理"""
         output = result
         status = "success"
         if isinstance(result, dict):
             status = result.get("status", "success")
-            output = result.get("result") or result.get("message") or result.get("content") or result
+            if status == "error":
+                # 提取结构化错误详情，帮助 LLM 理解并修正
+                parts = []
+                if result.get("stderr"):
+                    parts.append(f"stderr: {str(result['stderr'])[:800]}")
+                if result.get("stdout"):
+                    parts.append(f"stdout: {str(result['stdout'])[:200]}")
+                if result.get("message"):
+                    parts.append(f"message: {str(result['message'])[:300]}")
+                if result.get("returncode") is not None:
+                    parts.append(f"returncode: {result['returncode']}")
+                if result.get("command"):
+                    parts.append(f"command: {result['command']}")
+                if not parts:
+                    parts.append(str(result)[:500])
+                return f"[工具错误] {tool}.{action}:\n" + "\n".join(parts)
+            else:
+                # 成功时提取主要内容
+                output = (
+                    result.get("content")
+                    or result.get("stdout")
+                    or result.get("result")
+                    or result.get("message")
+                    or result
+                )
         output_str = str(output) if not isinstance(output, str) else output
-        if status == "error":
-            return f"[工具错误] {tool}.{action}: {output_str[:500]}"
         return f"[工具结果] {tool}.{action}: {output_str[:1000]}"
 
     @staticmethod
