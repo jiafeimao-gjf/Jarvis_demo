@@ -214,14 +214,20 @@ Primary: **Ollama** (local). OpenAI/Anthropic adapters exist but are not in fall
 - **Configuration**: `AI__OLLAMA__*` env vars, `.env.example` reference
 - **Adding a model**: add to `MODELS` in `models.py`, register adapter in `chat_engine.py`
 
+## LLM Streaming Flow
+
+**Phase 1 (流式)**: `chat_stream_full()` 解析 Ollama `/v1/messages` SSE 事件 → thinking/text 实时流式输出到前端，同时检测 `tool_use` block。无工具时零冗余（不重复输出），有工具时 Phase 1 文本保留。
+
+**Phase 2 (按需)**: 如有 tool_use → 执行工具 → 再次调 LLM (stream=False) → 仅流式输出增量文本。
+
+关键文件: `ollama.py:chat_stream_full()` → `router.py:chat_stream_full()` → `chat_engine.py:stream_chat_with_messages()`
+
 ## Tool Call Flow
 
-1. LLM returns tool calls via `/v1/messages` response (`tool_use` content blocks)
-2. `_extract_tool_calls_from_blocks()` or `ToolCallParser.parse()` extracts tools
-3. `ChatEngine` iterates (max 5), executes via `TaskExecutor`
-4. Results formatted as **plain text** (`[工具结果] file.read: ...`)
-5. Fed back to LLM for next reasoning cycle
-6. Frontend shows tool status via SSE events
+1. LLM 流式输出中检测 `content_block_start{type:"tool_use"}` → 收集参数
+2. `ChatEngine` 迭代执行工具 (max 5), 调用 `TaskExecutor`
+3. 结果格式化为 **纯文本** (`[工具结果] file.read: ...`) 回注 LLM
+4. 前端通过 SSE 事件显示工具状态 (tool_call/tool_result)
 
 ## Thinking (Reasoning)
 

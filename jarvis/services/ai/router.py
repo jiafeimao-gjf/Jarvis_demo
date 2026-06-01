@@ -74,6 +74,17 @@ class AIRouter:
         async for token in client.chat_stream(messages):
             yield token
 
+    async def chat_stream_full(
+        self, messages: list[dict], model: Optional[str] = None,
+        provider: Optional[str] = None, **kwargs
+    ) -> AsyncIterator[dict]:
+        """Stream chat with structured events for tool-use detection."""
+        model_id = model or self.config.default_model
+        prov = provider or self.config.default_provider
+        client = self._get_client(prov, model_id)
+        async for event in client.chat_stream_full(messages):
+            yield event
+
     async def generate(
         self, prompt: str, model: Optional[str] = None,
         system: Optional[str] = None, **kwargs

@@ -156,6 +156,117 @@ class OllamaAdapter(AIClient):
             logger.error(f"Ollama chat stream error: {e}")
             yield f"Error: {str(e)}"
 
+    async def chat_stream_full(
+        self,
+        messages: list[dict],
+    ) -> AsyncIterator[dict]:
+        """Stream chat via /v1/messages with structured events.
+
+        Yields typed dicts so the caller can stream text/thinking to the
+        frontend while simultaneously watching for tool_use blocks — no more
+        waiting for the full response before showing the first token.
+        """
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+            "stream": True,
+        }
+        from jarvis.core.tool_registry import tool_registry
+        tools = tool_registry.build_anthropic_tools()
+        if tools:
+            payload["tools"] = tools
+
+        try:
+            async with self.client.stream(
+                "POST", "/v1/messages", json=payload
+            ) as response:
+                response.raise_for_status()
+
+                current_block_type: str | None = None
+                tool_name: str = ""
+                tool_id: str = ""
+                tool_input_parts: list[str] = []
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = data.get("type", "")
+
+                    if event_type == "content_block_start":
+                        block = data.get("content_block", {})
+                        block_type = block.get("type", "")
+                        current_block_type = block_type
+
+                        if block_type == "text":
+                            yield {"type": "text_start"}
+                        elif block_type == "thinking":
+                            yield {"type": "thinking_start"}
+                        elif block_type == "tool_use":
+                            tool_name = block.get("name", "")
+                            tool_id = block.get("id", "")
+                            tool_input_parts = []
+                            yield {
+                                "type": "tool_use_start",
+                                "name": tool_name,
+                                "id": tool_id,
+                            }
+
+                    elif event_type == "content_block_delta":
+                        delta = data.get("delta", {})
+
+                        if current_block_type == "text" and "text" in delta:
+                            yield {"type": "text", "content": delta["text"]}
+                        elif current_block_type == "thinking" and "thinking" in delta:
+                            yield {"type": "thinking", "content": delta["thinking"]}
+                        elif current_block_type == "tool_use" and "partial_json" in delta:
+                            chunk = delta["partial_json"]
+                            tool_input_parts.append(chunk)
+                            yield {"type": "tool_use_delta", "partial_json": chunk}
+
+                    elif event_type == "content_block_stop":
+                        if current_block_type == "thinking":
+                            yield {"type": "thinking_end"}
+                        elif current_block_type == "tool_use":
+                            # Parse accumulated partial JSON
+                            full_json = "".join(tool_input_parts)
+                            try:
+                                input_data = json.loads(full_json)
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    f"[Ollama] failed to parse tool_use input: {full_json[:200]}"
+                                )
+                                input_data = {}
+                            yield {
+                                "type": "tool_use_end",
+                                "name": tool_name,
+                                "id": tool_id,
+                                "input": input_data,
+                            }
+                        current_block_type = None
+
+                    elif event_type == "message_delta":
+                        yield {
+                            "type": "message_delta",
+                            "stop_reason": data.get("delta", {}).get("stop_reason", ""),
+                        }
+
+                    elif event_type == "message_stop":
+                        yield {"type": "message_stop"}
+
+        except httpx.HTTPError as e:
+            logger.error(f"Ollama chat_stream_full error: {e}")
+            yield {"type": "error", "content": str(e)}
+
     async def transcribe_audio(
         self,
         audio_data: bytes,

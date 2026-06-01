@@ -432,8 +432,12 @@ class TestStreamChat:
         engine.memory.retrieve = AsyncMock(return_value=[])
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Hello, stream response!"))
-        engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
+
+        async def mock_stream_full(messages, model=None):
+            yield {"type": "text", "content": "Hello, stream response!"}
+            yield {"type": "message_stop"}
+
+        engine.router.chat_stream_full = mock_stream_full
         engine._save_conversation_to_file = AsyncMock()
 
         # 执行流式对话
@@ -460,8 +464,12 @@ class TestStreamChat:
         engine.memory.get_conversation = AsyncMock(return_value=existing_conv)
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Stream response"))
-        engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
+
+        async def mock_stream_full(messages, model=None):
+            yield {"type": "text", "content": "Stream response"}
+            yield {"type": "message_stop"}
+
+        engine.router.chat_stream_full = mock_stream_full
         engine._save_conversation_to_file = AsyncMock()
 
         result = []
@@ -477,8 +485,12 @@ class TestStreamChat:
         engine.memory.get_conversation = AsyncMock(return_value=None)
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Saved response"))
-        engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
+
+        async def mock_stream_full(messages, model=None):
+            yield {"type": "text", "content": "Saved response"}
+            yield {"type": "message_stop"}
+
+        engine.router.chat_stream_full = mock_stream_full
         engine._save_conversation_to_file = AsyncMock()
 
         async for _ in engine.stream_chat("Hello"):
@@ -504,8 +516,12 @@ class TestStreamChatWithMessages:
         engine.memory.get_conversation = AsyncMock(return_value=None)
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Response with history"))
-        engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
+
+        async def mock_stream_full(messages, model=None):
+            yield {"type": "text", "content": "Response with history"}
+            yield {"type": "message_stop"}
+
+        engine.router.chat_stream_full = mock_stream_full
         engine._save_conversation_to_file = AsyncMock()
 
         messages_history = [
@@ -534,8 +550,12 @@ class TestStreamChatWithMessages:
         engine.memory.get_conversation = AsyncMock(return_value=existing_conv)
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
-        engine.router.chat = AsyncMock(return_value=MagicMock(content="Continued"))
-        engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
+
+        async def mock_stream_full(messages, model=None):
+            yield {"type": "text", "content": "Continued"}
+            yield {"type": "message_stop"}
+
+        engine.router.chat_stream_full = mock_stream_full
         engine._save_conversation_to_file = AsyncMock()
 
         messages_history = [{"role": "user", "content": "Second"}]

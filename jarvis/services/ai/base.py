@@ -72,6 +72,33 @@ class AIClient(ABC):
         """Stream chat completion tokens"""
         pass
 
+    async def chat_stream_full(
+        self,
+        messages: list[dict],
+    ) -> AsyncIterator[dict]:
+        """Stream chat with structured events (text, thinking, tool_use).
+
+        Yields dict events:
+          {"type": "text_start"} / {"type": "text", "content": "..."}
+          {"type": "thinking_start"} / {"type": "thinking", "content": "..."} / {"type": "thinking_end"}
+          {"type": "tool_use_start", "name": "...", "id": "..."}
+          {"type": "tool_use_delta", "partial_json": "..."}
+          {"type": "tool_use_end", "name": "...", "id": "...", "input": {...}}
+          {"type": "message_delta", "stop_reason": "..."}
+          {"type": "message_stop"}
+          {"type": "error", "content": "..."}
+        """
+        # Default: fall back to non-streaming chat, yield as single text block
+        resp = await self.chat(messages, stream=False)
+        if resp.thinking:
+            yield {"type": "thinking_start"}
+            yield {"type": "thinking", "content": resp.thinking}
+            yield {"type": "thinking_end"}
+        if resp.content:
+            yield {"type": "text_start"}
+            yield {"type": "text", "content": resp.content}
+        yield {"type": "message_stop"}
+
     @abstractmethod
     async def vision_analyze(
         self,

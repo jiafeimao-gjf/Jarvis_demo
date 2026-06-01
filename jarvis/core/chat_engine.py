@@ -1,5 +1,7 @@
 # jarvis/core/chat_engine.py
 """对话引擎 - 核心业务逻辑"""
+from __future__ import annotations
+
 import json
 import base64
 import re
@@ -380,41 +382,96 @@ class ChatEngine:
 
         messages.append({"role": "user", "content": user_input})
 
-        # 5. 第一阶段：非流式调用以检测工具
+        # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用
         import time as _t
         _t0 = _t.time()
-        logger.debug("[StreamChat] 调用 LLM (第一阶段)...")
-        response = await self.router.chat(messages, model=model, stream=False)
-        response_text = response.content
-        logger.info(f"[StreamChat] LLM 第一阶段响应 | len={len(response_text)} | 耗时={(_t.time()-_t0)*1000:.0f}ms")
+        logger.debug("[StreamChat] 调用 LLM (第一阶段流式)...")
+        streamed_text = ""
+        streamed_thinking = ""
+        tool_uses: list[dict] = []
+        content_blocks: list[dict] = []
+        current_tool: dict | None = None
 
-        # 6. 检测并执行工具调用
-        iteration_count = 0
-        final_response = response_text
+        async for event in self.router.chat_stream_full(messages, model=model):
+            etype = event.get("type", "")
 
-        # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
-        has_tools = self.tool_parser.has_tool_calls(response_text)
-        if response.content_blocks:
-            for block in response.content_blocks:
-                if block.get("type") == "tool_use":
-                    has_tools = True
-                    logger.debug(f"[StreamChat] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
-                    break
+            if etype == "thinking_start":
+                yield json.dumps({"type": "thinking_start", "content": ""})
+
+            elif etype == "thinking":
+                chunk = event["content"]
+                streamed_thinking += chunk
+                yield json.dumps({"type": "thinking", "content": chunk})
+
+            elif etype == "thinking_end":
+                yield json.dumps({"type": "thinking_end", "content": ""})
+                if streamed_thinking:
+                    content_blocks.append({"type": "thinking", "thinking": streamed_thinking})
+
+            elif etype == "text":
+                chunk = event["content"]
+                streamed_text += chunk
+                yield chunk  # ← 直接流式输出到前端
+
+            elif etype == "tool_use_start":
+                current_tool = {
+                    "type": "tool_use",
+                    "name": event["name"],
+                    "id": event["id"],
+                    "input": {},
+                }
+                yield json.dumps({"type": "status", "content": "tool_detected"})
+
+            elif etype == "tool_use_end":
+                if current_tool:
+                    current_tool["input"] = event.get("input", {})
+                    tool_uses.append(current_tool)
+                    content_blocks.append(current_tool)
+                    current_tool = None
+
+            elif etype == "message_stop":
+                break
+
+            elif etype == "error":
+                logger.error(f"[StreamChat] stream error: {event['content']}")
+                break
+
+        if streamed_text:
+            content_blocks.append({"type": "text", "text": streamed_text})
+
+        logger.info(
+            f"[StreamChat] 第一阶段流式完成 | text_len={len(streamed_text)} | "
+            f"thinking_len={len(streamed_thinking)} | tool_uses={len(tool_uses)} | "
+            f"耗时={(_t.time()-_t0)*1000:.0f}ms"
+        )
+
+        # 6. 检测并执行工具调用（如有）
+        final_response = streamed_text
+        thinking = streamed_thinking
+        has_tools = len(tool_uses) > 0
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
             if not has_tools:
                 logger.debug("[StreamChat] 无工具调用，结束迭代")
                 break
 
-            # Yield progress so frontend doesn't think it's stuck
             yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
 
-            tool_calls = self.tool_parser.parse(response_text)
-
-            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
-            if not tool_calls and response.content_blocks:
-                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
-                logger.debug(f"[StreamChat] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
+            tool_calls: list[ToolCall] = []
+            for tu in tool_uses:
+                tool_name = tu.get("name", "")
+                if not tool_name or tool_name not in tool_registry.get_tool_names():
+                    logger.warning(f"[StreamChat] 未知工具: {tool_name}")
+                    continue
+                params = tu.get("input", {})
+                action = params.get("action", "")
+                tc = ToolCall(
+                    tool=tool_name,
+                    action=action,
+                    params=params,
+                    raw=tu.get("id", json.dumps(tu)),
+                )
+                tool_calls.append(tc)
 
             if not tool_calls:
                 break
@@ -422,31 +479,23 @@ class ChatEngine:
             logger.info(f"[StreamChat] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
             for tc in tool_calls:
                 logger.info(f"[StreamChat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
-                # Yield tool call event for frontend
                 yield json.dumps({
                     "type": "tool_call",
                     "tool": tc.tool,
                     "action": tc.action,
-                    "params": tc.params
+                    "params": tc.params,
                 })
 
-            # 将助手响应添加到消息历史
-            assistant_content = response.content_blocks if response.content_blocks else response.content
-            messages.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
+            messages.append({"role": "assistant", "content": content_blocks})
 
-            # 执行工具
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
 
-                # 将工具调用作为独立消息记录（role: tool）
                 tool_call_message = {
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "params": tool_call.params,
-                    "raw": tool_call.raw
+                    "raw": tool_call.raw,
                 }
                 self.current_conversation.add_message("tool", json.dumps(tool_call_message))
 
@@ -468,28 +517,37 @@ class ChatEngine:
                 self.current_conversation.add_message("tool_result", result_content)
                 messages.append({"role": "user", "content": result_content})
 
-                # Yield tool result event for frontend
                 yield json.dumps({
                     "type": "tool_result",
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "status": result.get("status", "success"),
-                    "result": result
+                    "result": result,
                 })
 
-            # 再次调用 LLM 获取响应
+            _t1 = _t.time()
             logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
             response = await self.router.chat(messages, model=model, stream=False)
             response_text = response.content
+            thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
             final_response = response_text
-            logger.info(f"[StreamChat] LLM 后续响应 | len={len(response_text)}")
+            content_blocks = (
+                response.content_blocks
+                if response.content_blocks
+                else [{"type": "text", "text": response_text}]
+            )
+            logger.info(
+                f"[StreamChat] LLM 后续响应 | len={len(response_text)} | "
+                f"耗时={(_t.time()-_t1)*1000:.0f}ms"
+            )
 
-            # 检查后续响应是否也有工具调用
+            tool_uses = []
             has_tools = self.tool_parser.has_tool_calls(response_text)
             if response.content_blocks:
                 for block in response.content_blocks:
                     if block.get("type") == "tool_use":
                         has_tools = True
+                        tool_uses.append(block)
                         logger.debug(f"[StreamChat] 后续响应中发现 tool_use block")
                         break
 
@@ -497,7 +555,6 @@ class ChatEngine:
         final_response = self._resolve_image_paths(final_response)
 
         # 8. 保存对话历史
-        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
         self.current_conversation.add_message("assistant", final_response, thinking=thinking)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
@@ -507,22 +564,23 @@ class ChatEngine:
         )
         logger.info(f"[StreamChat] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 8. 保存对话到 JSON 文件
+        # 9. 保存对话到 JSON 文件
         await self._save_conversation_to_file()
 
-        # 9. 流式返回 thinking（如果有）
-        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
-        if thinking:
-            logger.info(f"[StreamChat] 流式返回 thinking | len={len(thinking)}")
+        # 10. 流式返回后续 thinking（仅当工具执行后的新 thinking 与第一阶段不同时）
+        if thinking and thinking != streamed_thinking:
+            logger.info(f"[StreamChat] 流式返回后续 thinking | len={len(thinking)}")
             yield json.dumps({"type": "thinking_start", "content": ""})
             for chunk in self._chunk_text(thinking, 8):
                 yield json.dumps({"type": "thinking", "content": chunk})
             yield json.dumps({"type": "thinking_end", "content": ""})
 
-        # 10. 流式返回最终响应
-        logger.info(f"[StreamChat] 开始流式返回 | response_len={len(final_response)}")
-        for chunk in self._chunk_text(final_response, 8):
-            yield chunk
+        # 11. 流式返回后续响应（仅当工具执行产生了新文本时）
+        if final_response != streamed_text:
+            logger.info(f"[StreamChat] 流式返回后续响应 | len={len(final_response)}")
+            for chunk in self._chunk_text(final_response, 8):
+                yield chunk
+
         logger.info("[StreamChat] 流式返回完成")
 
     async def stream_chat_with_messages(
@@ -579,24 +637,75 @@ class ChatEngine:
         # 添加当前用户消息
         messages.append({"role": "user", "content": user_input})
 
-        # 5. 第一阶段：非流式调用以检测工具
-        logger.debug("[StreamChatWithMsgs] 调用 LLM (第一阶段)...")
-        response = await self.router.chat(messages, model=model, stream=False)
-        response_text = response.content
-        logger.info(f"[StreamChatWithMsgs] LLM 第一阶段响应 | len={len(response_text)}")
+        # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用
+        import time as _t
+        _t0 = _t.time()
+        logger.debug("[StreamChatWithMsgs] 调用 LLM (第一阶段流式)...")
+        streamed_text = ""
+        streamed_thinking = ""
+        tool_uses: list[dict] = []
+        content_blocks: list[dict] = []
+        current_tool: dict | None = None
 
-        # 6. 检测并执行工具调用
-        iteration_count = 0
-        final_response = response_text
+        async for event in self.router.chat_stream_full(messages, model=model):
+            etype = event.get("type", "")
 
-        # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
-        has_tools = self.tool_parser.has_tool_calls(response_text)
-        if response.content_blocks:
-            for block in response.content_blocks:
-                if block.get("type") == "tool_use":
-                    has_tools = True
-                    logger.debug(f"[StreamChatWithMsgs] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
-                    break
+            if etype == "thinking_start":
+                yield json.dumps({"type": "thinking_start", "content": ""})
+
+            elif etype == "thinking":
+                chunk = event["content"]
+                streamed_thinking += chunk
+                yield json.dumps({"type": "thinking", "content": chunk})
+
+            elif etype == "thinking_end":
+                yield json.dumps({"type": "thinking_end", "content": ""})
+                if streamed_thinking:
+                    content_blocks.append({"type": "thinking", "thinking": streamed_thinking})
+
+            elif etype == "text":
+                chunk = event["content"]
+                streamed_text += chunk
+                yield chunk  # ← 直接流式输出到前端，消除 TTFB 延迟
+
+            elif etype == "tool_use_start":
+                current_tool = {
+                    "type": "tool_use",
+                    "name": event["name"],
+                    "id": event["id"],
+                    "input": {},
+                }
+                # 通知前端检测到工具调用
+                yield json.dumps({"type": "status", "content": "tool_detected"})
+
+            elif etype == "tool_use_end":
+                if current_tool:
+                    current_tool["input"] = event.get("input", {})
+                    tool_uses.append(current_tool)
+                    content_blocks.append(current_tool)
+                    current_tool = None
+
+            elif etype == "message_stop":
+                break
+
+            elif etype == "error":
+                logger.error(f"[StreamChatWithMsgs] stream error: {event['content']}")
+                break
+
+        # Add text block to content_blocks for message history
+        if streamed_text:
+            content_blocks.append({"type": "text", "text": streamed_text})
+
+        logger.info(
+            f"[StreamChatWithMsgs] 第一阶段流式完成 | text_len={len(streamed_text)} | "
+            f"thinking_len={len(streamed_thinking)} | tool_uses={len(tool_uses)} | "
+            f"耗时={(_t.time()-_t0)*1000:.0f}ms"
+        )
+
+        # 6. 检测并执行工具调用（如有）
+        final_response = streamed_text
+        thinking = streamed_thinking
+        has_tools = len(tool_uses) > 0
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
             if not has_tools:
@@ -605,13 +714,22 @@ class ChatEngine:
 
             yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
 
-            # 从响应文本或 content_blocks 解析工具调用
-            tool_calls = self.tool_parser.parse(response_text)
-
-            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
-            if not tool_calls and response.content_blocks:
-                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
-                logger.debug(f"[StreamChatWithMsgs] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
+            # Convert tool_uses dicts to ToolCall objects
+            tool_calls: list[ToolCall] = []
+            for tu in tool_uses:
+                tool_name = tu.get("name", "")
+                if not tool_name or tool_name not in tool_registry.get_tool_names():
+                    logger.warning(f"[StreamChatWithMsgs] 未知工具: {tool_name}")
+                    continue
+                params = tu.get("input", {})
+                action = params.get("action", "")
+                tc = ToolCall(
+                    tool=tool_name,
+                    action=action,
+                    params=params,
+                    raw=tu.get("id", json.dumps(tu)),
+                )
+                tool_calls.append(tc)
 
             if not tool_calls:
                 break
@@ -619,25 +737,25 @@ class ChatEngine:
             logger.info(f"[StreamChatWithMsgs] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
             for tc in tool_calls:
                 logger.info(f"[StreamChatWithMsgs] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
+                yield json.dumps({
+                    "type": "tool_call",
+                    "tool": tc.tool,
+                    "action": tc.action,
+                    "params": tc.params,
+                })
 
-            # 将助手的完整响应添加到消息历史（包含 tool_use blocks）
-            # 使用 content_blocks 格式（Anthropic API 返回的结构）
-            assistant_content = response.content_blocks if response.content_blocks else response.content
-            messages.append({
-                "role": "assistant",
-                "content": assistant_content
-            })
+            # Add assistant response (with tool_use blocks) to message history
+            messages.append({"role": "assistant", "content": content_blocks})
 
-            # 执行工具
+            # Execute tools
             for tool_call in tool_calls:
                 step = Step(tool=tool_call.tool, params=tool_call.params)
 
-                # 将工具调用作为独立消息记录（role: tool）
                 tool_call_message = {
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "params": tool_call.params,
-                    "raw": tool_call.raw
+                    "raw": tool_call.raw,
                 }
                 self.current_conversation.add_message("tool", json.dumps(tool_call_message))
 
@@ -659,36 +777,49 @@ class ChatEngine:
                 self.current_conversation.add_message("tool_result", result_content)
                 messages.append({"role": "user", "content": result_content})
 
-                # Yield tool result event for frontend
                 yield json.dumps({
                     "type": "tool_result",
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "status": result.get("status", "success"),
-                    "result": result
+                    "result": result,
                 })
 
-            # 再次调用 LLM 获取响应
+            # 再次调用 LLM 获取响应（后续迭代仍用非流式，因为前面已有工具进度反馈）
+            _t1 = _t.time()
             logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")
             response = await self.router.chat(messages, model=model, stream=False)
             response_text = response.content
+            thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
             final_response = response_text
-            logger.info(f"[StreamChatWithMsgs] LLM 后续响应 | len={len(response_text)}")
+            content_blocks = (
+                response.content_blocks
+                if response.content_blocks
+                else [{"type": "text", "text": response_text}]
+            )
+            logger.info(
+                f"[StreamChatWithMsgs] LLM 后续响应 | len={len(response_text)} | "
+                f"耗时={(_t.time()-_t1)*1000:.0f}ms"
+            )
 
             # 检查后续响应是否也有工具调用
+            tool_uses = []
             has_tools = self.tool_parser.has_tool_calls(response_text)
             if response.content_blocks:
                 for block in response.content_blocks:
                     if block.get("type") == "tool_use":
                         has_tools = True
-                        logger.debug(f"[StreamChatWithMsgs] 后续响应中发现 tool_use block")
+                        tool_uses.append(block)
+                        logger.debug(
+                            f"[StreamChatWithMsgs] 后续响应中发现 tool_use block: "
+                            f"{block.get('name', 'unknown')}"
+                        )
                         break
 
         # 7. 解析响应中的本地图片路径 → base64
         final_response = self._resolve_image_paths(final_response)
 
         # 8. 保存对话历史
-        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
         self.current_conversation.add_message("assistant", final_response, thinking=thinking)
         save_result = await self.memory.save_conversation(
             self.current_conversation.conversation_id,
@@ -698,22 +829,23 @@ class ChatEngine:
         )
         logger.info(f"[StreamChatWithMsgs] 对话已保存 | conv_id={self.current_conversation.conversation_id} | success={save_result}")
 
-        # 8. 保存对话到 JSON 文件
+        # 9. 保存对话到 JSON 文件
         await self._save_conversation_to_file()
 
-        # 9. 流式返回 thinking（如果有）
-        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
-        if thinking:
-            logger.info(f"[StreamChatWithMsgs] 流式返回 thinking | len={len(thinking)}")
+        # 10. 流式返回后续 thinking（仅当工具执行后的新 thinking 与第一阶段不同时）
+        if thinking and thinking != streamed_thinking:
+            logger.info(f"[StreamChatWithMsgs] 流式返回后续 thinking | len={len(thinking)}")
             yield json.dumps({"type": "thinking_start", "content": ""})
             for chunk in self._chunk_text(thinking, 8):
                 yield json.dumps({"type": "thinking", "content": chunk})
             yield json.dumps({"type": "thinking_end", "content": ""})
 
-        # 10. 流式返回最终响应
-        logger.info(f"[StreamChatWithMsgs] 开始流式返回 | response_len={len(final_response)}")
-        for chunk in self._chunk_text(final_response, 8):
-            yield chunk
+        # 11. 流式返回后续响应（仅当工具执行产生了新文本时）
+        if final_response != streamed_text:
+            logger.info(f"[StreamChatWithMsgs] 流式返回后续响应 | len={len(final_response)}")
+            for chunk in self._chunk_text(final_response, 8):
+                yield chunk
+
         logger.info("[StreamChatWithMsgs] 流式返回完成")
 
     @staticmethod
