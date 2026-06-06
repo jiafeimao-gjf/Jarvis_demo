@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useChatStore } from '@/stores/chat'
+import { useTheme } from '@/stores/theme'
 import { ref, nextTick } from 'vue'
 import type { Conversation } from '@/types'
 
 const chatStore = useChatStore()
-const isDarkMode = ref(true)
+const { theme, toggleTheme } = useTheme()
+const isDarkMode = ref(theme.value === 'dark')
 
 function handleNewChat() {
   chatStore.createConversation()
@@ -19,9 +21,9 @@ function deleteConversation(id: string, event: Event) {
   chatStore.deleteConversation(id)
 }
 
-function toggleTheme() {
-  isDarkMode.value = !isDarkMode.value
-  document.documentElement.classList.toggle('light')
+function onToggleTheme() {
+  toggleTheme()
+  isDarkMode.value = theme.value === 'dark'
 }
 
 // Topic inline edit
@@ -78,7 +80,7 @@ function onEditKeydown(e: KeyboardEvent) {
       <div class="flex items-center gap-2">
         <button
           class="p-2 hover:bg-primary/10 rounded-lg transition-all btn-cyber"
-          @click="toggleTheme"
+          @click="onToggleTheme"
           title="切换主题"
         >
           <svg v-if="isDarkMode" class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="currentColor">
