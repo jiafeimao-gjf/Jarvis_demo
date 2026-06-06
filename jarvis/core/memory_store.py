@@ -66,10 +66,16 @@ class SQLiteMemoryRepository(MemoryRepository):
                     user_id TEXT,
                     messages TEXT,
                     context TEXT,
+                    topic TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Migration: add topic column to existing DBs that pre-date it
+            try:
+                conn.execute("ALTER TABLE conversations ADD COLUMN topic TEXT")
+            except Exception:
+                pass  # column already exists
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -152,19 +158,45 @@ class SQLiteMemoryRepository(MemoryRepository):
             return None
 
     async def save_conversation(self, conversation_id: str, user_id: str,
-                               messages: list[dict], context: dict) -> bool:
+                               messages: list[dict], context: dict,
+                               topic: Optional[str] = None) -> bool:
         """保存对话历史"""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    """INSERT OR REPLACE INTO conversations
-                       (conversation_id, user_id, messages, context, updated_at)
-                       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
-                    (conversation_id, user_id, json.dumps(messages), json.dumps(context))
-                )
+                # If topic is provided, include it; otherwise preserve existing topic
+                if topic is not None:
+                    conn.execute(
+                        """INSERT OR REPLACE INTO conversations
+                           (conversation_id, user_id, messages, context, topic, updated_at)
+                           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                        (conversation_id, user_id, json.dumps(messages), json.dumps(context), topic)
+                    )
+                else:
+                    conn.execute(
+                        """INSERT OR REPLACE INTO conversations
+                           (conversation_id, user_id, messages, context, updated_at)
+                           VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                        (conversation_id, user_id, json.dumps(messages), json.dumps(context))
+                    )
             return True
         except Exception as e:
             logger.error(f"Failed to save conversation: {e}")
+            return False
+
+    async def update_conversation_topic(self, conversation_id: str, topic: Optional[str]) -> bool:
+        """Update only the topic column (no re-serialization of messages)"""
+        try:
+            normalized = topic.strip()[:60] if topic else None
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """UPDATE conversations
+                       SET topic = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE conversation_id = ?""",
+                    (normalized, conversation_id)
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update conversation topic: {e}")
             return False
 
     async def get_conversation(self, conversation_id: str) -> Optional[dict]:
@@ -181,6 +213,7 @@ class SQLiteMemoryRepository(MemoryRepository):
                     return {
                         "conversation_id": row["conversation_id"],
                         "user_id": row["user_id"],
+                        "topic": row["topic"],
                         "messages": json.loads(row["messages"]),
                         "context": json.loads(row["context"])
                     }
@@ -195,7 +228,7 @@ class SQLiteMemoryRepository(MemoryRepository):
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
-                    """SELECT conversation_id, user_id, messages, context, created_at, updated_at
+                    """SELECT conversation_id, user_id, messages, context, topic, created_at, updated_at
                        FROM conversations ORDER BY updated_at DESC LIMIT ?""",
                     (limit,)
                 )
@@ -204,6 +237,7 @@ class SQLiteMemoryRepository(MemoryRepository):
                     {
                         "conversation_id": row["conversation_id"],
                         "user_id": row["user_id"],
+                        "topic": row["topic"],
                         "message_count": len(json.loads(row["messages"])),
                         "created_at": row["created_at"],
                         "updated_at": row["updated_at"]
@@ -413,11 +447,16 @@ class MemoryStore:
         return results
 
     async def save_conversation(self, conversation_id: str, user_id: str,
-                               messages: list[dict], context: dict) -> bool:
+                               messages: list[dict], context: dict,
+                               topic: Optional[str] = None) -> bool:
         """保存对话历史"""
         return await self.sqlite_repo.save_conversation(
-            conversation_id, user_id, messages, context
+            conversation_id, user_id, messages, context, topic
         )
+
+    async def update_conversation_topic(self, conversation_id: str, topic: Optional[str]) -> bool:
+        """更新对话主题（不重新序列化 messages）"""
+        return await self.sqlite_repo.update_conversation_topic(conversation_id, topic)
 
     async def get_conversation(self, conversation_id: str) -> Optional[dict]:
         """获取对话历史"""

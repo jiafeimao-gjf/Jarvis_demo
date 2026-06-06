@@ -30,6 +30,7 @@ class ChatResponse(BaseModel):
     text: str
     response: str
     conversation_id: Optional[str] = None
+    topic: Optional[str] = None  # 自动生成/用户编辑的对话主题
 
 
 @router.post("", response_model=ChatResponse)
@@ -44,7 +45,8 @@ async def chat(request: ChatRequest):
         return ChatResponse(
             text=result.get("text", request.message),
             response=result.get("response", ""),
-            conversation_id=result.get("conversation_id")
+            conversation_id=result.get("conversation_id"),
+            topic=result.get("topic"),
         )
     except Exception as e:
         logger.error(f"Chat error: {e}")
@@ -90,15 +92,14 @@ async def chat_stream(request: ChatRequest):
                     if first_token:
                         logger.info(f"[SSE] 首个数据到达, 耗时={(_time.time()-t_start)*1000:.0f}ms")
                         first_token = False
-                    # JSON events: tool_call, tool_result, thinking, thinking_start, thinking_end
+                    # JSON events: tool_call, tool_result, thinking, thinking_start, thinking_end, topic_update
                     if content.startswith('{'):
                         try:
                             evt = json.loads(content)
                             evt_type = evt.get("type", "unknown")
-                            yield {
-                                "event": "tool" if evt_type.startswith("tool") else "token",
-                                "data": content
-                            }
+                            # 工具事件用 'tool' 事件名, 其他 JSON 事件用 'token' (前端按 data.type 分类)
+                            sse_event = "tool" if evt_type.startswith("tool") else "token"
+                            yield {"event": sse_event, "data": content}
                         except json.JSONDecodeError:
                             full_response += content
                             yield {

@@ -33,6 +33,7 @@ export const useChatStore = defineStore('chat', () => {
         conversations.value = backendConvs.map((conv: any) => ({
           id: conv.conversation_id,
           title: conv.title || `对话 ${conv.message_count} 条消息`,
+          topic: conv.topic || undefined,
           messages: [],
           createdAt: new Date(conv.created_at),
           updatedAt: new Date(conv.updated_at)
@@ -198,6 +199,53 @@ export const useChatStore = defineStore('chat', () => {
     syncTimeout = setTimeout(() => syncToBackend(conv), 2000)
   }
 
+  // Topic management — optimistic local update + debounced PUT
+  let topicUpdateTimeout: ReturnType<typeof setTimeout> | null = null
+  function updateTopic(conversationId: string, topic: string) {
+    const conv = conversations.value.find(c => c.id === conversationId)
+    if (!conv) return
+    const normalized = (topic || '').trim().slice(0, 60)
+    if (!normalized) return  // ignore empty
+
+    // Optimistic local update
+    const previous = conv.topic
+    conv.topic = normalized
+
+    // Debounced PUT
+    if (topicUpdateTimeout) clearTimeout(topicUpdateTimeout)
+    topicUpdateTimeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/memory/conversation/${conversationId}/topic`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: normalized })
+        })
+        if (!res.ok) {
+          conv.topic = previous  // revert
+          console.error(`Update topic failed: ${res.status}`)
+        }
+      } catch (e) {
+        conv.topic = previous
+        console.error('Update topic error:', e)
+      }
+    }, 600)
+  }
+
+  // Apply topic update from SSE — local-only setter (backend already persisted)
+  function applyTopicUpdate(conversationId: string, topic: string) {
+    const conv = conversations.value.find(c => c.id === conversationId)
+    if (!conv) return
+    // Don't overwrite if user has already edited it manually
+    // (race: SSE may arrive after manual edit)
+    if (conv.topic && conv.topic !== topic) {
+      // Only overwrite if the existing value is empty/placeholder
+      if (conv.topic && conv.topic.length > 0) {
+        return  // user has a real topic; keep it
+      }
+    }
+    conv.topic = (topic || '').trim().slice(0, 60)
+  }
+
   // Initialize
   loadFromBackend()
 
@@ -214,6 +262,8 @@ export const useChatStore = defineStore('chat', () => {
     clearCurrentMessages,
     deleteConversation,
     syncToBackend,
-    loadFromBackend
+    loadFromBackend,
+    updateTopic,
+    applyTopicUpdate,
   }
 })

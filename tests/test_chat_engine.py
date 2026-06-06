@@ -135,16 +135,19 @@ class TestChatMethod:
         engine.memory.get_conversation = AsyncMock(return_value=None)
         engine.memory.retrieve = AsyncMock(return_value=[])
         engine.memory.save_conversation = AsyncMock(return_value=True)
+        engine.memory.update_conversation_topic = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
         engine.router.chat = AsyncMock(return_value=MagicMock(content="Hello! How can I help?"))
         engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
         engine._save_conversation_to_file = AsyncMock()
 
-        # Execute
-        result = await engine.chat("Hello")
+        # Execute (mock topic generation to avoid LLM call)
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("Hello")
 
-        # Verify
-        assert result == "Hello! How can I help?"
+        # Verify — chat() now returns dict {text, topic}
+        assert result["text"] == "Hello! How can I help?"
+        assert result["topic"] == "测试主题"
         assert engine.current_conversation is not None
         assert len(engine.current_conversation.messages) == 2  # user + assistant
 
@@ -156,6 +159,7 @@ class TestChatMethod:
         existing_conv = {
             "conversation_id": "conv_123",
             "user_id": "user1",
+            "topic": "已存在的主题",
             "messages": [
                 {"role": "user", "content": "First message", "message_id": "1", "timestamp": datetime.now()}
             ],
@@ -169,11 +173,13 @@ class TestChatMethod:
         engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
         engine._save_conversation_to_file = AsyncMock()
 
-        # Execute
-        result = await engine.chat("Second message", conversation_id="conv_123")
+        # Execute — pre-existing topic should NOT be overwritten
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="新主题")):
+            result = await engine.chat("Second message", conversation_id="conv_123")
 
         # Verify
-        assert result == "Second response"
+        assert result["text"] == "Second response"
+        assert result["topic"] == "已存在的主题"  # preserved, not overwritten
         assert engine.current_conversation.conversation_id == "conv_123"
 
     @pytest.mark.asyncio
@@ -191,9 +197,10 @@ class TestChatMethod:
         engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
         engine._save_conversation_to_file = AsyncMock()
 
-        result = await engine.chat("What's my preference?")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("What's my preference?")
 
-        assert result == "Response"
+        assert result["text"] == "Response"
         # Verify retrieve was called
         engine.memory.retrieve.assert_called_once()
 
@@ -208,7 +215,8 @@ class TestChatMethod:
         engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
         engine._save_conversation_to_file = AsyncMock()
 
-        await engine.chat("Hello")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            await engine.chat("Hello")
 
         # Verify save was called
         engine.memory.save_conversation.assert_called_once()
@@ -227,7 +235,8 @@ class TestChatMethod:
         engine._save_conversation_to_file = AsyncMock()
 
         # Need > 10 chars and contain "记住"
-        await engine.chat("请记住我的名字是小明，谢谢")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            await engine.chat("请记住我的名字是小明，谢谢")
 
         # Verify memory save was called for "记住" request
         engine.memory.save.assert_called_once()
@@ -258,9 +267,10 @@ class TestChatMethod:
         engine.task_executor.execute_step = AsyncMock(return_value={"status": "success", "content": "file content"})
         engine._save_conversation_to_file = AsyncMock()
 
-        result = await engine.chat("Read the file")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("Read the file")
 
-        assert result == final_response
+        assert result["text"] == final_response
         assert engine.task_executor.execute_step.called
 
     @pytest.mark.asyncio
@@ -281,9 +291,10 @@ class TestChatMethod:
         engine._save_conversation_to_file = AsyncMock()
 
         # Should complete without error (just warning)
-        result = await engine.chat("Read file")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("Read file")
 
-        assert result == "Response"
+        assert result["text"] == "Response"
 
     @pytest.mark.asyncio
     async def test_chat_tool_execution_error_handling(self, engine):
@@ -305,9 +316,10 @@ class TestChatMethod:
         engine._save_conversation_to_file = AsyncMock()
 
         # Should handle error gracefully and continue
-        result = await engine.chat("Read file")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("Read file")
 
-        assert result == "Done"
+        assert result["text"] == "Done"
 
     @pytest.mark.asyncio
     async def test_chat_conversation_not_exists(self, engine):
@@ -321,9 +333,10 @@ class TestChatMethod:
         engine.tool_parser.has_tool_calls = MagicMock(return_value=False)
         engine._save_conversation_to_file = AsyncMock()
 
-        result = await engine.chat("Hello", conversation_id="nonexistent_conv")
+        with patch('jarvis.core.chat_engine.generate_topic', new=AsyncMock(return_value="测试主题")):
+            result = await engine.chat("Hello", conversation_id="nonexistent_conv")
 
-        assert result == "New conversation response"
+        assert result["text"] == "New conversation response"
         # Should create new conversation with given id
         assert engine.current_conversation.conversation_id == "nonexistent_conv"
 

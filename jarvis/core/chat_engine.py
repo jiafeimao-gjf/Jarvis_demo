@@ -18,6 +18,7 @@ from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
 from jarvis.services.ai.models import Provider
 from jarvis.services.skill_loader import load_skills, load_prompt_files
+from jarvis.core.topic_generator import generate_topic
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -144,8 +145,8 @@ class ChatEngine:
         conversation_id: Optional[str] = None,
         model: Optional[str] = None,
         stream: bool = False  # Default to non-stream for simpler response
-    ) -> str:
-        """处理对话 - 支持工具调用"""
+    ) -> dict:
+        """处理对话 - 支持工具调用。返回 {text, topic}。"""
         logger.info(f"[Chat] 开始处理对话 | conv_id={conversation_id} | model={model} | input_len={len(user_input)}")
         logger.debug(f"[Chat] 用户输入: {user_input[:100]}...")
 
@@ -156,10 +157,11 @@ class ChatEngine:
                 self.current_conversation = Conversation(
                     conversation_id=conversation_id,
                     user_id=conv_data.get("user_id", ""),
+                    topic=conv_data.get("topic"),
                     messages=[Message(**m) for m in conv_data.get("messages", [])],
                     context=conv_data.get("context", {})
                 )
-                logger.info(f"[Chat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
+                logger.info(f"[Chat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))} | topic={self.current_conversation.topic!r}")
             else:
                 logger.info(f"[Chat] 对话不存在，创建新对话 | conv_id={conversation_id}")
                 self.current_conversation = Conversation(conversation_id=conversation_id)
@@ -331,7 +333,40 @@ class ChatEngine:
         if iteration_count >= MAX_TOOL_ITERATIONS - 1:
             logger.warning(f"[Chat] 达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
 
-        return self._resolve_image_paths(final_response)
+        # 11. 第一轮对话: 自动生成主题 (不会覆盖已有主题)
+        generated_topic = None
+        if not self.current_conversation.topic:
+            # First-turn condition: only user + assistant messages
+            if all(m.role in ("user", "assistant", "tool", "tool_result")
+                   for m in self.current_conversation.messages):
+                # Skip if the first user message was image-only
+                first_user = next(
+                    (m for m in self.current_conversation.messages if m.role == "user"),
+                    None,
+                )
+                if first_user and not first_user.image and first_user.content:
+                    try:
+                        generated_topic = await generate_topic(
+                            self.router,
+                            first_user.content,
+                            model=model,
+                        )
+                        self.current_conversation.set_topic(generated_topic)
+                        await self.memory.update_conversation_topic(
+                            self.current_conversation.conversation_id,
+                            generated_topic,
+                        )
+                        logger.info(
+                            f"[Chat] 已生成对话主题 | conv_id={self.current_conversation.conversation_id} | "
+                            f"topic={generated_topic!r}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Chat] 主题生成失败: {e}")
+
+        return {
+            "text": self._resolve_image_paths(final_response),
+            "topic": self.current_conversation.topic,
+        }
 
     async def stream_chat(
         self,
@@ -340,7 +375,8 @@ class ChatEngine:
         model: Optional[str] = None,
         user_id: Optional[str] = None
     ):
-        """流式对话 - 两阶段：第一阶段执行工具，第二阶段流式返回"""
+        """流式对话 - 两阶段：第一阶段执行工具，第二阶段流式返回。
+        若为首轮对话,会在主流程结束后异步生成主题并 yield topic_update 事件。"""
         logger.info(f"[StreamChat] 开始处理 | conv_id={conversation_id} | user_id={user_id} | model={model} | input_len={len(user_input)}")
 
         # 1. 获取或创建对话上下文
@@ -350,10 +386,11 @@ class ChatEngine:
                 self.current_conversation = Conversation(
                     conversation_id=conversation_id,
                     user_id=conv_data.get("user_id", "") or user_id or "",
+                    topic=conv_data.get("topic"),
                     messages=[Message(**m) for m in conv_data.get("messages", [])],
                     context=conv_data.get("context", {})
                 )
-                logger.info(f"[StreamChat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
+                logger.info(f"[StreamChat] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))} | topic={self.current_conversation.topic!r}")
             else:
                 logger.info(f"[StreamChat] 对话不存在，创建新对话 | conv_id={conversation_id}")
                 self.current_conversation = Conversation(conversation_id=conversation_id, user_id=user_id or "")
@@ -581,6 +618,18 @@ class ChatEngine:
             for chunk in self._chunk_text(final_response, 8):
                 yield chunk
 
+        # 12. 首轮对话: 异步生成主题 (主流程已结束,不影响响应延迟)
+        if not self.current_conversation.topic:
+            first_user = next(
+                (m for m in self.current_conversation.messages if m.role == "user"),
+                None,
+            )
+            if first_user and not first_user.image and first_user.content:
+                async for evt in self._generate_and_yield_topic(
+                    first_user.content, model=model
+                ):
+                    yield evt
+
         logger.info("[StreamChat] 流式返回完成")
 
     async def stream_chat_with_messages(
@@ -601,10 +650,11 @@ class ChatEngine:
                 self.current_conversation = Conversation(
                     conversation_id=conversation_id,
                     user_id=conv_data.get("user_id", "") or user_id or "",
+                    topic=conv_data.get("topic"),
                     messages=[Message(**m) for m in conv_data.get("messages", [])],
                     context=conv_data.get("context", {})
                 )
-                logger.info(f"[StreamChatWithMsgs] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))}")
+                logger.info(f"[StreamChatWithMsgs] 从DB加载对话 | conv_id={conversation_id} | 消息数={len(conv_data.get('messages', []))} | topic={self.current_conversation.topic!r}")
             else:
                 logger.info(f"[StreamChatWithMsgs] 对话不存在，创建新对话 | conv_id={conversation_id}")
                 self.current_conversation = Conversation(conversation_id=conversation_id, user_id=user_id or "")
@@ -846,7 +896,44 @@ class ChatEngine:
             for chunk in self._chunk_text(final_response, 8):
                 yield chunk
 
+        # 12. 首轮对话: 异步生成主题
+        if not self.current_conversation.topic:
+            first_user = next(
+                (m for m in self.current_conversation.messages if m.role == "user"),
+                None,
+            )
+            if first_user and not first_user.image and first_user.content:
+                async for evt in self._generate_and_yield_topic(
+                    first_user.content, model=model
+                ):
+                    yield evt
+
         logger.info("[StreamChatWithMsgs] 流式返回完成")
+
+    async def _generate_and_yield_topic(self, user_input: str,
+                                        model: Optional[str] = None):
+        """生成主题 → 持久化 → yield topic_update 事件。
+        主流程已结束时调用,不影响响应延迟。"""
+        try:
+            topic = await generate_topic(self.router, user_input, model=model)
+            # 防止覆盖用户已编辑的主题
+            if self.current_conversation.topic:
+                logger.info(
+                    f"[Chat] 主题已被用户设置,跳过自动生成: "
+                    f"current={self.current_conversation.topic!r} generated={topic!r}"
+                )
+                return
+            self.current_conversation.set_topic(topic)
+            await self.memory.update_conversation_topic(
+                self.current_conversation.conversation_id, topic
+            )
+            logger.info(
+                f"[Chat] 已生成对话主题 | conv_id={self.current_conversation.conversation_id} | "
+                f"topic={topic!r}"
+            )
+            yield json.dumps({"type": "topic_update", "topic": topic})
+        except Exception as e:
+            logger.warning(f"[Chat] 主题生成失败: {e}")
 
     @staticmethod
     def _chunk_text(text: str, size: int = 8):

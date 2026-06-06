@@ -83,6 +83,8 @@ async def save_conversation(conversation_id: str, request: Request):
         user_id = body.get("user_id", "")
         messages = body.get("messages", [])
         context = body.get("context", {})
+        # Accept topic only if explicitly provided; otherwise preserve existing
+        topic = body.get("topic")  # may be None, "", or a string
 
         # Extract base64 images → save to disk → replace with path
         img_dir = IMAGES_DIR / conversation_id / "images"
@@ -103,12 +105,46 @@ async def save_conversation(conversation_id: str, request: Request):
                     logger.warning(f"Failed to save image for msg {i}: {e}")
                     msg["image"] = None
 
+        # Normalize topic: empty string → None (don't overwrite), valid string → save
+        if topic is not None:
+            topic = topic.strip()[:60] or None
+        else:
+            topic = None  # preserve existing
+
         success = await mediator.memory_store.save_conversation(
-            conversation_id, user_id, messages, context
+            conversation_id, user_id, messages, context, topic=topic
         )
         return {"success": success}
     except Exception as e:
         logger.error(f"Save conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TopicUpdateRequest(BaseModel):
+    topic: str
+
+
+@router.put("/conversation/{conversation_id}/topic")
+async def update_conversation_topic(conversation_id: str, request: TopicUpdateRequest):
+    """手动设置/更新对话主题"""
+    try:
+        topic = (request.topic or "").strip()
+        if not topic:
+            raise HTTPException(status_code=400, detail="topic 不能为空")
+        if len(topic) > 60:
+            topic = topic[:60]
+
+        # Confirm conversation exists
+        existing = await mediator.memory_store.get_conversation(conversation_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        success = await mediator.memory_store.update_conversation_topic(conversation_id, topic)
+        return {"success": success, "topic": topic}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update topic error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -64,12 +64,14 @@ class JarvisMediator:
         # 2. 识别成功, 注入主对话引擎（复用当前 conversation）
         if text:
             chat_input = f"[语音输入] {text}"
-            response = await self.chat_engine.chat(chat_input, conversation_id)
+            result = await self.chat_engine.chat(chat_input, conversation_id)
+            response = result["text"] if isinstance(result, dict) else result
             # 3. TTS 播放
             tts_result = await self.voice_engine.text_to_speech(response)
             return {
                 "text": text,
                 "response": response,
+                "topic": result.get("topic") if isinstance(result, dict) else None,
                 "tts": tts_result
             }
         return {"text": "", "response": None, "warning": "语音识别失败"}
@@ -83,10 +85,12 @@ class JarvisMediator:
         if not text:
             return {"error": "No text provided"}
 
-        response = await self.chat_engine.chat(text, conversation_id, model)
+        result = await self.chat_engine.chat(text, conversation_id, model)
+        response = result["text"] if isinstance(result, dict) else result
         return {
             "text": text,
             "response": response,
+            "topic": result.get("topic") if isinstance(result, dict) else None,
             "conversation_id": self.chat_engine.current_conversation.conversation_id
             if self.chat_engine.current_conversation else None
         }

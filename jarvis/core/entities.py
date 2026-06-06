@@ -82,10 +82,19 @@ class Conversation:
     """对话上下文"""
     conversation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str = ""
+    topic: Optional[str] = None
     messages: list[Message] = field(default_factory=list)
     context: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+
+    def set_topic(self, topic: str) -> None:
+        """设置对话主题（自动 trim + 限长 60 字符）"""
+        if topic is None:
+            self.topic = None
+        else:
+            self.topic = topic.strip()[:60] or None
+        self.updated_at = datetime.now()
 
     def add_message(self, role: str, content: str, image: str = None, thinking: str = None) -> Message:
         """添加消息"""

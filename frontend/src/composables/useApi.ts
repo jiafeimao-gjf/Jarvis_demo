@@ -27,12 +27,23 @@ export function useApi() {
       return {
         text: data.text,
         response: data.response,
-        conversation_id: data.conversation_id
+        conversation_id: data.conversation_id,
+        topic: data.topic,
       }
     } catch (e) {
       error.value = (e as Error).message
       throw e
     }
+  }
+
+  async function updateConversationTopic(conversationId: string, topic: string): Promise<{ success: boolean; topic: string }> {
+    const res = await fetch(`${API_BASE}/memory/conversation/${conversationId}/topic`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic })
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
   }
 
   async function chatStream(
@@ -41,7 +52,8 @@ export function useApi() {
     onDone?: () => void,
     onStatus?: (status: string | Record<string, unknown>) => void,
     onThinking?: (chunk: string) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onTopicUpdate?: (topic: string) => void,
   ): Promise<void> {
     error.value = null
     try {
@@ -104,6 +116,8 @@ export function useApi() {
                   onThinking?.(data.content)
                 } else if (data.type === 'thinking_start') {
                   onThinking?.('')
+                } else if (data.type === 'topic_update' && data.topic) {
+                  onTopicUpdate?.(data.topic)
                 }
               } catch {
                 // Incomplete JSON, will be completed in next chunk
@@ -220,6 +234,7 @@ export function useApi() {
     retrieveMemories,
     saveMemory,
     executeTask,
-    getStatus
+    getStatus,
+    updateConversationTopic,
   }
 }

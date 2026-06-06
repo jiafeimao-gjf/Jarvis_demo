@@ -10,6 +10,7 @@ export interface Message {
 export interface Conversation {
   id: string
   title: string
+  topic?: string  // 对话主题 (auto-generated or user-edited)
   messages: Message[]
   createdAt: Date
   updatedAt: Date
@@ -41,6 +42,7 @@ export interface ChatResponse {
   text: string
   response: string
   conversation_id?: string
+  topic?: string
 }
 
 export interface VoiceResponse {
