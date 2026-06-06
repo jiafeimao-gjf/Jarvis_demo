@@ -56,6 +56,14 @@ function openSettings() {
 function closeSettings() {
   settingsOpen.value = false
 }
+
+// Fired by Sidebar when the user picks/creates a conversation. Closes the
+// Settings overlay so the user immediately lands on the chat they picked.
+function onSidebarSelectConversation() {
+  if (settingsOpen.value) {
+    settingsOpen.value = false
+  }
+}
 </script>
 
 <template>
@@ -63,7 +71,7 @@ function closeSettings() {
     <Header @open-settings="openSettings" />
 
     <div class="flex flex-1 overflow-hidden">
-      <Sidebar />
+      <Sidebar @select-conversation="onSidebarSelectConversation" />
       <main class="flex-1 flex flex-col">
         <Settings v-if="settingsOpen" @close="closeSettings" />
         <ChatWindow v-else />

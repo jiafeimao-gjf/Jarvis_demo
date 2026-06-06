@@ -4,16 +4,24 @@ import { useTheme } from '@/stores/theme'
 import { ref, nextTick } from 'vue'
 import type { Conversation } from '@/types'
 
+const emit = defineEmits<{
+  (e: 'select-conversation'): void
+}>()
+
 const chatStore = useChatStore()
 const { theme, toggleTheme } = useTheme()
 const isDarkMode = ref(theme.value === 'dark')
 
 function handleNewChat() {
   chatStore.createConversation()
+  emit('select-conversation')  // also jump to chat
 }
 
 function selectConversation(id: string) {
   chatStore.selectConversation(id)
+  // Notify parent — App.vue uses this to close Settings if it's open,
+  // so the user lands on the chat they just clicked.
+  emit('select-conversation')
 }
 
 function deleteConversation(id: string, event: Event) {
