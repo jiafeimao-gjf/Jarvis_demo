@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onUnmounted, watch } from 'vue'
+import { ref, onUnmounted, watch, onMounted } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
 import { useChatStore } from '@/stores/chat'
 import { useApi } from '@/composables/useApi'
@@ -17,6 +17,82 @@ const videoRef = ref<HTMLVideoElement | null>(null)
 let captureTimer: ReturnType<typeof setInterval> | null = null
 let frameQueue: Array<{ apiData: string; displayUrl: string }> = []
 const MAX_QUEUE = 2
+
+// Drag state
+const panelRef = ref<HTMLElement | null>(null)
+const panelPos = ref<{ x: number; y: number } | null>(null)  // null = use default (CSS class)
+let isDragging = false
+let dragStartX = 0
+let dragStartY = 0
+let dragOriginX = 0
+let dragOriginY = 0
+
+const POS_STORAGE_KEY = 'jarvis_camera_pos_v1'
+
+function loadPosition(): { x: number; y: number } | null {
+  try {
+    const raw = sessionStorage.getItem(POS_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+      return parsed
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+function savePosition(pos: { x: number; y: number }) {
+  try {
+    sessionStorage.setItem(POS_STORAGE_KEY, JSON.stringify(pos))
+  } catch { /* ignore */ }
+}
+
+function clampPosition(x: number, y: number): { x: number; y: number } {
+  // Keep panel within viewport — at least 24px visible from each edge
+  const w = panelRef.value?.offsetWidth ?? 288
+  const h = panelRef.value?.offsetHeight ?? 220
+  const maxX = Math.max(0, window.innerWidth - w - 8)
+  const maxY = Math.max(0, window.innerHeight - h - 8)
+  return {
+    x: Math.min(Math.max(8, x), maxX),
+    y: Math.min(Math.max(8, y), maxY),
+  }
+}
+
+function onDragHandleMouseDown(e: MouseEvent) {
+  // Only left button
+  if (e.button !== 0) return
+  isDragging = true
+  dragStartX = e.clientX
+  dragStartY = e.clientY
+  const cur = panelPos.value ?? defaultPos()
+  dragOriginX = cur.x
+  dragOriginY = cur.y
+  // Use current pos as initial so the panel doesn't jump on first drag
+  if (!panelPos.value) panelPos.value = cur
+  e.preventDefault()
+}
+
+function defaultPos(): { x: number; y: number } {
+  // Approximate the default `fixed bottom-20 right-6` position
+  const w = panelRef.value?.offsetWidth ?? 288
+  const h = panelRef.value?.offsetHeight ?? 220
+  return { x: window.innerWidth - w - 24, y: window.innerHeight - h - 80 }
+}
+
+function onMouseMove(e: MouseEvent) {
+  if (!isDragging) return
+  const dx = e.clientX - dragStartX
+  const dy = e.clientY - dragStartY
+  const next = clampPosition(dragOriginX + dx, dragOriginY + dy)
+  panelPos.value = next
+}
+
+function onMouseUp() {
+  if (!isDragging) return
+  isDragging = false
+  if (panelPos.value) savePosition(panelPos.value)
+}
 
 function handleClose() {
   stopCapture()
@@ -47,7 +123,14 @@ function captureFrame(): string | null {
   canvas.height = videoEl.videoHeight || 480
   const ctx = canvas.getContext('2d')
   if (!ctx) return null
+  // Un-mirror: since the <video> is shown with scaleX(-1), the captured pixels
+  // would also be mirrored. Pre-flip horizontally so the model sees the true
+  // orientation of the subject.
+  ctx.save()
+  ctx.translate(canvas.width, 0)
+  ctx.scale(-1, 1)
   ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height)
+  ctx.restore()
   return canvas.toDataURL('image/jpeg', 0.7)
 }
 
@@ -124,7 +207,22 @@ watch(
   { immediate: true }
 )
 
-onUnmounted(() => stopCapture())
+onMounted(() => {
+  // Restore position from sessionStorage
+  const saved = loadPosition()
+  if (saved) {
+    panelPos.value = clampPosition(saved.x, saved.y)
+  }
+  // Global mouse listeners so drag continues outside the handle
+  window.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('mouseup', onMouseUp)
+})
+
+onUnmounted(() => {
+  stopCapture()
+  window.removeEventListener('mousemove', onMouseMove)
+  window.removeEventListener('mouseup', onMouseUp)
+})
 </script>
 
 <template>
@@ -138,9 +236,22 @@ onUnmounted(() => stopCapture())
   >
     <div
       v-if="hardware.hardware.camera && hardware.cameraStream"
-      class="fixed bottom-20 right-6 w-72 rounded-xl border-2 border-primary overflow-hidden shadow-2xl bg-secondary z-50"
+      ref="panelRef"
+      class="fixed w-72 rounded-xl border-2 border-primary overflow-hidden shadow-2xl bg-secondary z-50 select-none"
+      :class="panelPos ? '' : 'bottom-20 right-6'"
+      :style="panelPos
+        ? { left: panelPos.x + 'px', top: panelPos.y + 'px', transition: isDragging ? 'none' : 'left 0.2s, top 0.2s' }
+        : undefined"
     >
-      <!-- Hidden canvas for frame capture -->
+      <!-- Drag handle bar -->
+      <div
+        class="h-7 bg-black/60 flex items-center justify-center cursor-move"
+        @mousedown="onDragHandleMouseDown"
+        title="按住拖动"
+      >
+        <span class="text-[10px] text-white/50 tracking-widest uppercase">摄像头 · 拖动</span>
+      </div>
+      <!-- Mirrored video preview (user-facing) -->
       <video
         ref="videoRef"
         :srcObject="hardware.cameraStream"
@@ -148,6 +259,7 @@ onUnmounted(() => stopCapture())
         playsinline
         muted
         class="w-full h-48 object-cover"
+        style="transform: scaleX(-1);"
       />
       <div class="p-3 space-y-2">
         <div class="flex items-center gap-2">

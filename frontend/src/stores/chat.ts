@@ -3,12 +3,47 @@ import { ref, computed } from 'vue'
 import type { Message, Conversation } from '@/types'
 import { useSettingsStore } from '@/stores/settings'
 
+// sessionStorage cache: instant topic display on page reload
+// Avoids the "未命名对话" flash before loadFromBackend completes.
+const TOPIC_CACHE_KEY = 'jarvis_topic_cache_v1'
+
+function loadTopicCache(): Record<string, string> {
+  try {
+    const raw = sessionStorage.getItem(TOPIC_CACHE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return (parsed && typeof parsed === 'object') ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveTopicCache(cache: Record<string, string>) {
+  try {
+    sessionStorage.setItem(TOPIC_CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    // Quota exceeded or storage disabled — silently ignore
+  }
+}
+
 export const useChatStore = defineStore('chat', () => {
   const settingsStore = useSettingsStore()
   const conversations = ref<Conversation[]>([])
   const currentConversationId = ref<string | null>(null)
   const isLoading = ref(false)
   const isSyncing = ref(false)
+
+  // Reactive copy of sessionStorage topic cache — updated whenever topics change
+  const topicCache = ref<Record<string, string>>(loadTopicCache())
+
+  function rememberTopic(conversationId: string, topic: string | undefined) {
+    if (topic) {
+      topicCache.value[conversationId] = topic
+    } else {
+      delete topicCache.value[conversationId]
+    }
+    saveTopicCache(topicCache.value)
+  }
 
   // Computed
   const currentConversation = computed(() =>
@@ -29,15 +64,24 @@ export const useChatStore = defineStore('chat', () => {
       if (response.ok) {
         const data = await response.json()
         const backendConvs = data.conversations || []
+        const cache = topicCache.value
 
-        conversations.value = backendConvs.map((conv: any) => ({
-          id: conv.conversation_id,
-          title: conv.title || `对话 ${conv.message_count} 条消息`,
-          topic: conv.topic || undefined,
-          messages: [],
-          createdAt: new Date(conv.created_at),
-          updatedAt: new Date(conv.updated_at)
-        }))
+        conversations.value = backendConvs.map((conv: any) => {
+          // Prefer backend topic; fall back to sessionStorage cache for instant display
+          const topic = conv.topic || cache[conv.conversation_id] || undefined
+          // If we served from cache but backend has a topic now, sync back to cache
+          if (conv.topic && cache[conv.conversation_id] !== conv.topic) {
+            rememberTopic(conv.conversation_id, conv.topic)
+          }
+          return {
+            id: conv.conversation_id,
+            title: conv.title || `对话 ${conv.message_count} 条消息`,
+            topic,
+            messages: [],
+            createdAt: new Date(conv.created_at),
+            updatedAt: new Date(conv.updated_at)
+          }
+        })
       }
     } catch (e) {
       console.error('Failed to load from backend:', e)
@@ -207,9 +251,10 @@ export const useChatStore = defineStore('chat', () => {
     const normalized = (topic || '').trim().slice(0, 60)
     if (!normalized) return  // ignore empty
 
-    // Optimistic local update
+    // Optimistic local update + sessionStorage cache
     const previous = conv.topic
     conv.topic = normalized
+    rememberTopic(conversationId, normalized)
 
     // Debounced PUT
     if (topicUpdateTimeout) clearTimeout(topicUpdateTimeout)
@@ -222,10 +267,14 @@ export const useChatStore = defineStore('chat', () => {
         })
         if (!res.ok) {
           conv.topic = previous  // revert
+          if (previous) rememberTopic(conversationId, previous)
+          else rememberTopic(conversationId, undefined as any)
           console.error(`Update topic failed: ${res.status}`)
         }
       } catch (e) {
         conv.topic = previous
+        if (previous) rememberTopic(conversationId, previous)
+        else rememberTopic(conversationId, undefined as any)
         console.error('Update topic error:', e)
       }
     }, 600)
@@ -237,13 +286,12 @@ export const useChatStore = defineStore('chat', () => {
     if (!conv) return
     // Don't overwrite if user has already edited it manually
     // (race: SSE may arrive after manual edit)
-    if (conv.topic && conv.topic !== topic) {
-      // Only overwrite if the existing value is empty/placeholder
-      if (conv.topic && conv.topic.length > 0) {
-        return  // user has a real topic; keep it
-      }
+    if (conv.topic && conv.topic !== topic && conv.topic.length > 0) {
+      return  // user has a real topic; keep it
     }
-    conv.topic = (topic || '').trim().slice(0, 60)
+    const cleaned = (topic || '').trim().slice(0, 60)
+    conv.topic = cleaned
+    rememberTopic(conversationId, cleaned)
   }
 
   // Initialize
