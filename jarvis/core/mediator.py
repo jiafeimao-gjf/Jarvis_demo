@@ -30,6 +30,12 @@ class JarvisMediator:
         self._register_handlers()
         logger.info("JarvisMediator initialized with SubModelProcessor")
 
+    async def reload_ai_router(self):
+        """Reload the AI router's client cache after provider config change."""
+        await self.chat_engine.router.close()
+        self.chat_engine.router.clear_cache()
+        logger.info("[Mediator] AI router cache cleared for hot-reload")
+
     def _register_handlers(self):
         """注册事件处理器"""
         self._event_handlers = {

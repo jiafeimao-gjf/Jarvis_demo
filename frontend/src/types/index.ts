@@ -1,3 +1,16 @@
+export type ProviderType = 'ollama' | 'openai' | 'anthropic' | 'minimax'
+
+export interface ProviderInstance {
+  id: string
+  type: ProviderType
+  display_name: string
+  base_url?: string
+  api_key?: string
+  default_model: string
+  enabled: boolean
+  timeout?: number
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'tool_result'
@@ -36,6 +49,7 @@ export interface ChatRequest {
   model?: string
   force_refresh_models?: boolean
   messages?: Array<{ role: string; content: string }>
+  provider_id?: string
 }
 
 export interface ChatResponse {

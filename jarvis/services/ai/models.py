@@ -10,6 +10,7 @@ class Provider(Enum):
     OLLAMA = "ollama"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
+    MINIMAX = "minimax"
 
 
 @dataclass(frozen=True)

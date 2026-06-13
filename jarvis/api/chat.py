@@ -23,6 +23,7 @@ class ChatRequest(BaseModel):
     force_refresh_models: bool = False
     # 可选：传递完整对话历史以支持上下文
     messages: Optional[list[dict]] = None
+    provider_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -87,7 +88,8 @@ async def chat_stream(request: ChatRequest):
                     request.messages,
                     request.model,
                     request.conversation_id,
-                    request.user_id
+                    request.user_id,
+                    request.provider_id,
                 ):
                     if first_token:
                         logger.info(f"[SSE] 首个数据到达, 耗时={(_time.time()-t_start)*1000:.0f}ms")
@@ -119,7 +121,8 @@ async def chat_stream(request: ChatRequest):
                     request.message,
                     request.conversation_id,
                     request.model,
-                    request.user_id
+                    request.user_id,
+                    request.provider_id,
                 ):
                     # 检查是否是 JSON 事件（tool_call 或 tool_result）
                     if content.startswith('{'):

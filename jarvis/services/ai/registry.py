@@ -63,6 +63,32 @@ class ProviderRegistry:
         return adapter_class(model=model_info.model_id, **config)
 
     @classmethod
+    def create_client_for_instance(
+        cls,
+        instance_type: str,
+        model_id: str,
+        **kwargs
+    ) -> AIClient:
+        """Create an AI client using instance type directly (bypasses MODELS dict).
+
+        Supports any model name — used for user-defined provider instances with
+        custom model names that aren't in the hardcoded MODELS registry."""
+        try:
+            provider_enum = Provider(instance_type.lower())
+        except ValueError:
+            raise ValueError(f"Unknown provider type: {instance_type}")
+
+        adapter_class = cls._providers.get(provider_enum)
+        if not adapter_class:
+            raise ValueError(f"No adapter registered for provider: {provider_enum}")
+
+        # Merge config cache with kwargs
+        config = cls._config_cache.get(provider_enum, {})
+        config.update(kwargs)
+
+        return adapter_class(model=model_id, **config)
+
+    @classmethod
     def list_providers(cls) -> List[Provider]:
         """List all registered providers"""
         return list(cls._providers.keys())

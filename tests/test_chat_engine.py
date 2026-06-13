@@ -446,7 +446,7 @@ class TestStreamChat:
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
 
-        async def mock_stream_full(messages, model=None):
+        async def mock_stream_full(messages, model=None, instance=None, **kwargs):
             yield {"type": "text", "content": "Hello, stream response!"}
             yield {"type": "message_stop"}
 
@@ -478,7 +478,7 @@ class TestStreamChat:
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
 
-        async def mock_stream_full(messages, model=None):
+        async def mock_stream_full(messages, model=None, instance=None, **kwargs):
             yield {"type": "text", "content": "Stream response"}
             yield {"type": "message_stop"}
 
@@ -499,7 +499,7 @@ class TestStreamChat:
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
 
-        async def mock_stream_full(messages, model=None):
+        async def mock_stream_full(messages, model=None, instance=None, **kwargs):
             yield {"type": "text", "content": "Saved response"}
             yield {"type": "message_stop"}
 
@@ -530,7 +530,7 @@ class TestStreamChatWithMessages:
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
 
-        async def mock_stream_full(messages, model=None):
+        async def mock_stream_full(messages, model=None, instance=None, **kwargs):
             yield {"type": "text", "content": "Response with history"}
             yield {"type": "message_stop"}
 
@@ -564,7 +564,7 @@ class TestStreamChatWithMessages:
         engine.memory.save_conversation = AsyncMock(return_value=True)
         engine._load_prompt_settings = AsyncMock(return_value=SystemPromptSettings())
 
-        async def mock_stream_full(messages, model=None):
+        async def mock_stream_full(messages, model=None, instance=None, **kwargs):
             yield {"type": "text", "content": "Continued"}
             yield {"type": "message_stop"}
 

@@ -3,7 +3,7 @@
 from typing import Optional, List, AsyncIterator
 import time
 from jarvis.services.ai.base import AIClient, AIResponse, ResponseMetrics
-from jarvis.services.ai.config import AIConfig, ProviderConfig
+from jarvis.services.ai.config import AIConfig, ProviderConfig, create_ai_config_from_settings
 from jarvis.services.ai.models import MODELS, Provider, get_model, find_vision_model
 from jarvis.services.ai.registry import ProviderRegistry
 from jarvis.services.ai.exceptions import (
@@ -39,6 +39,23 @@ class AIRouter:
             )
         return self._client_cache[cache_key]
 
+    def _get_client_with_instance(self, instance, model_id: str) -> AIClient:
+        """Get or create adapter for a specific ProviderInstance + model.
+        Cache key includes instance.id so different instances never share a client."""
+        from jarvis.services.ai.instance_config import ProviderInstance
+        inst: ProviderInstance = instance
+        cache_key = f"{inst.id}:{model_id}"
+        if cache_key in self._client_cache:
+            return self._client_cache[cache_key]
+        kwargs = {"timeout": inst.timeout}
+        if inst.base_url:
+            kwargs["base_url"] = inst.base_url
+        if inst.api_key:
+            kwargs["api_key"] = inst.api_key
+        client = ProviderRegistry.create_client_for_instance(inst.type, model_id, **kwargs)
+        self._client_cache[cache_key] = client
+        return client
+
     # ── Chat ────────────────────────────────────────────────────
 
     async def chat(
@@ -66,22 +83,28 @@ class AIRouter:
 
     async def chat_stream(
         self, messages: list[dict], model: Optional[str] = None,
-        provider: Optional[str] = None, **kwargs
+        provider: Optional[str] = None, instance=None, **kwargs
     ) -> AsyncIterator[str]:
         model_id = model or self.config.default_model
-        prov = provider or self.config.default_provider
-        client = self._get_client(prov, model_id)
+        if instance is not None:
+            client = self._get_client_with_instance(instance, model_id)
+        else:
+            prov = provider or self.config.default_provider
+            client = self._get_client(prov, model_id)
         async for token in client.chat_stream(messages):
             yield token
 
     async def chat_stream_full(
         self, messages: list[dict], model: Optional[str] = None,
-        provider: Optional[str] = None, **kwargs
+        provider: Optional[str] = None, instance=None, **kwargs
     ) -> AsyncIterator[dict]:
         """Stream chat with structured events for tool-use detection."""
         model_id = model or self.config.default_model
-        prov = provider or self.config.default_provider
-        client = self._get_client(prov, model_id)
+        if instance is not None:
+            client = self._get_client_with_instance(instance, model_id)
+        else:
+            prov = provider or self.config.default_provider
+            client = self._get_client(prov, model_id)
         async for event in client.chat_stream_full(messages):
             yield event
 

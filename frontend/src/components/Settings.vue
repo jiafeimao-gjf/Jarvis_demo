@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
+import ProviderManager from './ProviderManager.vue'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -372,6 +373,12 @@ async function loadOllamaModels() {
         <div class="mt-4 text-sm text-muted-foreground">
           Ollama 模型从 API 动态加载 | 云端: gpt-4o-mini, gpt-4o, claude-3-haiku, claude-3-5-sonnet
         </div>
+      </section>
+
+      <!-- Provider 管理 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">Provider 管理</h2>
+        <ProviderManager />
       </section>
 
       <!-- 硬件配置 -->

@@ -31,7 +31,7 @@ class OpenAIConfig(BaseModel):
 class AnthropicConfig(BaseModel):
     """Anthropic 配置 — API key from env only, no default"""
     api_key: Optional[str] = None
-    base_url: str = "https://api.anthropic.com/v1"
+    base_url: str = "https://api.anthropic.com"
     model: str = "claude-3-haiku-20240307"
     timeout: float = 60.0
 

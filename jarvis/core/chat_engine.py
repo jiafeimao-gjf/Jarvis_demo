@@ -15,8 +15,9 @@ from jarvis.core.tool_parser import ToolCallParser, ToolCall
 from jarvis.core.tool_result_formatter import ToolResultFormatter
 from jarvis.core.tool_registry import tool_registry
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
-from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter
+from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter, MiniMaxAdapter
 from jarvis.services.ai.models import Provider
+from jarvis.services.ai.instance_config import get_instance_store
 from jarvis.services.skill_loader import load_skills, load_prompt_files
 from jarvis.core.topic_generator import generate_topic
 from jarvis.utils.logger import get_logger
@@ -45,6 +46,7 @@ class ChatEngine:
         ProviderRegistry.register(Provider.OLLAMA, OllamaAdapter)
         ProviderRegistry.register(Provider.OPENAI, OpenAIAdapter)
         ProviderRegistry.register(Provider.ANTHROPIC, AnthropicAdapter)
+        ProviderRegistry.register(Provider.MINIMAX, MiniMaxAdapter)
 
         # Initialize AI config
         self.ai_config = AIConfig()
@@ -56,6 +58,16 @@ class ChatEngine:
         # 工具执行器
         self.task_executor = TaskExecutor(self.work_folder)
         self.tool_parser = ToolCallParser(self.work_folder)
+
+    def _resolve_instance(self, provider_id: Optional[str] = None):
+        """Resolve a ProviderInstance from provider_id or return active instance."""
+        store = get_instance_store()
+        if provider_id:
+            inst = store.get_by_id(provider_id)
+            if inst and inst.enabled:
+                return inst
+            logger.warning(f"[ChatEngine] provider_id={provider_id!r} not found or disabled, using active")
+        return store.get_active_instance()
 
     def _build_system_prompt(self, settings: SystemPromptSettings = None) -> str:
         """构建系统提示词 — 从 workspace/prompts/*.md 文件拼接"""
@@ -144,7 +156,8 @@ class ChatEngine:
         user_input: str,
         conversation_id: Optional[str] = None,
         model: Optional[str] = None,
-        stream: bool = False  # Default to non-stream for simpler response
+        stream: bool = False,
+        provider_id: Optional[str] = None,
     ) -> dict:
         """处理对话 - 支持工具调用。返回 {text, topic}。"""
         logger.info(f"[Chat] 开始处理对话 | conv_id={conversation_id} | model={model} | input_len={len(user_input)}")
@@ -373,7 +386,8 @@ class ChatEngine:
         user_input: str,
         conversation_id: Optional[str] = None,
         model: Optional[str] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        provider_id: Optional[str] = None,
     ):
         """流式对话 - 两阶段：第一阶段执行工具，第二阶段流式返回。
         若为首轮对话,会在主流程结束后异步生成主题并 yield topic_update 事件。"""
@@ -428,8 +442,9 @@ class ChatEngine:
         tool_uses: list[dict] = []
         content_blocks: list[dict] = []
         current_tool: dict | None = None
+        instance = self._resolve_instance(provider_id)
 
-        async for event in self.router.chat_stream_full(messages, model=model):
+        async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
             etype = event.get("type", "")
 
             if etype == "thinking_start":
@@ -638,7 +653,8 @@ class ChatEngine:
         messages_history: list[dict],
         model: Optional[str] = None,
         conversation_id: Optional[str] = None,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        provider_id: Optional[str] = None,
     ):
         """流式对话 - 使用传入的完整消息历史"""
         logger.info(f"[StreamChatWithMsgs] 开始处理 | conv_id={conversation_id} | user_id={user_id} | model={model} | input_len={len(user_input)} | history_len={len(messages_history)}")
@@ -696,8 +712,9 @@ class ChatEngine:
         tool_uses: list[dict] = []
         content_blocks: list[dict] = []
         current_tool: dict | None = None
+        instance = self._resolve_instance(provider_id)
 
-        async for event in self.router.chat_stream_full(messages, model=model):
+        async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
             etype = event.get("type", "")
 
             if etype == "thinking_start":

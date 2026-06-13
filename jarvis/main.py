@@ -156,6 +156,11 @@ async def startup_event():
     logger.info(f"{settings.app_name} v{settings.app_version} starting...")
     settings.storage.ensure_directories()
     logger.info("Directories initialized")
+    # Pre-load provider instances from DB
+    from jarvis.services.ai.instance_config import get_instance_store
+    store = get_instance_store()
+    await store.load()
+    logger.info(f"Provider instances loaded: {[i.id for i in store.get_all()]}")
 
 
 @app.on_event("shutdown")

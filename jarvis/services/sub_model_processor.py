@@ -63,7 +63,13 @@ class SubModelProcessor:
             return ""
 
         try:
-            client = self._router._get_client("ollama", self.stt_model)
+            from jarvis.services.ai.instance_config import get_instance_store
+            store = get_instance_store()
+            inst = store.get_active_instance()
+            if inst:
+                client = self._router._get_client_with_instance(inst, self.stt_model)
+            else:
+                client = self._router._get_client("ollama", self.stt_model)
             text = await client.transcribe_audio(audio_data)
             result = text.strip() if text else ""
             logger.info(f"STT result ({len(result)} chars): {result[:100]}...")

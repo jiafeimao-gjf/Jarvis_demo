@@ -2,11 +2,13 @@
 import { ref, watch, nextTick, onMounted, computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
+import { useProvidersStore } from '@/stores/providers'
 import { useApi } from '@/composables/useApi'
 import ChatMessage from './ChatMessage.vue'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+const providersStore = useProvidersStore()
 const api = useApi()
 const inputValue = ref('')
 const isLoading = ref(false)
@@ -133,7 +135,8 @@ async function handleSend() {
         conversation_id: chatStore.currentConversationId || undefined,
         user_id: settingsStore.settings.user_name || undefined,
         force_refresh_models: false,
-        model: settingsStore.settings.ai_default_model,
+        model: providersStore.activeInstance?.default_model || settingsStore.settings.ai_default_model,
+        provider_id: providersStore.activeProviderId || undefined,
         messages: messagesToSend
       },
       (token: string) => {

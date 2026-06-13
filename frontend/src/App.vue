@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useHardwareStore } from '@/stores/hardware'
+import { useProvidersStore } from '@/stores/providers'
 import { useApi } from '@/composables/useApi'
 import Header from '@/components/Header.vue'
 import Sidebar from '@/components/Sidebar.vue'
@@ -10,12 +11,17 @@ import CameraPreview from '@/components/CameraPreview.vue'
 import Settings from '@/components/Settings.vue'
 
 const hardware = useHardwareStore()
+const providersStore = useProvidersStore()
 const api = useApi()
 const settingsOpen = ref(false)
 
 let statusInterval: ReturnType<typeof setInterval>
 
 onMounted(async () => {
+  // Load provider instances before status check
+  await providersStore.loadFromBackend()
+  await providersStore.loadActive()
+
   // Initial status check
   try {
     const status = await api.getStatus()
