@@ -63,6 +63,10 @@ class AnthropicAdapter(AIClient):
             "max_tokens": max_tokens or 4096,
             "temperature": temperature,
         }
+        from jarvis.core.tool_registry import tool_registry
+        tools = tool_registry.build_anthropic_tools()
+        if tools:
+            payload["tools"] = tools
         try:
             resp = await self.client.post("/v1/messages", json=payload)
             if resp.status_code == 401:
@@ -98,6 +102,10 @@ class AnthropicAdapter(AIClient):
             "max_tokens": 4096,
             "stream": True,
         }
+        from jarvis.core.tool_registry import tool_registry
+        tools = tool_registry.build_anthropic_tools()
+        if tools:
+            payload["tools"] = tools
         import json as _json
         current_block_type = None
         tool_name = ""
