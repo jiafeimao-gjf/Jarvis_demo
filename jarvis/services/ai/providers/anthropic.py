@@ -19,7 +19,7 @@ class AnthropicAdapter(AIClient):
         self,
         model: str,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.anthropic.com/v1",
+        base_url: str = "https://api.anthropic.com",
         timeout: float = 60.0,
     ):
         super().__init__(model=model, provider="anthropic")
@@ -90,27 +90,102 @@ class AnthropicAdapter(AIClient):
         except httpx.HTTPError as e:
             raise ProviderNotAvailableError("anthropic", str(e))
 
-    async def chat_stream(self, messages) -> AsyncIterator[str]:
+    async def chat_stream_full(self, messages) -> AsyncIterator[dict]:
+        """Streaming with structured events: thinking + text + tool_use."""
         payload = {
             "model": self.model,
             "messages": messages,
             "max_tokens": 4096,
             "stream": True,
         }
+        import json as _json
+        current_block_type = None
+        tool_name = ""
+        tool_id = ""
+        tool_input_parts = []
+
         try:
             async with self.client.stream("POST", "/v1/messages", json=payload) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
                     if line.startswith("data: "):
-                        import json
                         try:
-                            data = json.loads(line[6:])
-                            if data.get("type") == "content_block_delta":
-                                yield data.get("delta", {}).get("text", "")
-                        except (json.JSONDecodeError, KeyError):
+                            data = _json.loads(line[6:])
+                        except _json.JSONDecodeError:
                             continue
+
+                        evt_type = data.get("type", "")
+
+                        if evt_type == "message_start":
+                            yield {"type": "message_start", "content": ""}
+
+                        elif evt_type == "content_block_start":
+                            block = data.get("content_block", {})
+                            block_type = block.get("type", "")
+                            current_block_type = block_type
+
+                            if block_type == "thinking":
+                                yield {"type": "thinking_start", "content": ""}
+                            elif block_type == "text":
+                                yield {"type": "text_start", "content": ""}
+                            elif block_type == "tool_use":
+                                tool_name = block.get("name", "")
+                                tool_id = block.get("id", "")
+                                tool_input_parts = []
+                                yield {
+                                    "type": "tool_use_start",
+                                    "name": tool_name,
+                                    "id": tool_id,
+                                }
+
+                        elif evt_type == "content_block_delta":
+                            delta = data.get("delta", {})
+                            delta_type = delta.get("type", "")
+
+                            if current_block_type == "thinking" and delta_type == "thinking_delta":
+                                yield {"type": "thinking", "content": delta.get("thinking", "")}
+                            elif current_block_type == "text" and delta_type == "text_delta":
+                                yield {"type": "text", "content": delta.get("text", "")}
+                            elif current_block_type == "tool_use" and delta_type == "input_json_delta":
+                                chunk = delta.get("partial_json", "")
+                                tool_input_parts.append(chunk)
+                                yield {"type": "tool_use_delta", "partial_json": chunk}
+
+                        elif evt_type == "content_block_stop":
+                            if current_block_type == "thinking":
+                                yield {"type": "thinking_end", "content": ""}
+                            elif current_block_type == "text":
+                                yield {"type": "text_end", "content": ""}
+                            elif current_block_type == "tool_use":
+                                full_json = "".join(tool_input_parts)
+                                try:
+                                    input_data = _json.loads(full_json)
+                                except _json.JSONDecodeError:
+                                    logger.warning(f"[Anthropic] failed to parse tool_use input: {full_json[:200]}")
+                                    input_data = {}
+                                yield {
+                                    "type": "tool_use_end",
+                                    "name": tool_name,
+                                    "id": tool_id,
+                                    "input": input_data,
+                                }
+                            current_block_type = None
+
+                        elif evt_type == "message_delta":
+                            yield {"type": "message_delta", "content": ""}
+
+                        elif evt_type == "message_stop":
+                            yield {"type": "message_stop", "content": ""}
+
         except httpx.HTTPError as e:
             raise ProviderNotAvailableError("anthropic", str(e))
+
+    async def chat_stream(self, messages) -> AsyncIterator[str]:
+        """Streaming plain text (for backward compat)."""
+        async for event in self.chat_stream_full(messages):
+            evt_type = event.get("type", "")
+            if evt_type in ("thinking", "text"):
+                yield event["content"]
 
     async def vision_analyze(self, image_data, prompt) -> str:
         import base64
