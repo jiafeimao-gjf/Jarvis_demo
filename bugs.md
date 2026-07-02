@@ -238,35 +238,37 @@
 
 ---
 
-## 19. AnthropicAdapter 把 system 塞在 messages 里, DeepSeek 等严格服务端返回 400
+## 19. AnthropicAdapter 非流式 _messages 传 temperature 导致 DeepSeek 等端返回 400
 
 **日期:** 2026-07-02
 
-**现象:** Subagent coder 调 `router.chat(messages, instance=deepseek_instance, ...)` 报错：
+**现象:** Subagent coder 调 `router.chat(messages, stream=False)` 报错：
 
 ```
 [Subagent coder] failed: [anthropic] Client error '400 Bad Request'
 for url 'https://api.deepseek.com/anthropic/v1/messages'
 ```
 
-subagent 刚修复完模型透传 (#16 + #17), 现在 subagent 确实用上了 deepseek ProviderInstance,
-但首次 LLM 调用就传了 400. 主对话流式 (`chat_stream_full`) 此前也可能有同样问题 (看日志
-`All providers failed:` 的空消息, 可能就是同一个根因).
+主对话流式 `chat_stream_full` (stream=True) **正常**。但 subagent / 工具迭代都走非流式 `_messages` → 400。
 
-**原因:** Anthropic Messages API 规范要求 `system` 是请求体的顶级字段, **不允许**在 `messages`
-数组里出现 `{"role": "system", ...}`。`AnthropicAdapter._messages()` 和
-`chat_stream_full()` 直接把 system 消息原样放在 messages 里传给远程端。
+**原因:** `AnthropicAdapter._messages()` 的 payload 多了 `temperature` 字段, 而
+`chat_stream_full()` 的 payload **没有** temperature. DeepSeek 的非流式端点对 `temperature`
+参数校验严格 (或根本不接受), 返回 400. Ollama 端点宽松, 未暴露.
 
-DeepSeek 的 Anthropic 兼容端点严格校验, 发现 `role: system` 在 messages 里 → 400.
-Ollama 的兼容端点宽松, 不校验 → 所以直连 Ollama 时未暴露。
+同时也发现 `_messages` 的 `max_tokens` 默认 2048 (来自 `chat()` 签名), 而
+`chat_stream_full` 硬编码 4096 — 但这个是次要差异 (Anthropic API 不因 max_tokens 过小
+报 400, 只会截断输出).
+
+首次尝试: 把 system 从 messages 里提取到顶层 `"system"` 字段 (Anthropic 规范写法) —
+结果主对话的 `chat_stream_full` 也被改, DeepSeek **不认**顶层 system 字段, 主对话也 400.
+回退 system 提取, 确认 temperature 才是差异.
 
 **解决:**
-- `services/ai/providers/anthropic.py`: `_messages()` 和 `chat_stream_full()` 两处都
-  加 system 提取逻辑: 遍历 messages, 把 `role == "system"` 的消息移到 payload 顶级
-  `"system"` 字段, 其余消息保留.
-- 同时补了 HTTP 错误响应体的 debug 日志 (截取前 500 字符), 方便后续排查 4xx.
+- `_messages()`: payload 移除 `temperature` 字段, 与 `chat_stream_full` 保持一致.
+- 保留 HTTP 错误响应体 debug 日志 (前 500 字符).
 
-**验证:** 全部 196 个测试通过. 重启后端后用 deepseek 实例再触发 subagent, 不应再报 400.
+**验证:** 全部 196 个测试通过. 重启后端后用 deepseek 实例再触发 subagent + 主对话工具迭代,
+确认 400 不再出现.
 
 ---
 
