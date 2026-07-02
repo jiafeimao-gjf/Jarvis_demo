@@ -90,7 +90,7 @@ watch(
       batchSessions.value = results.filter((s): s is SubSession => s !== null)
       loading.value = false
       activeTab.value = props.initialTab ?? 0
-    } else if (id) {
+    } else if (typeof id === 'string') {
       // 单 session
       loading.value = true
       session.value = null
@@ -216,7 +216,7 @@ watch(
             v-for="m in currentSession.messages"
             :key="m.message_id"
             :class="[
-              'rounded-lg p-3 text-sm border',
+              'rounded-lg p-3 text-sm border border-l-2 border-l-violet-500/60',
               m.role === 'user'
                 ? 'bg-primary/5 border-primary/20'
                 : m.role === 'assistant'
@@ -225,6 +225,14 @@ watch(
             ]"
           >
             <div class="flex items-center gap-2 text-[11px] text-muted-foreground mb-1">
+              <span
+                class="px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap
+                       bg-violet-500/15 text-violet-600 dark:text-violet-400
+                       border border-violet-500/25"
+                :title="`子代理会话${currentSession?.subagent_role ? ' · ' + currentSession.subagent_role : ''}`"
+              >
+                SUB {{ ROLE_META[currentSession?.subagent_role || 'general']?.icon }} 子代理
+              </span>
               <span class="font-medium">{{ m.role }}</span>
               <span>·</span>
               <span>{{ formatTime(m.timestamp) }}</span>

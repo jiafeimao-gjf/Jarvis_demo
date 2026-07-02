@@ -20,6 +20,7 @@ interface SubagentData {
   mode?: string
   results?: SubagentItem[]
   reduced_output?: string
+  output?: string
   status: 'success' | 'partial' | 'error'
   elapsed_ms?: number
   sub_session_id?: string

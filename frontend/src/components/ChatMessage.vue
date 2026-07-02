@@ -54,6 +54,7 @@ const subagentResultData = computed(() => {
       mode: data.mode,
       results: data.results,
       reduced_output: data.reduced_output,
+      output: data.output,
       status: data.status || 'success',
       elapsed_ms: data.elapsed_ms,
       sub_session_id: data.sub_session_id,
