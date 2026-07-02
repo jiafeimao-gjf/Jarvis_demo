@@ -57,12 +57,25 @@ class AnthropicAdapter(AIClient):
         return await self._messages(messages, temperature, max_tokens)
 
     async def _messages(self, messages, temperature, max_tokens) -> AIResponse:
-        payload = {
+        # Extract system prompt from messages array — Anthropic API requires
+        # a top-level "system" field, NOT a message with role="system".
+        system_content: Optional[str] = None
+        filtered: list[dict] = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_content = m.get("content", "") or None
+            else:
+                filtered.append(m)
+
+        payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": filtered,
             "max_tokens": max_tokens or 4096,
             "temperature": temperature,
         }
+        if system_content:
+            payload["system"] = system_content
+
         from jarvis.core.tool_registry import tool_registry
         tools = tool_registry.build_anthropic_tools()
         if tools:
@@ -92,16 +105,40 @@ class AnthropicAdapter(AIClient):
                 content_blocks=data.get("content", []),
             )
         except httpx.HTTPError as e:
+            # Log response body for debugging
+            body = ""
+            try:
+                body = getattr(e, "response", None)
+                if body and hasattr(body, "text"):
+                    body = body.text[:500]
+            except Exception:
+                pass
+            logger.error(
+                f"[Anthropic] _messages HTTP error: {e}"
+                + (f" | body: {body}" if body else "")
+            )
             raise ProviderNotAvailableError("anthropic", str(e))
 
     async def chat_stream_full(self, messages) -> AsyncIterator[dict]:
         """Streaming with structured events: thinking + text + tool_use."""
-        payload = {
+        # Extract system prompt from messages array (same as _messages)
+        system_content: Optional[str] = None
+        filtered: list[dict] = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_content = m.get("content", "") or None
+            else:
+                filtered.append(m)
+
+        payload: dict = {
             "model": self.model,
-            "messages": messages,
+            "messages": filtered,
             "max_tokens": 4096,
             "stream": True,
         }
+        if system_content:
+            payload["system"] = system_content
+
         from jarvis.core.tool_registry import tool_registry
         tools = tool_registry.build_anthropic_tools()
         if tools:

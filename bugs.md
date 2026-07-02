@@ -238,4 +238,36 @@
 
 ---
 
+## 19. AnthropicAdapter 把 system 塞在 messages 里, DeepSeek 等严格服务端返回 400
+
+**日期:** 2026-07-02
+
+**现象:** Subagent coder 调 `router.chat(messages, instance=deepseek_instance, ...)` 报错：
+
+```
+[Subagent coder] failed: [anthropic] Client error '400 Bad Request'
+for url 'https://api.deepseek.com/anthropic/v1/messages'
+```
+
+subagent 刚修复完模型透传 (#16 + #17), 现在 subagent 确实用上了 deepseek ProviderInstance,
+但首次 LLM 调用就传了 400. 主对话流式 (`chat_stream_full`) 此前也可能有同样问题 (看日志
+`All providers failed:` 的空消息, 可能就是同一个根因).
+
+**原因:** Anthropic Messages API 规范要求 `system` 是请求体的顶级字段, **不允许**在 `messages`
+数组里出现 `{"role": "system", ...}`。`AnthropicAdapter._messages()` 和
+`chat_stream_full()` 直接把 system 消息原样放在 messages 里传给远程端。
+
+DeepSeek 的 Anthropic 兼容端点严格校验, 发现 `role: system` 在 messages 里 → 400.
+Ollama 的兼容端点宽松, 不校验 → 所以直连 Ollama 时未暴露。
+
+**解决:**
+- `services/ai/providers/anthropic.py`: `_messages()` 和 `chat_stream_full()` 两处都
+  加 system 提取逻辑: 遍历 messages, 把 `role == "system"` 的消息移到 payload 顶级
+  `"system"` 字段, 其余消息保留.
+- 同时补了 HTTP 错误响应体的 debug 日志 (截取前 500 字符), 方便后续排查 4xx.
+
+**验证:** 全部 196 个测试通过. 重启后端后用 deepseek 实例再触发 subagent, 不应再报 400.
+
+---
+
 *持续更新*
