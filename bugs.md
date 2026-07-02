@@ -154,4 +154,27 @@
 
 ---
 
+## 16. Subagent 调用模型与主对话不一致
+
+**日期:** 2026-07-02
+
+**现象:** 主对话用用户选定的 `model` + 解析出的 `ProviderInstance` 调 LLM，但通过 `subagent` 工具委派的子任务用了全局默认模型、且绑不到自定义 Provider 实例（如 MiniMax 代理）。MAP_REDUCE 的 reduce 阶段同理。
+
+**原因:**
+1. `BaseSubagent.run()` 调 `router.chat(messages, model=self.config.model, ...)`，而 `SubagentConfig.model` 默认 `None` → router 回退到 `self.config.default_model`（全局默认），忽略了主对话用户选的模型。
+2. subagent 调用完全没传 `instance`，用户配置的自定义 `ProviderInstance` 不会被使用。
+3. `SubagentOrchestrator` 的 MAP_REDUCE reduce LLM 调用既没传 model 也没传 instance。
+4. `router.chat()` 本身不支持 `instance` 参数（只有 `chat_stream` / `chat_stream_full` 支持），导致即使想传也传不进去。
+
+**解决:**
+- `services/ai/router.py`: `chat()` 新增 `instance` 参数，绑定时走 `_get_client_with_instance` 并跳过 fallback chain，行为与 `chat_stream_full` 对齐。
+- `core/subagent.py`: `BaseSubagent` / `create_subagent` / `SubagentOrchestrator` 新增 `main_model` + `instance` 字段；`run()` 用 `self.config.model or self.main_model` + `self.instance` 调 `router.chat`；reduce 阶段同样传入 `self.model` / `self.instance`。
+- `core/chat_engine.py`: `chat` / `stream_chat` / `stream_chat_with_messages` 三处每次对话注入 `subagent_orchestrator.model = model` 和 `.instance = _resolve_instance(provider_id)`。
+
+**优先级:** `SubagentConfig.model`（显式 per-subagent 覆盖）> 主对话模型 > router 默认。保留了"子代理可用不同模型"的扩展点，默认行为与主对话保持一致。
+
+**验证:** `tests/` 全部 191 个测试通过（含 `test_subagent.py` / `test_router_instance.py`）。
+
+---
+
 *持续更新*

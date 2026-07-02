@@ -214,6 +214,10 @@ class ChatEngine:
 
         # v3: 把当前会话注入 subagent 编排器, 让 LLM 调 subagent 时创建独立子会话
         self.subagent_orchestrator.parent_conversation = self.current_conversation
+        # 让 subagent 跟随主对话的模型 / ProviderInstance
+        instance = self._resolve_instance(provider_id)
+        self.subagent_orchestrator.model = model
+        self.subagent_orchestrator.instance = instance
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -453,6 +457,10 @@ class ChatEngine:
 
         # v3: 把当前会话注入 subagent 编排器
         self.subagent_orchestrator.parent_conversation = self.current_conversation
+        # 让 subagent 跟随主对话的模型 / ProviderInstance
+        _instance = self._resolve_instance(provider_id)
+        self.subagent_orchestrator.model = model
+        self.subagent_orchestrator.instance = _instance
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -738,6 +746,10 @@ class ChatEngine:
 
         # v3: 把当前会话注入 subagent 编排器
         self.subagent_orchestrator.parent_conversation = self.current_conversation
+        # 让 subagent 跟随主对话的模型 / ProviderInstance
+        _instance = self._resolve_instance(provider_id)
+        self.subagent_orchestrator.model = model
+        self.subagent_orchestrator.instance = _instance
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)

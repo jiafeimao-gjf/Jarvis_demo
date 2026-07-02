@@ -60,10 +60,20 @@ class AIRouter:
 
     async def chat(
         self, messages: list[dict], model: Optional[str] = None,
-        provider: Optional[str] = None, enable_fallback: Optional[bool] = None,
+        provider: Optional[str] = None, instance=None,
+        enable_fallback: Optional[bool] = None,
         **kwargs
     ) -> AIResponse:
         model_id = model or self.config.default_model
+
+        # 绑定到具体 ProviderInstance 时, 跳过 fallback chain (与 chat_stream_full 一致)
+        if instance is not None:
+            client = self._get_client_with_instance(instance, model_id)
+            start = time.time()
+            resp = await client.chat(messages, **kwargs)
+            resp.metrics = ResponseMetrics(latency_ms=(time.time() - start) * 1000)
+            return resp
+
         fallback = enable_fallback if enable_fallback is not None else self.config.enable_fallback
         providers = self._chain(model_id, provider, fallback)
 

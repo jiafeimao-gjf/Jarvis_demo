@@ -123,6 +123,8 @@ class BaseSubagent(ABC):
         parent_conversation: Optional["Conversation"] = None,
         message_store: Optional[Any] = None,
         triggered_by_message_id: Optional[str] = None,
+        main_model: Optional[str] = None,
+        instance: Optional[Any] = None,
     ):
         self.router = router
         self.config = config or self.default_config()
@@ -130,6 +132,10 @@ class BaseSubagent(ABC):
         self.parent_conversation = parent_conversation
         self.message_store = message_store
         self.triggered_by_message_id = triggered_by_message_id
+        # v3: 跟随主对话的模型 / ProviderInstance, 保证 subagent 与主对话一致.
+        # SubagentConfig.model 优先 (显式 per-subagent 覆盖), 否则用 main_model.
+        self.main_model = main_model
+        self.instance = instance
 
     @classmethod
     def default_config(cls) -> SubagentConfig:
@@ -205,10 +211,13 @@ class BaseSubagent(ABC):
             sub_session.add_message("user", user_content)
 
         try:
+            # 模型选择: 显式 per-subagent 覆盖 > 主对话模型 > router 默认
+            model = self.config.model or self.main_model
             resp = await asyncio.wait_for(
                 self.router.chat(
                     messages,
-                    model=self.config.model,
+                    model=model,
+                    instance=self.instance,
                     stream=False,
                 ),
                 timeout=self.config.timeout,
@@ -362,8 +371,10 @@ def create_subagent(
     parent_conversation: Optional["Conversation"] = None,
     message_store: Optional[Any] = None,
     triggered_by_message_id: Optional[str] = None,
+    main_model: Optional[str] = None,
+    instance: Optional[Any] = None,
 ) -> BaseSubagent:
-    """工厂方法: 按角色构造子代理 (v3 支持 parent / store)."""
+    """工厂方法: 按角色构造子代理 (v3 支持 parent / store / main_model / instance)."""
     if isinstance(role, str):
         try:
             role = SubagentRole(role)
@@ -378,6 +389,8 @@ def create_subagent(
         parent_conversation=parent_conversation,
         message_store=message_store,
         triggered_by_message_id=triggered_by_message_id,
+        main_model=main_model,
+        instance=instance,
     )
 
     if config_overrides:
@@ -449,12 +462,18 @@ class SubagentOrchestrator:
         parent_conversation: Optional["Conversation"] = None,
         message_store: Optional[Any] = None,
         triggered_by_message_id: Optional[str] = None,
+        model: Optional[str] = None,
+        instance: Optional[Any] = None,
     ):
         self.router = router
         self.work_folder = work_folder
         self.parent_conversation = parent_conversation
         self.message_store = message_store
         self.triggered_by_message_id = triggered_by_message_id
+        # v3: 跟随主对话的模型 / ProviderInstance, 由 ChatEngine 每次对话动态更新,
+        # 保证 subagent (含 reduce 阶段) 与主对话使用同一模型 / 实例.
+        self.model = model
+        self.instance = instance
         # 默认 reducer: 把多个结果拼起来, 让 LLM 二次综合
         self.reducer = reducer or self._default_reducer
 
@@ -485,6 +504,8 @@ class SubagentOrchestrator:
             parent_conversation=self.parent_conversation,
             message_store=self.message_store,
             triggered_by_message_id=self.triggered_by_message_id,
+            main_model=self.model,
+            instance=self.instance,
         )
         logger.info(
             f"[Orchestrator] dispatching {agent.role.value}: {task[:80]!r}"
@@ -549,7 +570,9 @@ class SubagentOrchestrator:
                         f"[子代理输出]\n{reduced}"
                     )},
                 ]
-                resp = await self.router.chat(messages, stream=False)
+                resp = await self.router.chat(
+                    messages, model=self.model, instance=self.instance, stream=False
+                )
                 reduced = resp.content
             except Exception as e:
                 logger.warning(f"[Orchestrator] reduce LLM call failed: {e}")
