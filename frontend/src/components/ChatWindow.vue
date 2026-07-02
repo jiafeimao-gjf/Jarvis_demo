@@ -5,6 +5,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
 import { useApi } from '@/composables/useApi'
 import ChatMessage from './ChatMessage.vue'
+import SubagentSessionPanel from './SubagentSessionPanel.vue'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
@@ -20,6 +21,33 @@ const showThinking = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const showScrollBtn = ref(false)
 const isAtBottom = ref(true)
+
+// v3: subagent session 抽屉
+const activeSubSessionId = ref<string | null>(null)
+const activeBatchIds = ref<string[]>([])
+
+function openSubagentSession(subSessionId: string) {
+  activeSubSessionId.value = subSessionId
+  activeBatchIds.value = []
+}
+
+function openSubagentBatch(subSessionIds: string[], activeIndex: number) {
+  activeBatchIds.value = subSessionIds
+  activeSubSessionId.value = subSessionIds[activeIndex] ?? null
+}
+
+function closeSubagentPanel() {
+  activeSubSessionId.value = null
+  activeBatchIds.value = []
+}
+
+// ESC 关闭抽屉
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && (activeSubSessionId.value || activeBatchIds.value.length)) {
+    closeSubagentPanel()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onKeydown))
 
 // Topic header — click-to-edit
 const isEditingTopic = ref(false)
@@ -355,6 +383,8 @@ onMounted(() => {
         v-for="msg in chatStore.messages"
         :key="msg.id"
         :message="msg"
+        @open-subagent-session="openSubagentSession"
+        @open-subagent-batch="openSubagentBatch"
       />
 
       <div v-if="isLoading && thinkingStatus !== 'done'" class="flex items-center gap-2">
@@ -397,6 +427,13 @@ onMounted(() => {
         ></textarea>
       </div>
     </div>
+
+    <!-- v3: Subagent 完整会话抽屉 -->
+    <SubagentSessionPanel
+      :sub-session-id="activeSubSessionId"
+      :batch-ids="activeBatchIds"
+      @close="closeSubagentPanel"
+    />
   </div>
 </template>
 

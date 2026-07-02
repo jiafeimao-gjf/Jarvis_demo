@@ -20,6 +20,7 @@ from jarvis.services.ai.models import Provider
 from jarvis.services.ai.instance_config import get_instance_store
 from jarvis.services.skill_loader import load_skills, load_prompt_files
 from jarvis.core.topic_generator import generate_topic
+from jarvis.core.context_manager import ContextManager
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -58,6 +59,35 @@ class ChatEngine:
         # 工具执行器
         self.task_executor = TaskExecutor(self.work_folder)
         self.tool_parser = ToolCallParser(self.work_folder)
+
+        # 上下文管理器 — 按 token 预算裁剪历史, 注入相关记忆
+        # 关联一个 ContextCompressor 实现 per-conversation 自动压缩:
+        # 当某对话用量超阈值时, 自动调 LLM 摘要早期消息并替换进 messages.
+        from jarvis.core.context_compressor import (
+            ContextCompressor,
+            ThresholdTrigger,
+        )
+        self.context_compressor = ContextCompressor(
+            router=self.router,
+            trigger=ThresholdTrigger(threshold=0.75),
+            keep_recent=4,
+            cooldown_seconds=30.0,
+            min_messages=6,
+            persist_fn=self._save_conversation_to_file,
+        )
+        self.context_manager = ContextManager(compressor=self.context_compressor)
+
+        # 子代理编排器 — 让主 LLM 通过 subagent 工具委派子任务
+        # (注册到 task_executor, 主 LLM 可调用 researcher/coder/reviewer/...)
+        # v3: 注入 memory_store 让每个 subagent 自动创建独立子会话
+        from jarvis.core.subagent import SubagentOrchestrator
+        self.subagent_orchestrator = SubagentOrchestrator(
+            router=self.router,
+            work_folder=self.work_folder,
+            parent_conversation=None,    # 每次 chat/stream_chat 时动态更新
+            message_store=self.memory,
+        )
+        self.task_executor.register_subagent(self.subagent_orchestrator)
 
     def _resolve_instance(self, provider_id: Optional[str] = None):
         """Resolve a ProviderInstance from provider_id or return active instance."""
@@ -182,42 +212,51 @@ class ChatEngine:
             logger.info("[Chat] 无conv_id，创建新对话")
             self.current_conversation = Conversation()
 
+        # v3: 把当前会话注入 subagent 编排器, 让 LLM 调 subagent 时创建独立子会话
+        self.subagent_orchestrator.parent_conversation = self.current_conversation
+
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
         logger.debug(f"[Chat] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
 
-        # 3. 检索相关记忆
-        memories = await self.memory.retrieve(user_input, top_k=3)
-        context_prompt = ""
-        if memories:
-            context_prompt = "\n相关记忆：\n" + "\n".join(
-                [f"- {m['content']}" for m in memories]
-            )
-            logger.info(f"[Chat] 检索到 {len(memories)} 条相关记忆")
-            for m in memories:
-                logger.debug(f"[Chat] 记忆: {m['content'][:50]}...")
-        else:
-            logger.debug("[Chat] 未检索到相关记忆")
-
-        # 4. 加载 Prompt 设置
+        # 3. 加载 Prompt 设置
         prompt_settings = await self._load_prompt_settings()
         if prompt_settings.persona or prompt_settings.abilities or prompt_settings.memory or prompt_settings.tools:
             logger.info(f"[Chat] 已加载 Prompt 设置 | persona={'有' if prompt_settings.persona else '无'} | abilities={'有' if prompt_settings.abilities else '无'} | memory={'有' if prompt_settings.memory else '无'} | tools={'有' if prompt_settings.tools else '无'}")
         else:
             logger.debug("[Chat] 未配置自定义 Prompt 设置")
 
-        # 5. 构建系统 Prompt（包含记忆）
+        # 4. 构建基础系统 Prompt
         system_prompt = self._build_system_prompt(prompt_settings)
-        if context_prompt:
-            system_prompt = system_prompt + context_prompt
 
-        # 6. 构建消息历史
-        messages = [
-            {"role": "system", "content": system_prompt}
+        # 5. 通过 ContextManager 构建最终 messages:
+        #    - 注入相关记忆 (默认 top_k=3)
+        #    - 按 token 预算裁剪对话历史 (替代旧的硬编码 limit=10)
+        history_dicts = [
+            {"role": m.role, "content": m.content}
+            for m in self.current_conversation.get_history(limit=10)
         ]
-        for msg in self.current_conversation.get_history(limit=10):
-            messages.append({"role": msg.role, "content": msg.content})
-        logger.debug(f"[Chat] 构建消息历史 | history_count={len(self.current_conversation.get_history(limit=10))} | system_prompt_len={len(messages[0]['content'])}")
+        # 关键: 移除刚加进去的 user_input, 因为 build_messages 会自动追加
+        if history_dicts and history_dicts[-1].get("content") == user_input:
+            history_dicts = history_dicts[:-1]
+
+        ctx_result = await self.context_manager.build_messages(
+            system_prompt=system_prompt,
+            history=history_dicts,
+            current_user_input=user_input,
+            memory_retriever=self.memory.retrieve,
+            model_id=model,
+            memory_top_k=3,
+            conversation=self.current_conversation,
+        )
+        messages = ctx_result["messages"]
+        stats = ctx_result["stats"]
+        logger.debug(
+            f"[Chat] ContextManager | history_in={stats['history_in']} "
+            f"history_out={stats['history_out']} dropped={stats['dropped']} "
+            f"memory={stats['memory_chunks']} tokens~={stats['tokens_estimate']} "
+            f"budget={stats['budget_available']}"
+        )
 
         # 7. 工具调用迭代循环
         final_response = ""
@@ -412,6 +451,9 @@ class ChatEngine:
             logger.info("[StreamChat] 无conv_id，创建新对话")
             self.current_conversation = Conversation(user_id=user_id or "")
 
+        # v3: 把当前会话注入 subagent 编排器
+        self.subagent_orchestrator.parent_conversation = self.current_conversation
+
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
         logger.debug(f"[StreamChat] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
@@ -420,18 +462,33 @@ class ChatEngine:
         prompt_settings = await self._load_prompt_settings()
         logger.debug(f"[StreamChat] Prompt设置已加载 | persona={'有' if prompt_settings.persona else '无'}")
 
-        # 4. 构建消息列表
-        messages = [
-            {"role": "system", "content": self._build_system_prompt(prompt_settings)}
+        # 4. 构建消息列表 — 通过 ContextManager 做 token 预算 + 记忆注入
+        history_dicts = [
+            {"role": m.role, "content": m.content}
+            for m in self.current_conversation.get_history(limit=10)
         ]
-        if self.current_conversation.messages:
-            messages.extend([
-                {"role": m.role, "content": m.content}
-                for m in self.current_conversation.get_history(limit=10)
-            ])
-        logger.debug(f"[StreamChat] 构建消息 | history_count={len(self.current_conversation.get_history(limit=10))}")
+        # build_messages 会自动追加 user_input, 这里去掉末尾重复
+        if history_dicts and history_dicts[-1].get("content") == user_input:
+            history_dicts = history_dicts[:-1]
 
-        messages.append({"role": "user", "content": user_input})
+        ctx_result = await self.context_manager.build_messages(
+            system_prompt=self._build_system_prompt(prompt_settings),
+            history=history_dicts,
+            current_user_input=user_input,
+            memory_retriever=self.memory.retrieve,
+            model_id=model,
+            memory_top_k=3,
+            conversation=self.current_conversation,
+        )
+        messages = ctx_result["messages"]
+        logger.debug(
+            f"[StreamChat] ContextManager | "
+            f"history_in={ctx_result['stats']['history_in']} "
+            f"history_out={ctx_result['stats']['history_out']} "
+            f"dropped={ctx_result['stats']['dropped']} "
+            f"memory={ctx_result['stats']['memory_chunks']} "
+            f"tokens~={ctx_result['stats']['tokens_estimate']}"
+        )
 
         # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用
         import time as _t
@@ -679,6 +736,9 @@ class ChatEngine:
             self.current_conversation = Conversation(user_id=user_id or "")
             logger.debug("[StreamChatWithMsgs] 新建空对话上下文")
 
+        # v3: 把当前会话注入 subagent 编排器
+        self.subagent_orchestrator.parent_conversation = self.current_conversation
+
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
         logger.debug(f"[StreamChatWithMsgs] 用户消息已添加 | total_messages={len(self.current_conversation.messages)}")
@@ -687,21 +747,27 @@ class ChatEngine:
         prompt_settings = await self._load_prompt_settings()
         logger.debug(f"[StreamChatWithMsgs] Prompt设置已加载")
 
-        # 4. 构建消息列表 - 使用传入的历史
-        messages = [
-            {"role": "system", "content": self._build_system_prompt(prompt_settings)}
-        ]
+        # 4. 构建消息列表 - 使用传入的历史 (走 ContextManager 做预算裁剪)
+        history_filtered = [m for m in messages_history if m.get("role") != "system"]
 
-        # 添加历史消息（过滤掉 system）
-        history_count = 0
-        for msg in messages_history:
-            if msg.get("role") != "system":
-                messages.append({"role": msg["role"], "content": msg["content"]})
-                history_count += 1
-        logger.debug(f"[StreamChatWithMsgs] 已添加 {history_count} 条历史消息")
-
-        # 添加当前用户消息
-        messages.append({"role": "user", "content": user_input})
+        ctx_result = await self.context_manager.build_messages(
+            system_prompt=self._build_system_prompt(prompt_settings),
+            history=history_filtered,
+            current_user_input=user_input,
+            memory_retriever=self.memory.retrieve,
+            model_id=model,
+            memory_top_k=3,
+            conversation=self.current_conversation,
+        )
+        messages = ctx_result["messages"]
+        history_count = ctx_result["stats"]["history_out"]
+        logger.debug(
+            f"[StreamChatWithMsgs] ContextManager | "
+            f"history_in={ctx_result['stats']['history_in']} "
+            f"history_out={history_count} "
+            f"dropped={ctx_result['stats']['dropped']} "
+            f"memory={ctx_result['stats']['memory_chunks']}"
+        )
 
         # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用
         import time as _t

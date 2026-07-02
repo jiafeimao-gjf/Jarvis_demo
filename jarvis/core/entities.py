@@ -88,6 +88,14 @@ class Conversation:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
+    # ── v3 新增: subagent 子会话支持 ──
+    parent_conversation_id: Optional[str] = None  # 父会话 (None = 主会话)
+    session_kind: str = "main"                     # "main" | "subagent"
+    subagent_role: Optional[str] = None           # researcher / coder / ...
+    subagent_task: Optional[str] = None            # 触发时的任务描述
+    triggered_by_message_id: Optional[str] = None  # 主会话里哪条消息触发的
+    metadata: dict = field(default_factory=dict)   # 自由扩展 (mode, batch_size, ...)
+
     def set_topic(self, topic: str) -> None:
         """设置对话主题（自动 trim + 限长 60 字符）"""
         if topic is None:
@@ -106,6 +114,28 @@ class Conversation:
     def get_history(self, limit: int = 10) -> list[Message]:
         """获取历史消息"""
         return self.messages[-limit:]
+
+    def is_subagent(self) -> bool:
+        """是否子会话."""
+        return self.session_kind == "subagent"
+
+    def to_dict(self) -> dict:
+        """完整字典化 (含 subagent 字段, 用于持久化)."""
+        return {
+            "conversation_id": self.conversation_id,
+            "user_id": self.user_id,
+            "topic": self.topic,
+            "messages": [m.to_dict() for m in self.messages],
+            "context": self.context,
+            "parent_conversation_id": self.parent_conversation_id,
+            "session_kind": self.session_kind,
+            "subagent_role": self.subagent_role,
+            "subagent_task": self.subagent_task,
+            "triggered_by_message_id": self.triggered_by_message_id,
+            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            "updated_at": self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at,
+        }
 
 
 @dataclass

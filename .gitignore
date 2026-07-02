@@ -69,3 +69,4 @@ workspace/settings/
 tmp/
 temp/
 *.tmp
+/workspace/

@@ -179,6 +179,63 @@ async def delete_conversation(conversation_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── v3: subagent 子会话 API ──────────────────────────────────────
+
+@router.get("/conversation/{conversation_id}/sub_sessions")
+async def list_sub_sessions(
+    conversation_id: str,
+    summary_only: bool = Query(False, description="仅返回摘要 (不含完整消息)"),
+):
+    """列出某主会话下的所有 subagent 子会话.
+
+    用于主会话卡片显示 "查看 3 个子代理会话 →".
+    summary_only=True 时轻量级, 用于快速渲染列表.
+    """
+    try:
+        sessions = await mediator.memory_store.list_sub_sessions(
+            parent_id=conversation_id,
+            summary_only=summary_only,
+        )
+        count = await mediator.memory_store.count_sub_sessions(conversation_id)
+        return {
+            "parent_conversation_id": conversation_id,
+            "count": count,
+            "sessions": sessions,
+        }
+    except Exception as e:
+        logger.error(f"List sub_sessions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sub_session/{sub_session_id}")
+async def get_sub_session(sub_session_id: str):
+    """获取单个 subagent 子会话完整内容.
+
+    用于点击主会话卡片时打开抽屉, 显示完整执行轨迹.
+    """
+    try:
+        conv = await mediator.memory_store.get_conversation(sub_session_id)
+        if not conv:
+            raise HTTPException(status_code=404, detail="Sub-session not found")
+        return conv
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get sub_session error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversation/{conversation_id}/sub_session_count")
+async def get_sub_session_count(conversation_id: str):
+    """获取主会话下的子会话数量 (用于主会话卡片角标)."""
+    try:
+        count = await mediator.memory_store.count_sub_sessions(conversation_id)
+        return {"conversation_id": conversation_id, "count": count}
+    except Exception as e:
+        logger.error(f"Count sub_sessions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Settings API
 @router.get("/settings")
 async def get_settings():

@@ -1,0 +1,206 @@
+@startuml jarvis_architecture_v2
+
+' ============================================================
+' JARVIS v2 架构图 — 新增 ContextManager + SubagentOrchestrator
+' ============================================================
+
+skinparam backgroundColor #FAFAFA
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor<<new>> #FFF4E1
+  BorderColor<<new>> #E6A23C
+  FontColor<<new>> #B8770F
+  BackgroundColor<<frontend>> #E8F4FD
+  BorderColor<<frontend>> #409EFF
+  BackgroundColor<<core>> #F0F9EB
+  BorderColor<<core>> #67C23A
+  BackgroundColor<<adapter>> #FDF6EC
+  BorderColor<<adapter>> #E6A23C
+  BackgroundColor<<storage>> #F4F4F5
+  BorderColor<<storage>> #909399
+}
+skinparam ArrowColor #606266
+skinparam defaultTextAlignment center
+
+title JARVIS 智能助手系统 — v2 架构\n(新增 ContextManager + SubagentOrchestrator)
+
+' ── 前端 ──
+package "Frontend (Vue 3 + TypeScript :8529)" <<frontend>> {
+  [ChatWindow] as chat_ui
+  [CameraPreview] as cam_ui
+  [HardwareControls] as hw_ui
+  [Settings / ProviderManager] as settings_ui
+  [Pinia Stores] as stores
+}
+
+' ── API 层 ──
+package "API Routes (FastAPI :9529)" {
+  [chat.py] as api_chat
+  [voice.py] as api_voice
+  [camera.py] as api_cam
+  [memory.py] as api_mem
+  [execute.py] as api_exec
+  [providers.py] as api_prov
+}
+
+' ── 核心层 ──
+package "Core Engines (Mediator 协调)" <<core>> {
+  [JarvisMediator] as mediator
+
+  [ChatEngine] as chat_eng
+  [VoiceEngine] as voice_eng
+  [TaskEngine] as task_eng
+  [HardwareBridge] as hw_bridge
+  [MemoryStore] as mem_store
+  [SubModelProcessor] as sub_proc
+  [Notification] as notif
+
+  package "ChatEngine 内嵌 (新增)" {
+    [ContextManager] as ctx_mgr <<new>>
+    [SubagentOrchestrator] as sub_orch <<new>>
+
+    package "ContextManager 策略" <<new>> {
+      [SlidingWindowStrategy] as strat_sw
+      [SummarizationStrategy] as strat_sum
+      [HybridStrategy\n(default)] as strat_hyb
+    }
+
+    package "SubagentOrchestrator 角色" <<new>> {
+      [ResearcherSubagent] as sa_res
+      [CoderSubagent] as sa_cod
+      [ReviewerSubagent] as sa_rev
+      [SummarizerSubagent] as sa_sum
+      [PlannerSubagent] as sa_pln
+      [GeneralSubagent] as sa_gen
+    }
+  }
+}
+
+' ── 工具层 ──
+package "Tool Registry" <<core>> {
+  [ToolRegistry\n+ file / bash / browser\n+ desktop / api / tool\n+ subagent (NEW)] as tool_reg <<new>>
+}
+
+' ── AI Provider 层 ──
+package "AI Providers (Strategy + Registry)" <<adapter>> {
+  [AIRouter] as ai_router
+  [ProviderInstance Store] as inst_store
+
+  [OllamaAdapter] as ollama
+  [OpenAIAdapter] as openai
+  [AnthropicAdapter] as anthropic
+  [MiniMaxAdapter] as minimax
+}
+
+' ── 多模态子模型 ──
+package "Multimodal Sub-Models" {
+  [Whisper\n(audio → text)] as whisper
+  [qwen3-vl:4b / qwen3.5:9b\n(image → text)] as vision
+}
+
+' ── 持久层 ──
+package "Persistence" <<storage>> {
+  database "SQLite\n(memory / conv / settings)" as sqlite
+  database "LanceDB\n(vector store)" as lance
+  folder "workspace/\npersona.md · skills/\nconversations/" as ws
+}
+
+' ── 外部 ──
+package "External" {
+  [Ollama\nlocalhost:11434] as ollama_ext
+  [Claude / OpenAI\ncloud APIs] as cloud
+  [Playwright Browser] as pw
+}
+
+' ── 连线 ──
+chat_ui --> api_chat : REST + SSE
+cam_ui --> api_cam
+hw_ui --> api_voice
+hw_ui --> api_cam
+settings_ui --> api_prov
+stores --> api_chat : useApi()
+
+api_chat --> mediator
+api_voice --> mediator
+api_cam --> mediator
+api_mem --> mediator
+api_exec --> mediator
+
+mediator --> chat_eng : process_chat / stream_chat
+mediator --> voice_eng
+mediator --> task_eng
+mediator --> hw_bridge
+mediator --> mem_store
+mediator --> sub_proc
+mediator --> notif
+
+chat_eng --> ctx_mgr : build_messages()
+chat_eng --> sub_orch : dispatch()
+chat_eng --> ai_router : chat / chat_stream_full
+chat_eng --> mem_store : retrieve / save_conversation
+
+ctx_mgr --> strat_sw
+ctx_mgr --> strat_sum
+ctx_mgr --> strat_hyb : default
+ctx_mgr --> mem_store : retrieve (top_k=3)
+
+sub_orch --> sa_res
+sub_orch --> sa_cod
+sub_orch --> sa_rev
+sub_orch --> sa_sum
+sub_orch --> sa_pln
+sub_orch --> sa_gen
+sub_orch --> ai_router : chat()
+
+task_eng --> tool_reg : lookup
+tool_reg --> chat_eng : subagent tool\n(NEW)
+sub_orch --> task_eng : SubagentStrategy.execute()
+
+ai_router --> ollama
+ai_router --> openai
+ai_router --> anthropic
+ai_router --> minimax
+ai_router --> inst_store : resolve instance
+
+sub_proc --> whisper : transcribe_audio
+sub_proc --> vision : vision_analyze
+sub_proc --> ai_router : _get_client()
+
+ollama --> ollama_ext : /v1/messages\n/ /api/chat
+openai --> cloud
+anthropic --> cloud
+minimax --> cloud
+
+task_eng --> pw : browser strategy
+task_eng --> ws : file strategy (workdir)
+mem_store --> sqlite
+mem_store --> lance
+chat_eng --> ws : load persona/skills/prompts
+
+' ── 注释 ──
+note right of ctx_mgr
+  **ContextManager (NEW)**
+  ──────────────────────
+  替代旧的 get_history(limit=10)
+  • token 预算 (从 MODELS 自动)
+  • 三种压缩策略可插拔
+  • 自动注入相关记忆到 system
+end note
+
+note right of sub_orch
+  **SubagentOrchestrator (NEW)**
+  ─────────────────────────────
+  6 个角色 + 3 种模式
+  • sequential 串行, 下一任务见上文
+  • parallel   真正并行 (asyncio.gather)
+  • map_reduce 并行 + LLM 综合
+  主 LLM 通过 subagent 工具调用
+end note
+
+note bottom of tool_reg
+  **subagent tool** 让主 LLM
+  把子任务委派给 SubagentOrchestrator,
+  隔离上下文, 可并行
+end note
+
+@enduml

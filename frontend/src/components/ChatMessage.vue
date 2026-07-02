@@ -4,14 +4,65 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
 import { formatTime } from '@/lib/utils'
+import SubagentCard from './SubagentCard.vue'
 
 const props = defineProps<{
   message: Message
 }>()
 
+const emit = defineEmits<{
+  openSubagentSession: [subSessionId: string]
+  openSubagentBatch: [subSessionIds: string[], activeIndex: number]
+}>()
+
 const isUser = computed(() => props.message.role === 'user')
 const isTool = computed(() => props.message.role === 'tool')
 const isToolResult = computed(() => props.message.role === 'tool_result')
+
+// v3: 检测 subagent 工具调用/结果, 解析为结构化对象
+const isSubagentToolCall = computed(() => {
+  if (!isTool.value || !toolInfo.value) return false
+  return toolInfo.value.tool === 'subagent'
+})
+
+const isSubagentToolResult = computed(() => {
+  if (!isToolResult.value) return false
+  return /^[\[【](?:工具结果|工具错误)[\]】]\s*subagent[\s:]/i.test(props.message.content)
+})
+
+const subagentCallData = computed(() => {
+  if (!toolInfo.value) return null
+  const p = toolInfo.value.params || {}
+  return {
+    role: p.role,
+    task: p.task,
+    context: p.context,
+    mode: p.mode,
+    status: 'success' as const,
+  }
+})
+
+const subagentResultData = computed(() => {
+  // tool_result.content 格式: "[工具结果] subagent: {...JSON...}"
+  const m = props.message.content.match(/\[(工具结果|工具错误)\]\s*subagent:\s*([\s\S]+)/)
+  if (!m) return null
+  try {
+    const data = JSON.parse(m[2].trim())
+    return {
+      role: data.role,
+      task: data.task,
+      mode: data.mode,
+      results: data.results,
+      reduced_output: data.reduced_output,
+      status: data.status || 'success',
+      elapsed_ms: data.elapsed_ms,
+      sub_session_id: data.sub_session_id,
+      sub_session_ids: data.sub_session_ids,
+    }
+  } catch {
+    return null
+  }
+})
 
 const toolInfo = computed(() => {
   if (!isTool.value) return null
@@ -147,8 +198,24 @@ onUnmounted(() => { document.body.style.overflow = '' })
           {{ message.thinking }}
         </div>
       </details>
+      <!-- v3: Subagent call card -->
+      <SubagentCard
+        v-if="isTool && isSubagentToolCall && subagentCallData"
+        :subagent="subagentCallData"
+        @open-session="(id) => emit('openSubagentSession', id)"
+        @open-batch="(ids, idx) => emit('openSubagentBatch', ids, idx)"
+      />
+
+      <!-- v3: Subagent result card -->
+      <SubagentCard
+        v-else-if="isToolResult && isSubagentToolResult && subagentResultData"
+        :subagent="subagentResultData"
+        @open-session="(id) => emit('openSubagentSession', id)"
+        @open-batch="(ids, idx) => emit('openSubagentBatch', ids, idx)"
+      />
+
       <!-- Tool call card -->
-      <div v-if="isTool && toolInfo" class="flex items-start gap-2 text-xs">
+      <div v-else-if="isTool && toolInfo" class="flex items-start gap-2 text-xs">
         <span class="text-foreground/50 mt-0.5">🔧</span>
         <div>
           <span class="text-foreground/80 font-medium">{{ toolInfo.tool }}.{{ toolInfo.action }}</span>

@@ -71,11 +71,33 @@ class SQLiteMemoryRepository(MemoryRepository):
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Migration: add topic column to existing DBs that pre-date it
+            # ── Migrations: 增量 ALTER TABLE (已存在 DB 兼容) ──
+            migrations = [
+                "ALTER TABLE conversations ADD COLUMN topic TEXT",
+                # v3: subagent 子会话支持
+                "ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT",
+                "ALTER TABLE conversations ADD COLUMN session_kind TEXT DEFAULT 'main'",
+                "ALTER TABLE conversations ADD COLUMN subagent_role TEXT",
+                "ALTER TABLE conversations ADD COLUMN subagent_task TEXT",
+                "ALTER TABLE conversations ADD COLUMN triggered_by_message_id TEXT",
+                "ALTER TABLE conversations ADD COLUMN metadata TEXT",
+            ]
+            for sql in migrations:
+                try:
+                    conn.execute(sql)
+                except Exception:
+                    pass  # column already exists
+
+            # ── 索引: subagent 子会话按 parent / kind 查询 ──
             try:
-                conn.execute("ALTER TABLE conversations ADD COLUMN topic TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_parent ON conversations(parent_conversation_id)")
             except Exception:
-                pass  # column already exists
+                pass
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_kind ON conversations(session_kind)")
+            except Exception:
+                pass
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -210,40 +232,201 @@ class SQLiteMemoryRepository(MemoryRepository):
                 )
                 row = cursor.fetchone()
                 if row:
-                    return {
-                        "conversation_id": row["conversation_id"],
-                        "user_id": row["user_id"],
-                        "topic": row["topic"],
-                        "messages": json.loads(row["messages"]),
-                        "context": json.loads(row["context"])
-                    }
+                    return self._row_to_conversation(row)
                 return None
         except Exception as e:
             logger.error(f"Failed to get conversation: {e}")
             return None
 
-    async def list_conversations(self, limit: int = 50) -> list[dict]:
-        """列出所有对话（简要信息）"""
+    @staticmethod
+    def _row_to_conversation(row: sqlite3.Row) -> dict:
+        """统一的 row -> dict 转换 (含 v3 subagent 字段)."""
+        # 兼容老 DB: 新字段可能不存在
+        def safe_get(col, default=None):
+            try:
+                val = row[col]
+                return val if val is not None else default
+            except (IndexError, KeyError):
+                return default
+
+        metadata_raw = safe_get("metadata")
+        try:
+            metadata = json.loads(metadata_raw) if metadata_raw else {}
+        except Exception:
+            metadata = {}
+
+        # summary_only 模式下 SELECT 不含 messages/context 列
+        messages = []
+        try:
+            messages = json.loads(row["messages"]) if row["messages"] else []
+        except (IndexError, KeyError):
+            pass
+        context = {}
+        try:
+            context = json.loads(row["context"]) if row["context"] else {}
+        except (IndexError, KeyError):
+            pass
+
+        return {
+            "conversation_id": row["conversation_id"],
+            "user_id": row["user_id"],
+            "topic": row["topic"],
+            "messages": messages,
+            "context": context,
+            # v3 字段
+            "parent_conversation_id": safe_get("parent_conversation_id"),
+            "session_kind": safe_get("session_kind", "main"),
+            "subagent_role": safe_get("subagent_role"),
+            "subagent_task": safe_get("subagent_task"),
+            "triggered_by_message_id": safe_get("triggered_by_message_id"),
+            "metadata": metadata,
+            "created_at": safe_get("created_at"),
+            "updated_at": safe_get("updated_at"),
+        }
+
+    async def save_sub_session(self, conv: "Conversation") -> bool:
+        """保存 subagent 子会话 (含 parent_id / session_kind / 角色等).
+
+        与 save_conversation 的差别: 显式写入 v3 新字段.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO conversations
+                       (conversation_id, user_id, messages, context, topic,
+                        parent_conversation_id, session_kind,
+                        subagent_role, subagent_task,
+                        triggered_by_message_id, metadata,
+                        created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                               COALESCE((SELECT created_at FROM conversations
+                                         WHERE conversation_id = ?), CURRENT_TIMESTAMP),
+                               CURRENT_TIMESTAMP)""",
+                    (
+                        conv.conversation_id, conv.user_id,
+                        json.dumps([m.to_dict() for m in conv.messages]),
+                        json.dumps(conv.context),
+                        conv.topic,
+                        conv.parent_conversation_id,
+                        conv.session_kind,
+                        conv.subagent_role,
+                        conv.subagent_task,
+                        conv.triggered_by_message_id,
+                        json.dumps(conv.metadata),
+                        conv.conversation_id,  # 用于 COALESCE 查询
+                    )
+                )
+            logger.debug(f"[MemStore] sub_session saved: {conv.conversation_id[:8]}... "
+                         f"kind={conv.session_kind} role={conv.subagent_role}")
+            return True
+        except Exception as e:
+            logger.error(f"[MemStore] save_sub_session failed: {e}")
+            return False
+
+    async def list_sub_sessions(
+        self,
+        parent_id: str,
+        summary_only: bool = False,
+    ) -> list[dict]:
+        """列出某主会话下的所有 subagent 子会话.
+
+        Args:
+            parent_id: 父会话 ID
+            summary_only: True 时不返回完整 messages, 只返回摘要 (轻量级)
+
+        Returns:
+            子会话列表, 按创建时间倒序
+        """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
+                if summary_only:
+                    cursor = conn.execute(
+                        """SELECT conversation_id, user_id, topic,
+                                  parent_conversation_id, session_kind,
+                                  subagent_role, subagent_task,
+                                  triggered_by_message_id, metadata,
+                                  created_at, updated_at
+                           FROM conversations
+                           WHERE parent_conversation_id = ?
+                           ORDER BY created_at DESC""",
+                        (parent_id,)
+                    )
+                    rows = cursor.fetchall()
+                    results = []
+                    for row in rows:
+                        results.append(self._row_to_conversation(row))
+                    return results
+                else:
+                    # 完整模式: 用 _row_to_conversation 解析
+                    cursor = conn.execute(
+                        """SELECT * FROM conversations
+                           WHERE parent_conversation_id = ?
+                           ORDER BY created_at DESC""",
+                        (parent_id,)
+                    )
+                    rows = cursor.fetchall()
+                    return [self._row_to_conversation(row) for row in rows]
+        except Exception as e:
+            logger.error(f"[MemStore] list_sub_sessions failed: {e}")
+            return []
+
+    async def count_sub_sessions(self, parent_id: str) -> int:
+        """统计某主会话下的子会话数 (用于 UI 显示)."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
-                    """SELECT conversation_id, user_id, messages, context, topic, created_at, updated_at
-                       FROM conversations ORDER BY updated_at DESC LIMIT ?""",
-                    (limit,)
+                    """SELECT COUNT(*) FROM conversations
+                       WHERE parent_conversation_id = ?""",
+                    (parent_id,)
                 )
+                return cursor.fetchone()[0]
+        except Exception as e:
+            logger.error(f"[MemStore] count_sub_sessions failed: {e}")
+            return 0
+
+    async def list_conversations(
+        self, limit: int = 50, include_subagents: bool = False
+    ) -> list[dict]:
+        """列出对话（简要信息）.
+
+        默认只列主会话 (session_kind='main'), 避免 subagent 子会话污染侧边栏.
+        include_subagents=True 时列出全部.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                if include_subagents:
+                    cursor = conn.execute(
+                        """SELECT conversation_id, user_id, messages, context, topic,
+                                  session_kind, subagent_role, created_at, updated_at
+                           FROM conversations ORDER BY updated_at DESC LIMIT ?""",
+                        (limit,)
+                    )
+                else:
+                    cursor = conn.execute(
+                        """SELECT conversation_id, user_id, messages, context, topic,
+                                  session_kind, subagent_role, created_at, updated_at
+                           FROM conversations
+                           WHERE session_kind = 'main' OR session_kind IS NULL
+                           ORDER BY updated_at DESC LIMIT ?""",
+                        (limit,)
+                    )
                 rows = cursor.fetchall()
-                return [
-                    {
+                results = []
+                for row in rows:
+                    item = {
                         "conversation_id": row["conversation_id"],
                         "user_id": row["user_id"],
                         "topic": row["topic"],
                         "message_count": len(json.loads(row["messages"])),
+                        "session_kind": row["session_kind"] or "main",
+                        "subagent_role": row["subagent_role"],
                         "created_at": row["created_at"],
-                        "updated_at": row["updated_at"]
+                        "updated_at": row["updated_at"],
                     }
-                    for row in rows
-                ]
+                    results.append(item)
+                return results
         except Exception as e:
             logger.error(f"Failed to list conversations: {e}")
             return []
@@ -462,13 +645,29 @@ class MemoryStore:
         """获取对话历史"""
         return await self.sqlite_repo.get_conversation(conversation_id)
 
-    async def list_conversations(self, limit: int = 50) -> list[dict]:
-        """列出所有对话"""
-        return await self.sqlite_repo.list_conversations(limit)
+    async def list_conversations(self, limit: int = 50, include_subagents: bool = False) -> list[dict]:
+        """列出所有对话 (默认只列主会话)."""
+        return await self.sqlite_repo.list_conversations(limit, include_subagents)
 
     async def delete_conversation(self, conversation_id: str) -> bool:
         """删除对话"""
         return await self.sqlite_repo.delete_conversation(conversation_id)
+
+    # ── v3: subagent 子会话 API ──
+
+    async def save_sub_session(self, conv) -> bool:
+        """保存 subagent 子会话."""
+        return await self.sqlite_repo.save_sub_session(conv)
+
+    async def list_sub_sessions(
+        self, parent_id: str, summary_only: bool = False
+    ) -> list[dict]:
+        """列出某主会话下的所有子会话."""
+        return await self.sqlite_repo.list_sub_sessions(parent_id, summary_only)
+
+    async def count_sub_sessions(self, parent_id: str) -> int:
+        """统计子会话数."""
+        return await self.sqlite_repo.count_sub_sessions(parent_id)
 
     async def save_setting(self, key: str, value: Any) -> bool:
         """保存设置"""

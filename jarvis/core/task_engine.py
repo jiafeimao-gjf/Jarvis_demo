@@ -436,12 +436,123 @@ class ToolRunnerStrategy(TaskStrategy):
         return {"status": "simulated", "tool": step.tool, "params": step.params}
 
 
+class SubagentStrategy(TaskStrategy):
+    """子代理策略 — 把 tool='subagent' 的步骤委派给 SubagentOrchestrator.
+
+    输入 step.params 约定:
+        role         : 子代理角色 (researcher/coder/reviewer/...)
+        task         : 子任务描述
+        context      : 可选背景
+        mode         : 单任务忽略, 批量时 sequential/parallel/map_reduce
+        tasks        : 可选, 批量子任务列表 [{role, task, context}, ...]
+        reduce_prompt: map_reduce 模式下的 LLM 综合指令
+
+    返回 dict 形如:
+        {
+          "status": "success",
+          "mode": "...",
+          "results": [{role, task, output, success, error, ...}, ...],
+          "reduced_output": "...",   # 仅 map_reduce
+        }
+    """
+
+    def __init__(self, orchestrator=None):
+        self.orchestrator = orchestrator
+        # 延迟导入, 避免循环依赖
+        from jarvis.core.subagent import (
+            SubagentOrchestrator,
+            DispatchMode,
+            DispatchRequest,
+            SubagentRole,
+        )
+        self._DispatchMode = DispatchMode
+        self._DispatchRequest = DispatchRequest
+        self._SubagentRole = SubagentRole
+
+    async def execute(self, step: Step) -> Any:
+        if self.orchestrator is None:
+            return {
+                "status": "error",
+                "message": "SubagentOrchestrator 未注入 (ChatEngine 未 register_subagent)",
+            }
+
+        params = step.params or {}
+        batch = params.get("tasks")
+        mode_str = params.get("mode", "sequential")
+
+        try:
+            mode = self._DispatchMode(mode_str)
+        except ValueError:
+            mode = self._DispatchMode.SEQUENTIAL
+
+        # 批量模式 — 显式传了 tasks (含空列表) 都走批量分支
+        if batch is not None:
+            requests = []
+            for item in batch:
+                if not isinstance(item, dict):
+                    continue
+                role_raw = item.get("role") or params.get("role") or "general"
+                try:
+                    role = self._SubagentRole(role_raw)
+                except ValueError:
+                    role = self._SubagentRole.GENERAL
+                requests.append(
+                    self._DispatchRequest(
+                        role=role,
+                        task=item.get("task", ""),
+                        context=item.get("context"),
+                    )
+                )
+            if not requests:
+                return {"status": "error", "message": "batch 为空"}
+
+            result = await self.orchestrator.run_batch(
+                mode=mode,
+                requests=requests,
+                reduce_prompt=params.get("reduce_prompt"),
+            )
+            # v3: 收集所有 sub_session_ids, 主会话可一次性跳转
+            sub_session_ids = [
+                r.sub_session_id for r in result.results if r.sub_session_id
+            ]
+            return {
+                "status": "success" if result.all_success else "partial",
+                "mode": mode.value,
+                "results": [r.to_dict() for r in result.results],
+                "reduced_output": result.reduced_output,
+                "sub_session_ids": sub_session_ids,
+            }
+
+        # 单任务模式
+        role_raw = params.get("role", "general")
+        try:
+            role = self._SubagentRole(role_raw)
+        except ValueError:
+            role = self._SubagentRole.GENERAL
+        result = await self.orchestrator.run_one(
+            role=role,
+            task=params.get("task", ""),
+            context=params.get("context"),
+        )
+        return {
+            "status": "success" if result.success else "error",
+            "role": result.role.value,
+            "task": result.task,
+            "output": result.output,
+            "iterations": result.iterations,
+            "elapsed_ms": round(result.elapsed_ms, 1),
+            "error": result.error,
+            "sub_session_id": result.sub_session_id,  # v3
+        }
+
+
 class TaskExecutor:
     """任务执行器 - 根据任务类型选择策略"""
 
     def __init__(self, work_folder: Optional[str] = None):
         self.file_strategy = FileOperationStrategy(work_folder)
         self.bash_strategy = BashOperationStrategy(work_folder)
+        self._subagent_strategy: Optional[SubagentStrategy] = None
         self.strategies: dict[str, TaskStrategy] = {
             "browser": BrowserAutomationStrategy(),
             "desktop": DesktopControlStrategy(),
@@ -452,6 +563,15 @@ class TaskExecutor:
         }
         logger.info("TaskExecutor initialized with strategies: "
                    f"{list(self.strategies.keys())}")
+
+    def register_subagent(self, orchestrator) -> None:
+        """注入子代理编排器 (ChatEngine.__init__ 末尾调用)."""
+        from jarvis.core.subagent import SubagentOrchestrator
+        if not isinstance(orchestrator, SubagentOrchestrator):
+            raise TypeError("orchestrator 必须是 SubagentOrchestrator 实例")
+        self._subagent_strategy = SubagentStrategy(orchestrator)
+        self.strategies["subagent"] = self._subagent_strategy
+        logger.info("SubagentStrategy registered")
 
     def get_strategy(self, task_type: str) -> TaskStrategy:
         """获取策略"""
