@@ -210,4 +210,32 @@
 
 ---
 
+## 18. Subagent 无工具循环 — 返回 success 但实际未执行任何操作
+
+**日期:** 2026-07-02
+
+**现象:** 主 LLM 把"写文件"任务委派给 CoderSubagent。Subagent 返回 `success=True`，`output` 里是"思路"（实现计划），但文件未被创建。主对话发现文件不存在后不得不自己补写。
+
+日志里 subagent 的 `tool_calls_count=0`，`iterations=1`——它输入了文本，但从未尝试写文件。
+
+**原因:** `BaseSubagent.run()` 是单轮 LLM 调用，**完全没有工具循环**。`SubagentConfig.max_iterations: int = 3` 和 `allowed_tools: list[str]` 字段虽然定义好，但从未被使用。docstring 还说"需要工具循环的子类应重写此方法 (见 ResearcherSubagent)"——但 ResearcherSubagent（以及 Coder/Reviewer/...）根本没有重写 `run()`。任何子代理都无法执行工具。子 LLM 只能输出文本，而 LLM 调用成功这一点让 `success=True` 被返回。
+
+次要原因：Coder 的系统提示词（system prompt）中写道"最后用 markdown 代码块包裹"，这让 LLM 不会去调用文件工具，只会输出带有 markdown 代码块的文本。
+
+**解决:**
+- `core/subagent.py`:
+  - `BaseSubagent.__init__` 新增 `task_executor` 参数。
+  - `run()` 重写为多轮工具循环：与主 ChatEngine 模式一致，调 LLM → `_extract_tool_uses(resp)` → `task_executor.execute_step(Step(...))` → `ToolResultFormatter.format_plain` → 结果回注到 messages → 继续，直到无 tool_use 或达到 `max_iterations`。
+  - `_extract_tool_uses`：优先读取 `resp.content_blocks` 中的 Anthropic `tool_use` 块，回退到 `ToolCallParser` 文本解析。
+  - 递归保护：`tool_name == "subagent"` 一律拦截（子代理内禁止嵌套调 subagent）。
+  - `allowed_tools` 白名单：非空时，不在白名单内的工具被拦截并返回"无权调用"消息。
+  - 无 `task_executor` 时退化为单轮纯文本调用（兼容单元测试场景）。
+  - Coder 的系统提示词（system prompt）改为引导 LLM 调用 `file`/`bash` 工具完成实际操作，而非仅输出 markdown 代码块。
+- `core/chat_engine.py`: `ChatEngine.__init__` 创建 `SubagentOrchestrator` 时传入 `task_executor=self.task_executor`。
+- `tests/test_subagent.py` 新增 `TestToolLoop`（5 个测试）：执行工具 / 无工具单轮 / 递归保护 / allowed_tools 白名单 / 无 task_executor 优雅降级。
+
+**验证:** 全部 196 个测试通过（191 原 + 5 新）。Coder 收到"保存到文件"任务时，现在会实际调用 `file.write` 工具写入文件并汇报路径。
+
+---
+
 *持续更新*

@@ -125,6 +125,7 @@ class BaseSubagent(ABC):
         triggered_by_message_id: Optional[str] = None,
         main_model: Optional[str] = None,
         instance: Optional[Any] = None,
+        task_executor: Optional[Any] = None,
     ):
         self.router = router
         self.config = config or self.default_config()
@@ -136,6 +137,9 @@ class BaseSubagent(ABC):
         # SubagentConfig.model 优先 (显式 per-subagent 覆盖), 否则用 main_model.
         self.main_model = main_model
         self.instance = instance
+        # 工具执行器 — 注入后 run() 才能进入工具循环 (file/bash/...).
+        # 为 None 时退化为单轮 LLM 调用 (单元测试 / 无工具场景).
+        self.task_executor = task_executor
 
     @classmethod
     def default_config(cls) -> SubagentConfig:
@@ -185,19 +189,48 @@ class BaseSubagent(ABC):
                 f"[Subagent {self.role.value}] sub_session persist failed: {e}"
             )
 
+    def _extract_tool_uses(self, resp: Any) -> list[dict]:
+        """从 LLM 响应中提取 tool_use.
+
+        优先读 Anthropic content_blocks (type=tool_use), 回退到文本解析
+        (ToolCallParser), 兼容只返回纯文本工具调用的模型.
+        """
+        tool_uses: list[dict] = []
+        blocks = getattr(resp, "content_blocks", None)
+        if blocks:
+            for b in blocks:
+                if isinstance(b, dict) and b.get("type") == "tool_use":
+                    tool_uses.append(b)
+        if not tool_uses:
+            content = getattr(resp, "content", "") or ""
+            if isinstance(content, str) and content:
+                try:
+                    from jarvis.core.tool_parser import ToolCallParser
+                    parser = ToolCallParser(self.work_folder)
+                    if parser.has_tool_calls(content):
+                        for tc in parser.parse(content):
+                            tool_uses.append(
+                                {"name": tc.tool, "input": tc.params, "id": tc.raw}
+                            )
+                except Exception as e:
+                    logger.debug(f"[Subagent {self.role.value}] text tool parse failed: {e}")
+        return tool_uses
+
     async def run(self, task: str, context: Optional[str] = None) -> SubagentResult:
-        """执行子任务. 默认实现: 单轮 LLM 调用 (无工具).
+        """执行子任务. v3: 含工具循环 (最多 max_iterations 轮).
 
-        需要工具循环的子类应重写此方法 (见 ResearcherSubagent).
+        每轮: 调 LLM → 检测 tool_use → 经 TaskExecutor 执行 → 结果回注 → 下一轮.
+        无 tool_use 或达到 max_iterations 时结束. 每轮消息持久化到子会话.
 
-        v3: 每次调用会创建独立子会话, 记录 user/assistant 消息, 持久化到 DB.
+        无 task_executor 时退化为单轮 LLM 调用 (不执行工具).
+        每次调用创建独立子会话, 记录 user/assistant/tool/tool_result, 持久化到 DB.
         """
         t0 = time.time()
 
         # 创建子会话 (如果注入了 parent/store)
         sub_session = self._init_sub_session(task)
 
-        messages = [
+        messages: list[dict] = [
             {"role": "system", "content": self.build_system_prompt(task)},
         ]
         if context:
@@ -206,41 +239,151 @@ class BaseSubagent(ABC):
 
         # 记录 user 消息到子会话
         if sub_session is not None:
-            from jarvis.core.entities import Message
             user_content = task if not context else f"[背景] {context}\n\n[任务] {task}"
             sub_session.add_message("user", user_content)
 
-        try:
-            # 模型选择: 显式 per-subagent 覆盖 > 主对话模型 > router 默认
-            model = self.config.model or self.main_model
-            resp = await asyncio.wait_for(
-                self.router.chat(
+        model = self.config.model or self.main_model
+        total_iterations = 0
+        tool_calls_log: list[dict] = []
+        final_output = ""
+        final_thinking = ""
+
+        async def _tool_loop() -> None:
+            nonlocal total_iterations, final_output, final_thinking
+            from jarvis.core.entities import Step
+            from jarvis.core.tool_result_formatter import ToolResultFormatter
+
+            for iteration in range(self.config.max_iterations):
+                total_iterations += 1
+                resp = await self.router.chat(
                     messages,
                     model=model,
                     instance=self.instance,
                     stream=False,
-                ),
-                timeout=self.config.timeout,
-            )
-
-            # 记录 assistant 消息到子会话
-            if sub_session is not None:
-                from jarvis.core.entities import Message
-                thinking_text = (
-                    resp.thinking if isinstance(getattr(resp, "thinking", ""), str) else ""
                 )
-                sub_session.add_message(
-                    "assistant", resp.content or "", thinking=thinking_text
+                final_output = resp.content or ""
+                final_thinking = (
+                    resp.thinking
+                    if isinstance(getattr(resp, "thinking", ""), str)
+                    else ""
                 )
 
+                tool_uses = self._extract_tool_uses(resp)
+
+                # 记录本轮 assistant 输出到子会话
+                if sub_session is not None:
+                    sub_session.add_message(
+                        "assistant", final_output, thinking=final_thinking
+                    )
+
+                if not tool_uses:
+                    break  # 无工具调用, 结束
+
+                # 无 task_executor → 无法执行工具, 结束 (退化为单轮文本)
+                if self.task_executor is None:
+                    logger.warning(
+                        f"[Subagent {self.role.value}] tool_use detected but no "
+                        f"task_executor injected; skipping tool loop"
+                    )
+                    break
+
+                # 把 assistant 的 tool_use 块加入下一轮上下文
+                messages.append({
+                    "role": "assistant",
+                    "content": resp.content_blocks
+                    or [{"type": "text", "text": final_output}],
+                })
+
+                # 逐个执行工具
+                for tu in tool_uses:
+                    tool_name = tu.get("name", "")
+                    inp = tu.get("input", {}) or {}
+
+                    # 递归保护: 子代理内禁止再调 subagent
+                    if tool_name == "subagent":
+                        blocked_msg = (
+                            "[工具结果] subagent: 子代理内禁止嵌套调用 subagent"
+                        )
+                        messages.append({"role": "user", "content": blocked_msg})
+                        if sub_session is not None:
+                            sub_session.add_message(
+                                "tool",
+                                json.dumps({"tool": tool_name, "params": inp, "blocked": True}),
+                            )
+                            sub_session.add_message("tool_result", blocked_msg)
+                        tool_calls_log.append(
+                            {"tool": tool_name, "params": inp, "blocked": True}
+                        )
+                        continue
+
+                    # allowed_tools 白名单 (空 = 全部)
+                    if (
+                        self.config.allowed_tools
+                        and tool_name not in self.config.allowed_tools
+                    ):
+                        blocked_msg = (
+                            f"[工具结果] {tool_name}: 该子代理无权调用此工具 "
+                            f"(allowed_tools 限制)"
+                        )
+                        messages.append({"role": "user", "content": blocked_msg})
+                        if sub_session is not None:
+                            sub_session.add_message(
+                                "tool",
+                                json.dumps({"tool": tool_name, "params": inp, "blocked": True}),
+                            )
+                            sub_session.add_message("tool_result", blocked_msg)
+                        tool_calls_log.append(
+                            {"tool": tool_name, "params": inp, "blocked": True}
+                        )
+                        continue
+
+                    if sub_session is not None:
+                        sub_session.add_message(
+                            "tool", json.dumps({"tool": tool_name, "params": inp})
+                        )
+
+                    try:
+                        step = Step(tool=tool_name, params=inp)
+                        result = await self.task_executor.execute_step(step)
+                    except Exception as e:
+                        logger.error(
+                            f"[Subagent {self.role.value}] tool {tool_name} failed: {e}"
+                        )
+                        result = {"status": "error", "message": str(e)}
+
+                    result_content = ToolResultFormatter.format_plain(
+                        tool=tool_name,
+                        action=inp.get("action", ""),
+                        params=inp,
+                        result=result,
+                    )
+                    messages.append({"role": "user", "content": result_content})
+                    if sub_session is not None:
+                        sub_session.add_message("tool_result", result_content)
+                    tool_calls_log.append({
+                        "tool": tool_name,
+                        "params": inp,
+                        "status": result.get("status")
+                        if isinstance(result, dict)
+                        else "success",
+                    })
+
+        try:
+            await asyncio.wait_for(_tool_loop(), timeout=self.config.timeout)
             await self._persist_sub_session(sub_session)
 
+            logger.info(
+                f"[Subagent {self.role.value}] done | iterations={total_iterations} "
+                f"tool_calls={len(tool_calls_log)} "
+                f"elapsed={int((time.time() - t0) * 1000)}ms"
+            )
             return SubagentResult(
                 role=self.role,
                 task=task,
                 success=True,
-                output=resp.content,
-                iterations=1,
+                output=final_output,
+                iterations=total_iterations,
+                tool_calls=tool_calls_log,
                 elapsed_ms=(time.time() - t0) * 1000,
                 sub_session_id=sub_session.conversation_id if sub_session else None,
             )
@@ -249,7 +392,6 @@ class BaseSubagent(ABC):
 
             # 即使失败也持久化子会话 (记录失败状态)
             if sub_session is not None:
-                from jarvis.core.entities import Message
                 sub_session.add_message("assistant", f"[执行失败] {e}")
             await self._persist_sub_session(sub_session)
 
@@ -288,10 +430,12 @@ class CoderSubagent(BaseSubagent):
             "你是一名严谨的软件工程师. 任务:\n"
             f"{task}\n\n"
             "要求:\n"
-            "1. 先思考 1-2 句实现思路, 再写代码\n"
+            "1. 先思考 1-2 句实现思路, 再行动\n"
             "2. 代码自包含, 可直接运行, 加必要注释\n"
             "3. 边界情况 (空输入、异常) 简短提示\n"
-            "4. 最后用 markdown 代码块包裹"
+            "4. 如果任务要求保存到文件 / 执行命令 / 读写文件, 直接调用对应工具 "
+            "(file / bash) 完成实际操作, 不要只输出代码块\n"
+            "5. 完成后用 1-2 句说明结果 (如已写入的文件路径)"
         )
 
 
@@ -373,8 +517,9 @@ def create_subagent(
     triggered_by_message_id: Optional[str] = None,
     main_model: Optional[str] = None,
     instance: Optional[Any] = None,
+    task_executor: Optional[Any] = None,
 ) -> BaseSubagent:
-    """工厂方法: 按角色构造子代理 (v3 支持 parent / store / main_model / instance)."""
+    """工厂方法: 按角色构造子代理 (v3 支持 parent / store / main_model / instance / task_executor)."""
     if isinstance(role, str):
         try:
             role = SubagentRole(role)
@@ -391,6 +536,7 @@ def create_subagent(
         triggered_by_message_id=triggered_by_message_id,
         main_model=main_model,
         instance=instance,
+        task_executor=task_executor,
     )
 
     if config_overrides:
@@ -464,6 +610,7 @@ class SubagentOrchestrator:
         triggered_by_message_id: Optional[str] = None,
         model: Optional[str] = None,
         instance: Optional[Any] = None,
+        task_executor: Optional[Any] = None,
     ):
         self.router = router
         self.work_folder = work_folder
@@ -474,6 +621,8 @@ class SubagentOrchestrator:
         # 保证 subagent (含 reduce 阶段) 与主对话使用同一模型 / 实例.
         self.model = model
         self.instance = instance
+        # 工具执行器 — 透传给每个 subagent, 使其 run() 可进入工具循环.
+        self.task_executor = task_executor
         # 默认 reducer: 把多个结果拼起来, 让 LLM 二次综合
         self.reducer = reducer or self._default_reducer
 
@@ -506,6 +655,7 @@ class SubagentOrchestrator:
             triggered_by_message_id=self.triggered_by_message_id,
             main_model=self.model,
             instance=self.instance,
+            task_executor=self.task_executor,
         )
         logger.info(
             f"[Orchestrator] dispatching {agent.role.value}: {task[:80]!r}"

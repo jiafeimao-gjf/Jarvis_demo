@@ -340,3 +340,141 @@ class TestSerialization:
         assert d["mode"] == "parallel"
         assert d["count"] == 1
         assert d["all_success"] is True
+
+
+# ── 工具循环 (v3) ─────────────────────────────────────────────────
+
+class TestToolLoop:
+    """BaseSubagent.run() 含工具循环: 检测 tool_use → 执行工具 → 继续."""
+
+    @pytest.mark.asyncio
+    async def test_tool_loop_executes_tools(self):
+        """第一轮返回 tool_use → 执行 → 第二轮返回最终文本."""
+        router = MagicMock()
+        resp1 = MagicMock(
+            content="writing file",
+            content_blocks=[{
+                "type": "tool_use",
+                "name": "file",
+                "id": "t1",
+                "input": {"action": "write", "path": "x.txt", "content": "hi"},
+            }],
+        )
+        resp2 = MagicMock(content="done, file written")
+        router.chat = AsyncMock(side_effect=[resp1, resp2])
+
+        executor = MagicMock()
+        executor.execute_step = AsyncMock(
+            return_value={"status": "success", "path": "x.txt"}
+        )
+
+        agent = CoderSubagent(router=router, task_executor=executor)
+        result = await agent.run(task="write hi to x.txt")
+
+        assert result.success is True
+        assert result.iterations == 2
+        assert result.output == "done, file written"
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0]["tool"] == "file"
+        assert result.tool_calls[0]["status"] == "success"
+        executor.execute_step.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_tool_uses_single_turn(self):
+        """无 tool_use 时只调一次 LLM, iterations=1."""
+        router = MagicMock()
+        router.chat = AsyncMock(return_value=MagicMock(content="plain text"))
+        agent = GeneralSubagent(router=router)
+        result = await agent.run(task="just talk")
+
+        assert result.success is True
+        assert result.iterations == 1
+        assert result.output == "plain text"
+        assert result.tool_calls == []
+        router.chat.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_nested_subagent_blocked(self):
+        """子代理内调 subagent 工具被阻止 (递归保护)."""
+        router = MagicMock()
+        resp1 = MagicMock(
+            content="delegating",
+            content_blocks=[{
+                "type": "tool_use",
+                "name": "subagent",
+                "id": "t1",
+                "input": {"role": "researcher", "task": "x"},
+            }],
+        )
+        resp2 = MagicMock(content="ok", content_blocks=None)
+        router.chat = AsyncMock(side_effect=[resp1, resp2])
+        executor = MagicMock()
+        executor.execute_step = AsyncMock(return_value={"status": "success"})
+
+        agent = GeneralSubagent(router=router, task_executor=executor)
+        result = await agent.run(task="delegate")
+
+        assert result.success is True
+        # subagent 工具被阻止, executor 从未被调用
+        executor.execute_step.assert_not_called()
+        assert result.tool_calls[0]["blocked"] is True
+        assert result.tool_calls[0]["tool"] == "subagent"
+
+    @pytest.mark.asyncio
+    async def test_allowed_tools_filter(self):
+        """allowed_tools 非空时只允许白名单工具."""
+        router = MagicMock()
+        resp1 = MagicMock(
+            content="try bash",
+            content_blocks=[{
+                "type": "tool_use",
+                "name": "bash",
+                "id": "t1",
+                "input": {"command": "ls"},
+            }],
+        )
+        resp2 = MagicMock(content="ok")
+        router.chat = AsyncMock(side_effect=[resp1, resp2])
+        executor = MagicMock()
+        executor.execute_step = AsyncMock(return_value={"status": "success"})
+
+        agent = GeneralSubagent(
+            router=router,
+            task_executor=executor,
+            config=SubagentConfig(
+                role=SubagentRole.GENERAL,
+                system_prompt="x",
+                allowed_tools=["file"],
+            ),
+        )
+        result = await agent.run(task="run ls")
+
+        # bash 不在 allowed_tools (只有 file) → 被阻止
+        executor.execute_step.assert_not_called()
+        assert result.tool_calls[0]["blocked"] is True
+        assert result.tool_calls[0]["tool"] == "bash"
+
+    @pytest.mark.asyncio
+    async def test_missing_executor_graceful_degrade(self):
+        """无 task_executor 时 tool_use 被跳过 (退化为纯文本)."""
+        router = MagicMock()
+        resp = MagicMock(
+            content="I would write a file",
+            content_blocks=[{
+                "type": "tool_use",
+                "name": "file",
+                "id": "t1",
+                "input": {"action": "write", "path": "test.txt", "content": "x"},
+            }],
+        )
+        router.chat = AsyncMock(return_value=resp)
+
+        # 无 task_executor
+        agent = GeneralSubagent(router=router)
+        result = await agent.run(task="write file")
+
+        # LLM 只调了一次, tool_use 未被处理 (退化为文本)
+        assert result.success is True
+        assert result.iterations == 1
+        assert result.tool_calls == []
+        router.chat.assert_called_once()

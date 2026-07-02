@@ -86,6 +86,7 @@ class ChatEngine:
             work_folder=self.work_folder,
             parent_conversation=None,    # 每次 chat/stream_chat 时动态更新
             message_store=self.memory,
+            task_executor=self.task_executor,  # 让 subagent 可进入工具循环
         )
         self.task_executor.register_subagent(self.subagent_orchestrator)
 
