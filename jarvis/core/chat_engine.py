@@ -268,10 +268,11 @@ class ChatEngine:
 
         for iteration_count in range(MAX_TOOL_ITERATIONS):
             logger.debug(f"[Chat] 第 {iteration_count + 1} 次迭代，调用 LLM...")
-            # 调用 LLM
+            # 调用 LLM (传 instance, 与主对话 ProviderInstance 保持一致)
             response = await self.router.chat(
                 messages,
                 model=model,
+                instance=instance,
                 stream=False
             )
 
@@ -406,6 +407,7 @@ class ChatEngine:
                             self.router,
                             first_user.content,
                             model=model,
+                            instance=instance,
                         )
                         self.current_conversation.set_topic(generated_topic)
                         await self.memory.update_conversation_topic(
@@ -457,10 +459,10 @@ class ChatEngine:
 
         # v3: 把当前会话注入 subagent 编排器
         self.subagent_orchestrator.parent_conversation = self.current_conversation
-        # 让 subagent 跟随主对话的模型 / ProviderInstance
-        _instance = self._resolve_instance(provider_id)
+        # 解析 ProviderInstance — 主对话 / subagent / 后续工具迭代共用同一实例
+        instance = self._resolve_instance(provider_id)
         self.subagent_orchestrator.model = model
-        self.subagent_orchestrator.instance = _instance
+        self.subagent_orchestrator.instance = instance
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -507,7 +509,6 @@ class ChatEngine:
         tool_uses: list[dict] = []
         content_blocks: list[dict] = []
         current_tool: dict | None = None
-        instance = self._resolve_instance(provider_id)
 
         async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
             etype = event.get("type", "")
@@ -644,7 +645,7 @@ class ChatEngine:
 
             _t1 = _t.time()
             logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
-            response = await self.router.chat(messages, model=model, stream=False)
+            response = await self.router.chat(messages, model=model, instance=instance, stream=False)
             response_text = response.content
             thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
             final_response = response_text
@@ -706,7 +707,7 @@ class ChatEngine:
             )
             if first_user and not first_user.image and first_user.content:
                 async for evt in self._generate_and_yield_topic(
-                    first_user.content, model=model
+                    first_user.content, model=model, instance=instance
                 ):
                     yield evt
 
@@ -746,10 +747,10 @@ class ChatEngine:
 
         # v3: 把当前会话注入 subagent 编排器
         self.subagent_orchestrator.parent_conversation = self.current_conversation
-        # 让 subagent 跟随主对话的模型 / ProviderInstance
-        _instance = self._resolve_instance(provider_id)
+        # 解析 ProviderInstance — 主对话 / subagent / 后续工具迭代共用同一实例
+        instance = self._resolve_instance(provider_id)
         self.subagent_orchestrator.model = model
-        self.subagent_orchestrator.instance = _instance
+        self.subagent_orchestrator.instance = instance
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -790,7 +791,6 @@ class ChatEngine:
         tool_uses: list[dict] = []
         content_blocks: list[dict] = []
         current_tool: dict | None = None
-        instance = self._resolve_instance(provider_id)
 
         async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
             etype = event.get("type", "")
@@ -933,7 +933,7 @@ class ChatEngine:
             # 再次调用 LLM 获取响应（后续迭代仍用非流式，因为前面已有工具进度反馈）
             _t1 = _t.time()
             logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")
-            response = await self.router.chat(messages, model=model, stream=False)
+            response = await self.router.chat(messages, model=model, instance=instance, stream=False)
             response_text = response.content
             thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
             final_response = response_text
@@ -999,18 +999,20 @@ class ChatEngine:
             )
             if first_user and not first_user.image and first_user.content:
                 async for evt in self._generate_and_yield_topic(
-                    first_user.content, model=model
+                    first_user.content, model=model, instance=instance
                 ):
                     yield evt
 
         logger.info("[StreamChatWithMsgs] 流式返回完成")
 
     async def _generate_and_yield_topic(self, user_input: str,
-                                        model: Optional[str] = None):
+                                        model: Optional[str] = None,
+                                        instance=None):
         """生成主题 → 持久化 → yield topic_update 事件。
         主流程已结束时调用,不影响响应延迟。"""
         try:
-            topic = await generate_topic(self.router, user_input, model=model)
+            topic = await generate_topic(self.router, user_input,
+                                         model=model, instance=instance)
             # 防止覆盖用户已编辑的主题
             if self.current_conversation.topic:
                 logger.info(

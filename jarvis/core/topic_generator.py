@@ -42,6 +42,7 @@ def _clean_topic(raw: str) -> str:
 
 async def generate_topic(router, user_input: str,
                          model: Optional[str] = None,
+                         instance=None,
                          timeout: float = 5.0) -> str:
     """Generate a 4-12 char Chinese topic for a conversation.
 
@@ -57,7 +58,8 @@ async def generate_topic(router, user_input: str,
 
     try:
         resp = await asyncio.wait_for(
-            router.chat(messages, model=model, max_tokens=40, temperature=0.3),
+            router.chat(messages, model=model, instance=instance,
+                        max_tokens=40, temperature=0.3),
             timeout=timeout,
         )
         text = resp.content if resp else ""

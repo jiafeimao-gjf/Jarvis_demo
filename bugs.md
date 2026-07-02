@@ -177,4 +177,37 @@
 
 ---
 
+## 17. 工具迭代 / 主题生成的 LLM 调用未传 instance，自定义 Provider 模型报 "All providers failed"
+
+**日期:** 2026-07-02
+
+**现象:** 用户选用自定义 ProviderInstance（模型 `glm-5.2`，不在内置 `MODELS` 注册表里）对话。当主 LLM 调用 `subagent` 工具后，主对话进入第二阶段再次调用 LLM 时报错：
+
+```
+2026-07-02 22:57:01 - jarvis.api.chat - ERROR - Stream chat error: All providers failed:
+```
+
+错误消息为空（`errors` 列表为空）。subagent 本身执行成功（`status=success`），崩溃发生在 subagent 返回后主对话的工具后 LLM 调用。
+
+**原因:** `ChatEngine` 里只有第一阶段的 `chat_stream_full(..., instance=instance)` 传了 `instance`，而以下调用都漏了 `instance`：
+
+1. `chat()` 工具迭代循环里的 `router.chat(messages, model=model, stream=False)`（首次及后续 LLM 调用）。
+2. `stream_chat()` / `stream_chat_with_messages()` 工具执行后的 `router.chat(messages, model=model, stream=False)`。
+3. `generate_topic()` → `router.chat(messages, model=model, ...)`（主题生成，有 fallback 不会崩，但会静默回退到首句截断）。
+
+模型 `glm-5.2` 不在 `MODELS` 注册表 → `router._chain()` 中 `get_model()` 返回 `None` → 没有 `model_info.provider`、`preferred` 也为 `None` → 若 `fallback_chain` 也为空，`providers` 列表为空 → for 循环不执行 → `errors` 为空 → 抛 `AllProvidersFailedError` 且消息为空。
+
+**解决:**
+- `chat_engine.py`: 三处入口 (`chat` / `stream_chat` / `stream_chat_with_messages`) 各自只解析一次 `instance = self._resolve_instance(provider_id)`，复用给：
+  - 主对话 LLM 调用（含工具迭代后的 `router.chat`，全部加 `instance=instance`）；
+  - subagent 编排器 (`orchestrator.instance = instance`)；
+  - 主题生成 (`_generate_and_yield_topic(..., instance=instance)` 与 `chat()` 内的 `generate_topic(..., instance=instance)`)。
+- `topic_generator.py`: `generate_topic()` 新增 `instance` 参数并透传给 `router.chat`。
+
+**原则:** 一次对话内所有 LLM 调用（主对话 / 工具迭代 / subagent / reduce / 主题生成）必须共用同一个 `model` + `ProviderInstance`，任何一处漏传 `instance` 都会让自定义 Provider 模型落到 fallback chain 上而失败。
+
+**验证:** `tests/` 全部 191 个测试通过；用 `glm-5.2` 实例复测 subagent 工具调用后主对话不再报 "All providers failed"。
+
+---
+
 *持续更新*
