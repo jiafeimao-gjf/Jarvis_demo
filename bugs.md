@@ -206,7 +206,7 @@
 
 **原则:** 一次对话内所有 LLM 调用（主对话 / 工具迭代 / subagent / reduce / 主题生成）必须共用同一个 `model` + `ProviderInstance`，任何一处漏传 `instance` 都会让自定义 Provider 模型落到 fallback chain 上而失败。
 
-**验证:** `tests/` 全部 191 个测试通过；用 `glm-5.2` 实例复测 subagent 工具调用后主对话不再报 "All providers failed"。
+**验证:** `tests/` 全部 191 个测试通过。运行时复测待用户重启后端后用 `glm-5.2` 实例触发一次 subagent 工具调用确认。
 
 ---
 
