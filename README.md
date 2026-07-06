@@ -1,117 +1,98 @@
-# 贾维斯（JARVIS）系统初始化说明书
+# Jarvis（贾维斯）智能助手系统
+
+![Jarvis 架构图](docs/jarvis_architecture.png)
 
 ## 系统概述
 
-贾维斯是基于 Claude Code 的智能助手系统，支持完整的多模态交互能力。
+Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模态交互、子代理委派、工具执行和长程记忆。
+
+**技术栈**
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3 + Vite + Pinia + Tailwind CSS（端口 8529）|
+| 后端 | FastAPI + uvicorn（端口 9529）|
+| AI | Ollama（本地）/ Anthropic / OpenAI / MiniMax（ProviderInstance 可配置）|
+| 记忆 | SQLite + LanceDB（向量检索）|
+| 工具执行 | TaskExecutor（Strategy Pattern）|
+| 子代理 | SubagentOrchestrator（独立会话 + 工具循环）|
+
+## 快速开始
+
+```bash
+./jarvis.sh start   # 启动后端 + 前端
+./jarvis.sh stop    # 停止所有服务
+./jarvis.sh status  # 查看运行状态
+```
 
 ## 核心能力
 
 | 能力 | 说明 | 触发方式 |
 |------|------|----------|
-| **听** | 语音识别与理解 | 用户语音输入 |
-| **说** | 语音合成与播报 | 调用 `speak` 技能 |
-| **读** | 文件/图片/PDF读取 | 使用 `Read` 工具读取文件 |
-| **写** | 代码/文档生成 | `Write`/`Edit` 工具创建或编辑文件 |
-| **执行** | 调用任意工具 | 工具面板中的所有 MCP 工具 |
+| **听** | 语音识别（Whisper STT）| 麦克风按钮 |
+| **说** | 语音合成（浏览器 SpeechSynthesis）| 说"speak" |
+| **读** | 文件/图片/PDF 读取 | 粘贴图片、文件上传 |
+| **写** | 代码/文档生成、文件操作 | 直接对话 |
+| **执行** | 工具调用（文件/Bash/浏览器/子代理...）| 对话中自然触发 |
 
-## 可用工具分类
+## 子代理（Subagent）
 
-### 1. 文件操作
-- **Read** - 读取本地文件内容
-- **Write** - 创建或覆盖文件
-- **Edit** - 修改文件局部内容
-- **Glob** - 按模式搜索文件
+主对话可将任务委派给隔离的子代理，每个子代理拥有独立会话：
 
-### 2. AI 能力
-- **Agent** - 并行任务处理、深度研究
-- ** tavily-search** - 网络搜索
-- ** summarize** - 总结 URL/PDF/图片
+| 角色 | 说明 |
+|------|------|
+| **Researcher** | 网络调研、多源信息收集 |
+| **Coder** | 代码生成、执行、文件写入（带工具循环）|
+| **Reviewer** | 代码/方案评审（优/问/建三段式）|
+| **Summarizer** | 长文本摘要、结构化要点提取 |
+| **Planner** | 任务拆解与验收标准 |
+| **General** | 通用隔离子代理 |
 
-### 3. 终端操作
-- **Bash** - 执行 Shell 命令
-- **WebFetch** - 获取网页内容
+主 LLM 通过 `subagent` 工具委派任务，支持串行（sequential）、并行（parallel）、map_reduce 三种编排模式。
 
-### 4. 浏览器自动化
-- **playwright-cli** / **agent-browser** - 网页交互与测试
-- **opencli-skill** - 任意网站 CLI 化
+## 工具系统
 
-### 5. 系统控制
-- **desktop-control** - 高级桌面自动化（鼠标、键盘、屏幕控制）
-- **computer_batch** - 批量计算机操作
+### 内置工具（TaskExecutor Strategy）
 
-### 6. 内容生成
-- **ollama-t2i** - 本地文生图（x/z-image-turbo 1024x1024）
-- **ollama-vision** - 本地图片理解（qwen3-vl:4b）
-- **ppt-generator** - 乔布斯风竖屏 HTML 演示稿
-- **algorithmic-art** - p5.js 算法艺术
-- **plantuml-render** - PlantUML 图表渲染
+| 工具 | 说明 |
+|------|------|
+| `file` | 读写/编辑/列表/创建文件，带路径穿越保护 |
+| `bash` | Shell 命令执行，含危险命令黑名单 |
+| `browser` | Playwright 浏览器自动化 |
+| `desktop` | pyautogui 桌面控制 |
+| `api` | 外部 HTTP API 调用 |
 
-### 7. 文档处理
-- **pdf** / **pptx** / **docx** / **xlsx** - 各类型文档读写
-- **markdown** - 文档编写
+### 技能（Skills）
 
-### 8. 专业化写作
-- **scientific-writing** - 学术论文写作
-- **nature-writing** / **nature-polishing** - Nature 风格润色
-- **paper-workflow** - 稿件工作流
-- **internal-comms** - 企业内部通讯
-
-### 9. 代码开发
-- **coding** - 编码风格与最佳实践
-- **vibe-coding** / **vibe-dev** - AI 辅助开发
-- **frontend-design** - 前端界面设计
-- **webapp-testing** - Web 应用测试
-
-## 技能（Skills）使用
-
-技能需通过 `Skill` 工具调用：
-
-```
-技能名: "pdf"
-参数: 文件路径或任务描述
-```
-
-常用技能速查：
-- `pdf` - PDF 读取、提取、合并
-- `xlsx` - Excel 表格处理
-- `docx` - Word 文档编辑
-- `pptx` - PowerPoint 演示文稿
-- `code` - 代码开发工作流
-- `speak` / `tts` - 语音合成播放
-- `save-image` - 保存图片到工作区
-- `tavily-search` - AI 网络搜索
-
-## 技能创建与扩展
-
-如需创建自定义技能：
-1. 使用 `skill-creator` 技能获取指导
-2. 使用 `mcp-builder` 构建 MCP 服务器
+通过 `Skill` 工具调用，技能定义在 `workspace/skills/` 目录，支持 markdown 编写 + YAML frontmatter 元数据。
 
 ## 记忆系统
 
-贾维斯具备持久化记忆能力：
+- **上下文压缩**：`ContextManager` 按 token 预算动态裁剪历史，注入相关记忆（top-k 向量检索）。
+- **会话持久化**：对话保存到 SQLite，LanceDB 支持语义搜索。
+- **独立子会话**：每个 subagent 调用创建独立 Conversation，父会话可跳转查看完整执行轨迹。
 
-| 类型 | 路径 | 用途 |
-|------|------|------|
-| **user** | `/memory/user_*.md` | 用户角色、偏好、知识 |
-| **feedback** | `/memory/feedback_*.md` | 用户反馈与纠正 |
-| **project** | `/memory/project_*.md` | 项目上下文与目标 |
-| **reference** | `/memory/reference_*.md` | 外部系统引用指针 |
+## 开发
 
-记忆文件使用 YAML frontmatter 格式，通过 `MEMORY.md` 索引。
+```bash
+# 后端（热重载）
+uvicorn jarvis.main:app --reload --port 9529
 
-## 系统状态
+# 前端（热重载）
+cd frontend && npm run dev -- --port 8529
 
-- **当前目录**: `/Users/jiafei/claude/Jarvis_demo`
-- **日期**: 2026-05-25
-- **模型**: MiniMax-M2.7 / Claude 4.5/4.6 系列
+# 运行测试
+python -m pytest tests/ -v
+```
 
-## 快速开始
+## 文档
 
-1. **提问** - 直接输入问题或任务描述
-2. **执行** - 说"执行"、"run"触发 Bash 命令
-3. **创建** - 说"写代码"、"生成PPT"触发对应技能
-4. **记忆** - 说"记住..."让贾维斯保存信息
+- `CLAUDE.md` — 架构设计、技术细节、开发命令
+- `DEVELOPMENT_PLAN.md` — 架构文档与功能路线图
+- `DESIGN_PATTERNS.md` — 设计模式详解
+- `bugs.md` — Bug 记录与解决方案
+- `TODO.md` — 功能优先级
 
 ---
-*贾维斯系统初始化完成，随时待命。*
+
+*Jarvis 系统，随时待命。*

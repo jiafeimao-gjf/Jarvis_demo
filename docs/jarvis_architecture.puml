@@ -1,0 +1,141 @@
+@startuml JarvisArchitecture
+!theme plain
+
+title Jarvis 智能助手系统架构图
+
+package "Frontend (Vue3 :8529)" {
+  [ChatWindow] as FW
+  [ChatMessage] as FM
+  [SubagentCard] as SC
+  [SubagentSessionPanel] as SP
+  [useApi] as API
+  [stores/chat.ts] as CHAT
+}
+
+package "Backend (FastAPI :9529)" {
+  package "API Routes" {
+    [chat.py] as ROUTES
+    [memory.py] as MEM
+  }
+
+  package "Core Engines" {
+    [JarvisMediator] as MED
+    [ChatEngine] as CE
+    [ContextManager] as CM
+    [SubagentOrchestrator] as ORCH
+    [TaskExecutor] as TE
+    [MemoryStore] as MS
+  }
+
+  package "AI Providers" {
+    [AIRouter] as ROUTER
+    [OllamaAdapter] as OLL
+    [AnthropicAdapter] as ANTH
+    [MiniMaxAdapter] as MM
+  }
+
+  package "Subagents" {
+    [ResearcherSubagent]
+    [CoderSubagent]
+    [ReviewerSubagent]
+    [SummarizerSubagent]
+    [PlannerSubagent]
+    [GeneralSubagent]
+  }
+}
+
+package "External Services" {
+  database "SQLite" as DB
+  database "LanceDB" as VDB
+  [Ollama :11434] as OLLAMA
+  [Playwright] as PW
+}
+
+' Styling
+skinparam backgroundColor #FEFEFE
+skinparam componentStyle rectangle
+
+' Frontend
+FW --> API : SSE / REST
+FM --> SC : subagent events
+FM --> SP : openSubagentSession
+API --> CHAT : addMessage / syncToBackend
+CHAT --> ROUTES : POST /api/chat/stream
+
+' Routes
+ROUTES --> MED : stream_chat_with_messages
+ROUTES --> MEM : CRUD / sub_session
+
+' Mediator
+MED --> CE : chat / stream_chat
+
+' ChatEngine Core
+CE --> CM : build_messages
+CE --> ORCH : subagent_orchestrator
+CE --> TE : task_executor
+
+' Context
+CM --> MS : retrieve (memory injection)
+CE --> MS : save_conversation
+
+' Subagent Orchestration
+ORCH --> ResearcherSubagent : run_one
+ORCH --> CoderSubagent : run_one
+ORCH --> ReviewerSubagent : run_one
+ORCH --> SummarizerSubagent : run_one
+ORCH --> PlannerSubagent : run_one
+ORCH --> GeneralSubagent : run_one
+
+' Subagents → LLM
+ResearcherSubagent --> ROUTER : router.chat
+CoderSubagent --> ROUTER : router.chat
+ReviewerSubagent --> ROUTER : router.chat
+SummarizerSubagent --> ROUTER : router.chat
+PlannerSubagent --> ROUTER : router.chat
+GeneralSubagent --> ROUTER : router.chat
+
+' Subagents → Tools
+CoderSubagent --> TE : execute_step (file/bash)
+ResearcherSubagent --> TE : execute_step
+ReviewerSubagent --> TE : execute_step
+
+' Router → Providers
+ROUTER --> OLL : chat / vision / STT
+ROUTER --> ANTH : chat (Anthropic-format)
+ROUTER --> MM : chat (OpenAI-format)
+
+' Persistence
+MS --> DB : save_conversation
+MS --> VDB : vector search
+
+' External
+OLLAMA <-- OLL : /v1/messages
+OLLAMA <-- ANTH : /v1/messages
+PW <-- TE : browser automation
+
+' ── Subagent Tool Loop ──
+note as N1
+**Subagent Tool Loop (v3)**
+1. LLM 调用 → 检测 tool_use block
+2. TaskExecutor.execute_step(Step)
+   - file / bash / browser / ...
+3. ToolResultFormatter.format_plain
+4. 结果回注 messages → 下一轮
+5. 直到无 tool_use 或 max_iterations
+  *(子代理内禁止嵌套 subagent)*
+end note
+ORCH .. N1
+TE .. N1
+
+' ── SSE Event Flow ──
+note as N2
+**SSE Events:**
+• text / thinking / thinking_start/end
+• tool_call / tool_result
+• topic_update
+• error
+→ SubagentSessionPanel 抽屉展示完整轨迹
+end note
+ROUTES .. N2
+
+@enduml
