@@ -1,0 +1,217 @@
+
+@startuml stream_sequence_engine
+
+'======================================================================
+' 第二张图：ChatEngine.stream_chat_with_messages 内部时序图
+'（即 /chat/stream 选中 request.messages 分支后，端到端的内部细节）
+'======================================================================
+
+title ChatEngine.stream_chat_with_messages 内部时序图（细节视图）
+
+skinparam sequenceMessageAlign center
+skinparam BoxPadding 10
+skinparam ParticipantPadding 10
+skinparam NoteFontSize 11
+skinparam responseMessageBelowArrow true
+
+actor "前端 SSE Client" as FE
+participant "event_generator" as GEN
+participant "ChatEngine\nstream_chat_with_messages()" as ENG
+participant "MemoryStore\n(SQLite + LanceDB)" as MEM
+participant "SubagentOrchestrator" as SUB
+database "ProviderInstance\nStore" as INST
+participant "PromptLoader\n(workspace/prompts/*.md +\nworkspace/skills/ + DB settings)" as PROMPT
+participant "ContextManager" as CM
+participant "AIRouter" as ROUTER
+participant "AnthropicAdapter /\nOllamaAdapter (stream)" as LLM
+participant "AIRouter\n(non-stream)" as ROUTER2
+participant "ToolRegistry" as REG
+participant "TaskExecutor\n+ Strategy" as TE
+participant "ToolResultFormatter" as TRF
+participant "TopicGenerator" as TG
+
+== 0. 入口与上下文准备 ==
+
+GEN -> ENG: stream_chat_with_messages(\n  user_input, messages_history,\n  model, conv_id, user_id,\n  provider_id)
+
+ENG -> MEM: get_conversation(conv_id)
+MEM --> ENG: {messages[], topic, user_id, context}\n                      or None
+
+note over ENG
+  加载/新建 self.current_conversation:
+  - 有 conv_id 且 DB 命中     → Conversation(...)
+  - 有 conv_id 但 DB 未命中    → 新建空 Conversation(conv_id)
+  - 无 conv_id                → 新建空 Conversation(user_id=user_id)
+end note
+
+ENG -> SUB: orchestrator.parent_conversation = conv\n           orchestrator.model       = model\n           orchestrator.instance    = instance
+note right of SUB #LightYellow
+  让 subagent 在被 LLM 调用时
+  共用本次对话的 context / 模型 / 实例
+end note
+
+ENG -> INST: _resolve_instance(provider_id)\n              → store.get_by_id()\n                or get_active_instance()
+INST --> ENG: ProviderInstance
+
+ENG -> ENG: conv.add_message("user", user_input)
+
+== 1. Prompt + ContextManager 构建 messages ==
+
+ENG -> PROMPT: _load_prompt_settings()\n                 → DB settings +\n                   load_prompt_files() 覆盖
+PROMPT --> ENG: SystemPromptSettings\n(persona/abilities/memory/tools/work_folder)
+
+ENG -> ENG: _build_system_prompt(settings)\n  - workspace/prompts/*.md 拼接\n  - skills (workspace/skills/)\n  - persona / abilities / memory 段
+
+ENG -> CM: build_messages(\n  system_prompt,\n  history      = [过滤掉 system 的传入历史],\n  current_user_input = user_input,\n  memory_retriever   = self.memory.retrieve,\n  model_id           = model,\n  memory_top_k       = 3,\n  conversation       = conv)
+
+CM -> MEM: retrieve(user_input, top_k=3)
+MEM --> CM: List[MemoryChunk]
+CM -> CM: CompactionStrategy.compact(history, budget)\n  - SlidingWindow / Summarization / Hybrid
+CM -> CM: compose = [system(+memory), ...history, user]
+CM --> ENG: {messages, stats: {\n            history_in/out, dropped,\n            memory_chunks, tokens_estimate,\n            budget_available}}
+
+note over ENG
+  此处修复了 #17 BUG: 解析一次 instance 后,
+  主对话 / 工具迭代 / subagent / 主题生成全部共用.
+end note
+
+== 2. Phase 1 — 流式 LLM 调用（消除 TTFB） ==
+
+ENG -> ROUTER: chat_stream_full(\n  messages, model=model,\n  instance=instance)
+ROUTER -> LLM: POST /v1/messages (stream=true)
+
+loop SSE 事件
+
+    LLM  --> ROUTER: event {type, content|name|id|input, ...}
+    ROUTER --> ENG: async yield event
+
+    alt event.type == "thinking_start"
+        ENG --> GEN: yield {type:"thinking_start"}
+    else event.type == "thinking"
+        ENG -> ENG: streamed_thinking += chunk
+        ENG --> GEN: yield chunk  (实时 thinking 流)
+    else event.type == "thinking_end"
+        ENG -> ENG: content_blocks.append({type:"thinking", thinking:streamed_thinking})
+        ENG --> GEN: yield {type:"thinking_end"}
+    else event.type == "text"
+        ENG -> ENG: streamed_text += chunk
+        ENG --> GEN: yield chunk  (文本直传, TTFB≈0)
+    else event.type == "tool_use_start"
+        ENG -> ENG: current_tool = {type:"tool_use", name, id, input:{}}
+        ENG --> GEN: yield {type:"status", content:"tool_detected"}
+    else event.type == "tool_use_end"
+        ENG -> ENG: current_tool.input = event.input\ntool_uses.append(current_tool)\ncontent_blocks.append(current_tool)
+    else event.type == "message_stop"
+        ENG -> ENG: break
+    else event.type == "error"
+        ENG -> ENG: logger.error; break
+    end
+
+end
+
+ENG -> ENG: if streamed_text:\n  content_blocks.append({type:"text", text:streamed_text})
+
+== 3. Phase 2 — 工具迭代循环 (MAX_TOOL_ITERATIONS=5) ==
+
+ENG -> ENG: has_tools = (len(tool_uses) > 0)\nfinal_response = streamed_text\nthinking       = streamed_thinking
+
+loop iteration_count in range(MAX_TOOL_ITERATIONS)
+
+    alt not has_tools
+        ENG -> ENG: break
+    end
+
+    ENG --> GEN: yield {type:"status", content:"tool_iter_<N>"}
+
+    ENG -> REG: get_tool_names()  (校验)
+    ENG -> ENG: tool_calls = []\nfor tu in tool_uses:\n  if tu.name not in registry: warn+skip\n  ToolCall(tool, action, params, raw=tu.id)
+
+    alt tool_calls is empty (全部未知)
+        ENG -> ENG: break
+    end
+
+    ENG --> GEN: yield {type:"tool_call", tool, action, params}
+
+    ENG -> ENG: messages.append(\n  {role:"assistant", content:content_blocks})
+
+    loop 每个 tool_call (顺序执行)
+
+        ENG -> ENG: step = Step(tool, params)\nconv.add_message("tool", json({tool, action, params, raw}))
+
+        ENG -> TE: execute_step(step)
+        TE -> TE: 匹配 strategy\n  FileStrategy / BashStrategy /\n  BrowserStrategy / SubagentStrategy /\n  ApiStrategy / ToolStrategy / DesktopStrategy
+        note right of TE #LightYellow
+          SubagentStrategy 会转交 SUB
+          SUB 在父 SUB 链路下创建独立子会话
+          (修复 #16 BUG: 透传 main_model + instance)
+        end note
+        TE --> ENG: result {status, content, stderr?, message?}
+
+        alt result exception
+            ENG -> ENG: result = {status:"error", message:str(e)}\nlogger.error
+        end
+
+        ENG -> TRF: format_plain(tool, action, params, result)
+        TRF --> ENG: result_content (纯文本,\n适配 Ollama 非结构化 tool_result)
+
+        ENG -> ENG: conv.add_message("tool_result", result_content)\nmessages.append({role:"user", content:result_content})
+
+        ENG --> GEN: yield {type:"tool_result", tool, action, status, result}
+
+    end
+
+    alt 进入下一轮 (iteration_count > 0)
+        ENG -> ROUTER2: chat(messages, model, instance, stream=False)
+        ROUTER2 -> LLM: POST /v1/messages (非流式)
+        LLM --> ROUTER2: response {content, content_blocks, thinking}
+        ROUTER2 --> ENG: response
+
+        ENG -> ENG: response_text = resp.content\nthinking        = resp.thinking\nfinal_response   = response_text\ncontent_blocks   = resp.content_blocks\n                  or [{type:"text", text:response_text}]
+    end
+
+    ENG -> ENG: tool_uses = []\nhas_tools = tool_parser.has_tool_calls(response_text)\n             or any(block.type=="tool_use" for block in content_blocks)
+
+    alt tool_uses is empty (LLM 完成最终答复)
+        ENG -> ENG: break
+    end
+
+end
+
+== 4. 图片路径解析 + 持久化 ==
+
+ENG -> ENG: final_response = _resolve_image_paths(final_response)\n  - 正则匹配 ![alt](path)\n  - 读取 workspace/ 下文件 → base64 data URL
+
+ENG -> ENG: conv.add_message("assistant", final_response, thinking=thinking)
+
+ENG -> MEM: save_conversation(\n  conv_id, user_id,\n  [msg.to_dict() for msg in conv.messages],\n  conv.context)
+MEM --> ENG: ok
+
+ENG -> ENG: await _save_conversation_to_file()\n  → workspace/conversations/{conv_id}.json\n  含 system_prompt 快照
+
+== 5. 流尾部：thinking/文本补发 + 首轮主题生成 ==
+
+alt thinking 与 Phase-1 streamed_thinking 不同
+    ENG --> GEN: yield {type:"thinking_start"}\n for chunk in _chunk_text(thinking, 8):\n   yield {type:"thinking", content:chunk}\n yield {type:"thinking_end"}
+end
+
+alt final_response 与 Phase-1 streamed_text 不同
+    ENG --> GEN: yield chunks of final_response\n  (size=8, 模拟逐 token)
+end
+
+alt 首轮对话 & 首条 user 为文本 (非 image-only)
+    ENG -> TG: _generate_and_yield_topic(user_input, model, instance)
+    TG -> ROUTER2: chat(short_msg, model, instance)
+    ROUTER2 --> TG: topic string
+    TG -> ENG: topic
+    ENG -> ENG: conv.set_topic(topic)\nMEM.update_conversation_topic(conv_id, topic)
+    ENG --> GEN: yield {type:"topic_update", topic}
+end
+
+GEN --> FE: event="done"\n{type:"done", content:full_response,\nconversation_id:current_conversation_id}
+
+note over ENG
+  退出 stream_chat_with_messages
+  self.current_conversation 保持,供下次 chat() 复用
+end note
+
+@enduml

@@ -1,6 +1,6 @@
 # Jarvis（贾维斯）智能助手系统
 
-![Jarvis 架构图](docs/jarvis_architecture.png)
+![Jarvis 架构图](docs/JarvisArchitecture.png)
 
 ## 系统概述
 
