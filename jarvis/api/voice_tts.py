@@ -103,7 +103,7 @@ async def synthesize(body: dict):
 
     try:
         output_name = f"clone_{int(time.time() * 1000)}.wav"
-        result = f5_tts.synthesize_to_wav(text, output_name=output_name, speed=speed)
+        result = await f5_tts.synthesize_to_wav(text, output_name=output_name, speed=speed)
         return voice_clone_url_payload(
             audio_url=result["output_url"],
             duration=result["duration"],

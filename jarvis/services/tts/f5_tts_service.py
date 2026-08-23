@@ -151,7 +151,7 @@ class F5TTSBridge:
 
     # ============ 同步合成 ============
 
-    def synthesize_to_wav(
+    async def synthesize_to_wav(
         self,
         text: str,
         output_name: Optional[str] = None,
@@ -159,12 +159,16 @@ class F5TTSBridge:
     ) -> dict:
         """整段文本 → wav 文件。
 
+        同步的 F5-TTS 推理 (~1-3s/段) 用 asyncio.to_thread 扔到线程池,
+        避免阻塞 uvicorn 事件循环。
+
         Returns: { output_url, output_path, duration, sample_rate }
         Raises: F5TTSUnavailable
         """
         service = self.ensure_service()
         speed = speed or settings.voice_clone.speed
-        result = service.clone(
+        result = await asyncio.to_thread(
+            service.clone,
             ref_audio=str(settings.voice_clone.ref_audio),
             ref_text=self.get_ref_text(),
             gen_text=text,

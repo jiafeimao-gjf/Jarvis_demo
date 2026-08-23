@@ -118,7 +118,7 @@ class VoiceEngine:
         try:
             import time
             output_name = f"clone_{int(time.time() * 1000)}.wav"
-            result = f5_tts.synthesize_to_wav(text, output_name=output_name)
+            result = await f5_tts.synthesize_to_wav(text, output_name=output_name)
             logger.info(
                 f"[TTS] cloned {len(text)} chars → {result['output_url']}, "
                 f"duration={result['duration']:.2f}s"
