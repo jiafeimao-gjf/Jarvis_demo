@@ -12,7 +12,7 @@ Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模�
 |------|------|
 | 前端 | Vue 3 + Vite + Pinia + Tailwind CSS（端口 8529）|
 | 后端 | FastAPI + uvicorn（端口 9529）|
-| AI | Ollama（本地）/ Anthropic / OpenAI / MiniMax（ProviderInstance 可配置）|
+| AI | Ollama（本地 qwen3:4b / qwen3.5:9b）/ Anthropic / OpenAI / MiniMax（ProviderInstance 可配置）|
 | 记忆 | SQLite + LanceDB（向量检索）|
 | 工具执行 | TaskExecutor（Strategy Pattern）|
 | 子代理 | SubagentOrchestrator（独立会话 + 工具循环）|
@@ -25,11 +25,147 @@ Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模�
 ./jarvis.sh status  # 查看运行状态
 ```
 
+## 本地模型配置
+
+Jarvis 的多模态能力依赖本地推理模型。**首次启动前**请按本节准备好，否则语音/视觉/对话会失败。
+
+### 模型清单
+
+| 类别 | 模型 | 用途 | 大小 | 安装方式 |
+|------|------|------|------|----------|
+| **Chat** | `qwen3:4b` | 主对话 | ~2.5 GB | Ollama pull |
+| **Vision** | `qwen3.5:9b` | 图片理解 | ~5.5 GB | Ollama pull |
+| **STT** | Paraformer-large (funasr) | 中文语音转文字 | ~1 GB | 首次调用自动从 ModelScope 下载 |
+| **T2I** *(可选)* | `x/z-image-turbo` | 文生图 | ~6 GB | Ollama pull |
+
+### 1. 安装 Ollama + 拉取模型
+
+Ollama 是 Jarvis 的本地推理核心，负责 Chat / Vision / T2I。
+
+```bash
+# macOS / Linux
+brew install ollama   # 或访问 https://ollama.com/download
+ollama serve          # 启动服务 (默认 http://localhost:11434)
+
+# 拉取必需模型
+ollama pull qwen3:4b        # 聊天
+ollama pull qwen3.5:9b      # Vision
+
+# (可选) 拉取 T2I
+ollama pull x/z-image-turbo
+```
+
+验证：
+```bash
+ollama list
+# 应看到 NAME           SIZE   MODIFIED
+#       qwen3:4b        2.5 GB ...
+#       qwen3.5:9b      5.5 GB ...
+```
+
+### 2. 安装 ffmpeg
+
+**语音输入**需要 ffmpeg 解码浏览器录制的 WebM/Opus：
+
+```bash
+brew install ffmpeg     # macOS
+sudo apt install ffmpeg # Ubuntu
+
+ffmpeg -version  # 验证
+```
+
+### 3. STT 引擎 — Paraformer (推荐) / Whisper (备选)
+
+| Backend | 中文质量 | 速度 (M3 Pro) | 模型来源 | 切换方式 |
+|---------|----------|---------------|----------|----------|
+| **Paraformer** (默认) | ⭐⭐⭐⭐⭐ 显著优于 whisper | ~500ms (MPS) | ModelScope 自动下载 | 无需配置 |
+| Whisper | ⭐⭐⭐ 英文更好 | ~1.5s | `openai-whisper` 包 | `STT__BACKEND=whisper` |
+
+**Paraformer 首次启动**：第一次语音请求会从 ModelScope 下载模型（~1GB），日志显示：
+```
+[Paraformer] loading model on mps...
+[Paraformer] loaded on mps
+```
+模型缓存到 `~/.cache/modelscope/hub/`。
+
+**切换 Whisper**（不推荐，中文质量下降）：
+```bash
+# .env 中加入
+STT__BACKEND=whisper
+# 并 pip install openai-whisper
+pip install openai-whisper
+```
+
+### 4. Python 依赖
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+关键依赖：
+- `funasr` + `torch` + `torchaudio` — Paraformer STT
+- `httpx` — Ollama HTTP 客户端
+- `fastapi` + `uvicorn` — 后端服务
+- `lancedb` — 向量记忆
+
+### 5. 环境变量
+
+复制 `.env.example` 为 `.env` 并按需修改：
+
+```bash
+cp .env.example .env
+```
+
+常用项：
+```bash
+# Ollama
+AI__OLLAMA__BASE_URL=http://localhost:11434
+AI__OLLAMA__MODEL=qwen3:4b
+AI__OLLAMA__VISION_MODEL=qwen3.5:9b
+
+# STT (可选)
+STT__BACKEND=paraformer        # paraformer | whisper
+STT__BATCH_SIZE_S=300         # Paraformer 长音频切片大小
+
+# 云端 LLM (可选, 用于 ProviderInstance)
+AI__OPENAI__API_KEY=sk-xxx
+AI__ANTHROPIC__API_KEY=sk-ant-xxx
+```
+
+> ⚠️ ProviderInstance 切换**不影响** STT——语音识别始终走本地 STT（paraformer/whisper），与 chat provider 解耦。这是已知设计：openai/anthropic/minimax 等 chat adapter 不实现 `transcribe_audio()`，直接返回空串。
+
+### 6. 验证一切就绪
+
+启动 backend 后访问 `http://localhost:9529/api/status`，应看到：
+
+```json
+{
+  "ai": {
+    "providers": {
+      "ollama": {"configured": true}
+    }
+  },
+  "sub_model_processor": {
+    "stt_model": "...",
+    "vision_model": "qwen3.5:9b",
+    "router_ready": true
+  }
+}
+```
+
+**故障排查**：
+- `Failed to connect to http://localhost:11434` → `ollama serve` 没跑
+- `No module named 'funasr'` → `pip install funasr`
+- `ffmpeg not found` → `brew install ffmpeg`
+- 语音返回空串 → 检查 `logs/jarvis.services.sub_model_processor.log`，搜索 `[Paraformer]` / `[whisper]` 关键字
+
 ## 核心能力
 
 | 能力 | 说明 | 触发方式 |
 |------|------|----------|
-| **听** | 语音识别（Whisper STT）| 麦克风按钮 |
+| **听** | 语音识别（Paraformer / Whisper STT，本地推理）| 麦克风按钮 |
 | **说** | 语音合成（浏览器 SpeechSynthesis）| 说"speak" |
 | **读** | 文件/图片/PDF 读取 | 粘贴图片、文件上传 |
 | **写** | 代码/文档生成、文件操作 | 直接对话 |
