@@ -1,6 +1,7 @@
 # jarvis/services/sub_model_processor.py
 """子模型处理器 — 多模态输入转文本, 再合并到主对话引擎"""
 import base64
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -22,7 +23,8 @@ class SubModelProcessor:
     """子模型处理器: STT / Vision → 文本 → 注入主对话
 
     职责:
-      - STT: openai-whisper base model (local, not Ollama)
+      - STT: Paraformer-large (default, 中文优化) / Whisper-base (fallback)
+             强制本地推理，与 chat ProviderInstance 解耦
       - Vision: qwen3.5:9b via Ollama /v1/messages
       - 调用子模型进行原始输入→文本转换
       - 返回纯文本, 由调用方注入 chat_engine
@@ -59,22 +61,36 @@ class SubModelProcessor:
     async def process_audio(self, audio_data: bytes) -> str:
         """STT: 音频 bytes → 文本
 
-        强制走 OllamaAdapter（本地 openai-whisper），不跟随 ProviderInstance。
-        原因: openai / anthropic / minimax 等 adapter 的 transcribe_audio
+        强制走本地 STT 引擎（paraformer 或 whisper），不跟随 ProviderInstance。
+        原因: openai / anthropic / minimax 等 chat provider 的 transcribe_audio
         都是直接 return ""（不支持 STT），切到这些 instance 会导致语音静默失败。
+
+        后端由 settings.stt_backend 决定 (默认 "paraformer")。
         """
         if not self._router:
             logger.error("SubModelProcessor: no AI Router set")
             return ""
 
         try:
-            client = self._router._get_client("ollama", self.stt_model)
-            text = await client.transcribe_audio(audio_data)
+            from jarvis.services.stt import get_stt_engine
+            from jarvis.config import settings as app_settings
+
+            backend = app_settings.stt_backend
+            ollama_client = self._router._get_client("ollama", self.stt_model)
+            engine = get_stt_engine(backend, ollama_client=ollama_client)
+
+            t0 = time.time()
+            text = await engine.transcribe(audio_data)
+            elapsed = (time.time() - t0) * 1000
+
             result = text.strip() if text else ""
-            logger.info(f"STT result ({len(result)} chars): {result[:100]}...")
+            logger.info(
+                f"STT result ({len(result)} chars, {elapsed:.0f}ms, "
+                f"backend={engine.backend_name()}): {result[:100]}..."
+            )
             return result
         except Exception as e:
-            logger.error(f"Audio transcription failed: {e}")
+            logger.error(f"Audio transcription failed: {type(e).__name__}: {e}")
             return ""
 
     async def process_image(

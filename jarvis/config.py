@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
 
+    # STT 后端: "paraformer" (中文优化) | "whisper" (fallback)
+    # 环境变量: STT__BACKEND=whisper
+    stt_backend: str = "paraformer"
+    stt_batch_size_s: int = 300
+
     # 日志
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

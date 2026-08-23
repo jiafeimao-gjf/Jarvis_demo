@@ -20,7 +20,18 @@ pyarrow>=14.0.0
 numpy>=1.26.0
 
 # STT（语音转文字）
-openai-whisper>=20240930
+# 默认: Paraformer-large 中文 ASR (阿里达摩院 via funasr)
+#   - 中文词错率显著优于 whisper
+#   - 内置 VAD + 标点恢复
+#   - Apple Silicon MPS 加速
+#   - 模型: iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+#   - 切换 backend: STT__BACKEND=whisper
+funasr>=1.4.2
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# STT fallback (可选, 切换 STT__BACKEND=whisper 时需要)
+# openai-whisper>=20240930
 
 # 可选依赖（根据需要安装）
 # playwright==1.42.0   # 浏览器自动化 (需: playwright install chromium)
