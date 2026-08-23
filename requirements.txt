@@ -30,11 +30,12 @@ funasr>=1.4.2
 torch>=2.0.0
 torchaudio>=2.0.0
 
-# 声音克隆 (F5-TTS) — 可选
-# 不强制安装; 未装时 voice_clone 走浏览器 TTS 降级
-# 启用流程: pip install f5-tts soundfile + 上传参考音频
-# f5-tts>=1.0.0
-# soundfile>=0.12.0
+# 声音克隆 (F5-TTS)
+# 默认安装。首次运行时下载 ~1.2GB 模型权重 (~30s-1min) 到 ~/.cache/huggingface/
+# 首次录音后才下载。如未上传参考音频, 自动降级到浏览器 TTS
+# 模型: SWivid/F5-TTS (F5TTS_Base)
+f5-tts>=1.0.0
+soundfile>=0.12.0
 # numpy 已在上面
 
 # STT fallback (可选, 切换 STT__BACKEND=whisper 时需要)

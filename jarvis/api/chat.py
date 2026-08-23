@@ -87,11 +87,9 @@ async def chat_stream(request: ChatRequest):
     sentence_idx = [0]
 
     async def push_token_events(token: str):
-        """处理一个文本 token: 累加 + 切句 + 触发 TTS, 返回 SSE 事件 list"""
+        """async generator: 处理一个文本 token, 累加 + 切句 + 触发 TTS, yield SSE 事件 dict"""
         sentence_buf[0] += token
-        events = [
-            {"event": "token", "data": json.dumps({"type": "token", "content": token})}
-        ]
+        yield {"event": "token", "data": json.dumps({"type": "token", "content": token})}
         # 句切分循环
         while True:
             idx = _find_split(sentence_buf[0], min_chars, max_chars)
@@ -105,67 +103,48 @@ async def chat_stream(request: ChatRequest):
             if can_clone:
                 try:
                     async for pcm in f5_tts.synthesize_to_pcm(sentence):
-                        events.append(
-                            {
-                                "event": "audio",
-                                "data": encode_pcm_chunk(sentence_idx[0], pcm),
-                            }
-                        )
-                    sentence_idx[0] += 1
-                except Exception as e:
-                    logger.warning(f"[TTS] 句合成失败，降级: {e}")
-                    events.append(
-                        {
-                            "event": "tts_fallback",
-                            "data": json.dumps(
-                                {"type": "tts_fallback", "text": sentence}
-                            ),
-                        }
-                    )
-            else:
-                events.append(
-                    {
-                        "event": "tts_fallback",
-                        "data": json.dumps(
-                            {"type": "tts_fallback", "text": sentence}
-                        ),
-                    }
-                )
-        return events
-
-    async def flush_tail_events():
-        """流结束时 flush 残余 buffer, 返回 SSE 事件 list"""
-        tail = sentence_buf[0].strip()
-        sentence_buf[0] = ""
-        if not tail:
-            return []
-        events = []
-        if can_clone:
-            try:
-                async for pcm in f5_tts.synthesize_to_pcm(tail):
-                    events.append(
-                        {
+                        yield {
                             "event": "audio",
                             "data": encode_pcm_chunk(sentence_idx[0], pcm),
                         }
-                    )
+                    sentence_idx[0] += 1
+                except Exception as e:
+                    logger.warning(f"[TTS] 句合成失败，降级: {e}")
+                    yield {
+                        "event": "tts_fallback",
+                        "data": json.dumps({"type": "tts_fallback", "text": sentence}),
+                    }
+            else:
+                yield {
+                    "event": "tts_fallback",
+                    "data": json.dumps({"type": "tts_fallback", "text": sentence}),
+                }
+
+    async def flush_tail_events():
+        """async generator: 流结束时 flush 残余 buffer, yield SSE 事件"""
+        tail = sentence_buf[0].strip()
+        sentence_buf[0] = ""
+        if not tail:
+            return
+        if can_clone:
+            try:
+                async for pcm in f5_tts.synthesize_to_pcm(tail):
+                    yield {
+                        "event": "audio",
+                        "data": encode_pcm_chunk(sentence_idx[0], pcm),
+                    }
                 sentence_idx[0] += 1
             except Exception as e:
                 logger.warning(f"[TTS] tail 合成失败，降级: {e}")
-                events.append(
-                    {
-                        "event": "tts_fallback",
-                        "data": json.dumps({"type": "tts_fallback", "text": tail}),
-                    }
-                )
-        else:
-            events.append(
-                {
+                yield {
                     "event": "tts_fallback",
                     "data": json.dumps({"type": "tts_fallback", "text": tail}),
                 }
-            )
-        return events
+        else:
+            yield {
+                "event": "tts_fallback",
+                "data": json.dumps({"type": "tts_fallback", "text": tail}),
+            }
 
     async def event_generator():
         import time as _time
