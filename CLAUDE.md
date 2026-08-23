@@ -54,12 +54,13 @@ cd frontend && npm run build
 | Real-time | WebSocket + SSE (Server-Sent Events) |
 | AI provider | Ollama (primary), OpenAI/Anthropic adapters config-driven |
 | AI orchestration | AIRouter — model registry → adapter → API |
-| Voice STT | Local openai-whisper (base) with ffmpeg WebM→WAV decode |
-| Voice TTS | Browser SpeechSynthesis |
+| Voice STT | Local Paraformer-large via funasr (MPS) with WebM direct decode |
+| Voice TTS | F5-TTS voice clone (optional, default browser SpeechSynthesis fallback) |
 | Vision analysis | Ollama qwen3.5:9b via /v1/messages (Anthropic-compatible) |
 | Multimodal routing | SubModelProcessor facade → sub-model → text → chat |
 | Context management | ContextManager — token budget + sliding window + summarization + memory injection (Strategy Pattern) |
 | Subagent orchestration | SubagentOrchestrator — researcher/coder/reviewer/summarizer/planner/general, with sequential/parallel/map-reduce dispatch modes |
+| Voice cloning | F5TTSBridge — wraps ../voice-clone-demo F5-TTS singleton, sentence-level PCM streaming, browser TTS graceful degradation |
 | Memory storage | SQLite + LanceDB vector search |
 | Task execution | Playwright, Claude Code MCP tools, SubagentStrategy |
 
@@ -103,8 +104,9 @@ jarvis/                         # Backend (Python)
 ├── config.py                   # Pydantic-based config (AI, hardware, storage, CORS)
 ├── api/                        # API route layer
 │   ├── routes.py               # Route aggregation (status, health)
-│   ├── chat.py                 # /api/chat (REST) + /api/chat/stream (SSE)
-│   ├── voice.py                # /api/voice (audio input)
+│   ├── chat.py                 # /api/chat (REST) + /api/chat/stream (SSE, with optional audio chunks)
+│   ├── voice.py                # /api/voice (audio input → STT → chat → TTS)
+│   ├── voice_tts.py            # /api/voice/ref/* + /api/voice/synthesize + /api/voice/audio/* + /api/voice/status
 │   ├── camera.py               # /api/camera (frame analysis, WebSocket stream)
 │   ├── memory.py               # /api/memory (CRUD, conversation persistence)
 │   ├── execute.py              # /api/execute (task execution)
@@ -129,6 +131,12 @@ jarvis/                         # Backend (Python)
 │   ├── skill_loader.py         # Skill loader for workspace/skills/*.md (YAML frontmatter)
 │   ├── ollama_client.py        # Raw HTTP client to Ollama API (legacy)
 │   ├── vision_processor.py     # Image frame analysis (legacy, subsumed by SubModelProcessor)
+│   ├── tts/                     # Voice cloning module (F5-TTS, optional)
+│   │   ├── f5_tts_service.py    # F5TTSBridge — wraps ../voice-clone-demo TTSService singleton (lazy load ~1.2GB)
+│   │   ├── voice_ref_manager.py # Reference audio CRUD (upload/list/delete/history, ffmpeg → wav)
+│   │   ├── sentence_splitter.py # Chinese/English sentence boundary detection (for stream TTS trigger)
+│   │   ├── pcm_chunker.py       # PCM bytes → SSE audio_chunk event payload
+│   │   └── fallback.py          # browser_tts / voice_clone dict protocol (degradation contract)
 │   └── ai/                     # AI Provider module (Strategy + Registry Pattern)
 │       ├── base.py             # AIClient ABC, AIResponse, TokenUsage
 │       ├── config.py           # AI provider configuration
@@ -156,20 +164,24 @@ frontend/                       # Frontend (Vue 3 + TypeScript)
 │   │   ├── hardware.ts         # Camera/microphone/screen status
 │   │   ├── notification.ts     # Toast/notification queue
 │   │   ├── settings.ts         # App settings (theme, model selection, voice, provider)
-│   │   └── providers.ts        # ProviderInstance management (CRUD against /api/providers)
+│   │   ├── providers.ts        # ProviderInstance management (CRUD against /api/providers)
+│   │   └── voice_clone.ts      # Voice clone state (ref audio info + TTS subsystem status)
 │   ├── composables/
-│   │   ├── useApi.ts           # API client: chat (REST+SSE), voice, camera, memory, execute
-│   │   └── useSpeechRecognition.ts  # Browser Web Speech API wrapper
+│   │   ├── useApi.ts           # API client: chat (REST+SSE with audio events), voice, camera, memory, execute, voice-clone
+│   │   ├── useSpeechRecognition.ts  # Browser Web Speech API wrapper
+│   │   └── usePCMPlayer.ts     # Web Audio API PCM int16 stream player (for cloned voice playback)
 │   └── components/
 │       ├── Header.vue          # Top nav bar with status indicators
 │       ├── Sidebar.vue         # Conversation list, new chat button
-│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display
+│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display + PCM playback
 │       ├── ChatMessage.vue     # Single message bubble (markdown rendering)
 │       ├── CameraPreview.vue   # Camera feed + capture + analyze UI
 │       ├── HardwareControls.vue# Hardware toggle (camera, microphone, screen share)
 │       ├── ProviderManager.vue # Provider instance CRUD (multi-provider per project)
-│       ├── Settings.vue        # Settings panel (model, voice, provider, theme)
+│       ├── VoiceClonePanel.vue # Voice clone Settings UI: upload/record ref audio, ref_text, test synthesis
+│       ├── Settings.vue        # Settings panel (model, voice clone, provider, theme, hardware)
 │       └── Notification.vue    # Toast/notification display
+├── stores/voice_clone.ts       # Pinia store: ref audio state + TTS subsystem status
 ├── package.json                # Vue 3, Vite, Pinia, Tailwind, lucide-vue, marked
 ├── vite.config.ts              # Vite config with proxy to :9529
 ├── tailwind.config.js
@@ -268,20 +280,92 @@ TODO.md                         # Feature priorities (P0/P1/P2)
 - `SubagentStrategy` (task_engine.py) 解析 LLM 的 `subagent` 工具调用参数
 - `task_engine.py` 的 `TaskExecutor.register_subagent()` 完成运行时绑定
 
+## Voice Clone Module (新增模块)
+
+`jarvis/services/tts/` — 基于 F5-TTS 的本地声音克隆，可选启用，未装时自动降级到浏览器 TTS。
+
+**为什么需要它**: 默认 TTS 是浏览器 `SpeechSynthesis`，嗓音是系统默认（macOS Samantha / Microsoft Huihui）。用 F5-TTS 克隆用户声音后，LLM 回复都用用户自己的音色朗读，体验更一致。
+
+**架构**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Jarivs 后端                                                  │
+│                                                              │
+│  jarvis/services/tts/                                       │
+│  ├── F5TTSBridge ──► sys.path.insert ../voice-clone-demo    │
+│  │                  └► 懒加载 demo 的 TTSService (~1.2GB)   │
+│  ├── VoiceRefManager     workspace/voice/refs/voice.wav     │
+│  ├── sentence_splitter   中文/英文按标点切句                │
+│  ├── pcm_chunker         PCM int16 → SSE audio_chunk event  │
+│  └── fallback            {type: browser_tts|voice_clone}    │
+│                                                              │
+│  jarvis/api/voice_tts.py                                    │
+│  ├── POST /voice/ref/upload       multipart 上传 ref 音频   │
+│  ├── GET  /voice/ref/info         当前 ref + tts_available  │
+│  ├── PUT  /voice/ref/text         设置 ref_text (必填)      │
+│  ├── POST /voice/synthesize       同步合成 wav URL          │
+│  ├── GET  /voice/audio/{file}     静态服务合成结果          │
+│  └── GET  /voice/status           TTS 子系统状态            │
+│                                                              │
+│  jarvis/api/chat.py /chat/stream (enable_tts=true 时):      │
+│    每收到文本 token → 累 buffer → 按标点切句                  │
+│      → 调 F5TTSBridge.synthesize_to_pcm                      │
+│      → SSE event: audio (每块 PCM base64)                    │
+│    流结束 → SSE event: audio_done                             │
+│    F5-TTS 不可用 → SSE event: tts_fallback (前端走浏览器)    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**降级契约** (前后端统一):
+| 后端状态 | 返回 / 事件 | 前端路由 |
+|---|---|---|
+| `VOICE_CLONE__ENABLED=false` | `{type: "browser_tts"}` / `tts_fallback` 事件 | `speechSynthesis.speak()` |
+| 缺 ref 音频 | 同上 | 同上 |
+| 未装 f5-tts | 同上 + 日志 warning | 同上 |
+| F5-TTS 推理异常 | 同上 + 单句 skip | 同上 |
+| 完整链路 | `{type: "voice_clone", audio_url}` / `audio_chunk` 事件 | `<audio>` / `usePCMPlayer` |
+
+**关键设计**:
+- STT 路径强制本地 (Paraformer), STT 路径不跟随 ProviderInstance
+- TTS 路径**也**不跟随 ProviderInstance — 全场景默认走本地 F5-TTS
+- `available` 综合判断: `enabled=True` + ref 完整 + f5-tts 包可导入 + TTSService 加载成功
+- 流式 chat 的 TTS 是**逐句触发**: 句切分用 `_find_split()` (标点 + 长度阈值)
+- 前端 `usePCMPlayer` 用 `nextStartTime` 排程, 不依赖 chunk 顺序, 容忍丢包
+- 前端 `ChatWindow` 收到 `audio_chunk` 时 `speechSynthesis.cancel()` 避免双播放
+
+**参考音频要求** (前端 Settings → 声音克隆):
+- 5-15 秒, 单人, 干净无背景音乐/混响
+- 24kHz+ (手机录音常见, 后端自动重采样到 24kHz mono int16)
+- ref_text 必须**一字不差**匹配音频内容 (F5-TTS 强制)
+
+**启用流程**:
+```bash
+pip install f5-tts soundfile      # 1. 装包 (默认未装, 注释在 requirements.txt)
+# .env: VOICE_CLONE__ENABLED=true # 2. 开关 (默认 false)
+# 重启 backend
+# 3. Settings → 声音克隆 → 上传 wav + 设置 ref_text → 试合成
+```
+
+**扩展点**: 自定义 TTS backend 实现 `STTEngine` 接口（虽然命名是 STT 但语义是 synthesis），注册到 `get_stt_engine()` 工厂即可。后续可加 OpenAI TTS API、CosyVoice 等。
+
 ## Multimodal Sub-Model Pipeline
 
 Audio and image processed by dedicated sub-models → plain text → injected into chat.
 
 ```
-🎤 Audio: WebM → ffmpeg WAV → openai-whisper(base) → text → chat_engine.chat()
+🎤 Audio: WebM → Paraformer-large (funasr, MPS) → text → chat_engine.chat()
+   (旧: ffmpeg WAV → openai-whisper(base) — 现已切换到 Paraformer, 中文字错率显著更低)
 📷 Image: JPEG → OllamaAdapter /v1/messages (Anthropic vision) → text → frontend displays card
 📋 Paste: Ctrl+V image → /camera/analyze → card in chat with fullscreen viewer
+🔊 Voice clone: LLM 回复文本 → F5-TTS (clone voice) → SSE audio chunks → Web Audio API
+   (降级: 未启用/缺 ref → 浏览器 SpeechSynthesis)
 ```
 
-- **STT**: `openai-whisper` base model, lazy-loaded, `asyncio.to_thread()` non-blocking
+- **STT**: Paraformer-large via funasr (MPS), lazy-loaded, supports direct WebM binary input
 - **Vision**: `qwen3.5:9b` via `/v1/messages` Anthropic-compatible endpoint with `content: [{image, source:...}]`
 - **Camera**: 30s auto-capture with queue (max 2), start/stop toggle, frame image persisted per conversation
-- **Voice**: single mic button — click to record, click to stop, timer display, no time limit
+- **Voice in**: single mic button — click to record, click to stop, timer display, no time limit
+- **Voice out (clone)**: 流式 chat 逐句触发 F5-TTS, SSE 推 PCM chunks; 同步 chat 返回 wav URL
 - **Image viewer**: click thumbnail → fullscreen overlay, mouse wheel zoom 50%–400%
 
 ## AI Provider System

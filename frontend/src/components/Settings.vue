@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import ProviderManager from './ProviderManager.vue'
+import VoiceClonePanel from './VoiceClonePanel.vue'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -379,6 +380,12 @@ async function loadOllamaModels() {
       <section class="bg-secondary rounded-lg p-4">
         <h2 class="text-lg font-semibold mb-4">Provider 管理</h2>
         <ProviderManager />
+      </section>
+
+      <!-- 声音克隆 (F5-TTS) -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">声音克隆 (F5-TTS)</h2>
+        <VoiceClonePanel />
       </section>
 
       <!-- 硬件配置 -->

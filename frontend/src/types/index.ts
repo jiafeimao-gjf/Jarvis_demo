@@ -50,6 +50,7 @@ export interface ChatRequest {
   force_refresh_models?: boolean
   messages?: Array<{ role: string; content: string }>
   provider_id?: string
+  enable_tts?: boolean  // 是否启用 TTS（声音克隆 / 浏览器降级）。默认 true
 }
 
 export interface ChatResponse {
@@ -65,9 +66,63 @@ export interface VoiceResponse {
   tts: TTSResult
 }
 
-export interface TTSResult {
-  type: 'browser_tts' | 'qwen3_tts'
+/**
+ * TTS 返回结果。前端按 `type` 路由:
+ *  - voice_clone: <audio :src=audio_url> 播放
+ *  - browser_tts: window.speechSynthesis.speak(text)
+ */
+export type TTSResult =
+  | { type: 'voice_clone'; audio_url: string; duration: number; text: string; mime: string }
+  | { type: 'browser_tts'; text: string }
+
+/** SSE 流式音频 chunk (来自 /api/chat/stream event: audio) */
+export interface AudioChunkEvent {
+  type: 'audio_chunk'
+  index: number
+  sample_rate: number
+  channels: number
+  sample_width: number
+  duration_ms: number
+  pcm_b64: string
+}
+
+/** SSE 流式音频结束 (来自 /api/chat/stream event: audio_done) */
+export interface AudioDoneEvent {
+  type: 'audio_done'
+  sentences: number
+  sample_rate: number
+  sample_width: number
+  channels: number
+}
+
+/** SSE 降级事件 — 后端 TTS 不可用, 前端用浏览器 SpeechSynthesis 兜底 */
+export interface TTSFallbackEvent {
+  type: 'tts_fallback'
   text: string
+}
+
+/** 参考音频信息 (来自 /api/voice/ref/info) */
+export interface VoiceRefInfo {
+  exists: boolean
+  filename?: string
+  text?: string
+  size_bytes?: number
+  mtime?: number
+  tts_available?: boolean
+  duration_sec?: number
+  sample_rate?: number
+  channels?: number
+}
+
+/** TTS 子系统状态 (来自 /api/voice/status) */
+export interface TTSStatus {
+  enabled: boolean
+  ref_exists: boolean
+  ref_info: VoiceRefInfo
+  device: string
+  available: boolean
+  model_name: string
+  last_error: string | null
 }
 
 export interface CameraResponse {

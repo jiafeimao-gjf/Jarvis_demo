@@ -24,6 +24,8 @@ class ChatRequest(BaseModel):
     # 可选：传递完整对话历史以支持上下文
     messages: Optional[list[dict]] = None
     provider_id: Optional[str] = None
+    # 可选：是否启用 TTS（声音克隆 / 浏览器降级）。默认 True
+    enable_tts: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -67,7 +69,104 @@ async def list_models(force_refresh: bool = False):
 
 @router.post("/stream")
 async def chat_stream(request: ChatRequest):
-    """流式对话响应"""
+    """流式对话响应 + 可选 TTS（声音克隆 / 浏览器降级）。
+
+    enable_tts=True 时，每累积到一句话就调 F5-TTS 合成 PCM 推 SSE audio 事件。
+    F5-TTS 不可用 → 自动改推 tts_fallback 事件，前端用浏览器 SpeechSynthesis 兜底。
+    """
+    from jarvis.config import settings as app_settings
+    from jarvis.services.tts import _find_split, encode_pcm_chunk, f5_tts
+
+    enable_tts = bool(request.enable_tts)
+    can_clone = bool(enable_tts and f5_tts.available)
+    min_chars = app_settings.voice_clone.sentence_min_chars
+    max_chars = app_settings.voice_clone.sentence_max_chars
+
+    # 状态 (list-as-mutable-box 方便闭包修改)
+    sentence_buf = [""]
+    sentence_idx = [0]
+
+    async def push_token_events(token: str):
+        """处理一个文本 token: 累加 + 切句 + 触发 TTS, 返回 SSE 事件 list"""
+        sentence_buf[0] += token
+        events = [
+            {"event": "token", "data": json.dumps({"type": "token", "content": token})}
+        ]
+        # 句切分循环
+        while True:
+            idx = _find_split(sentence_buf[0], min_chars, max_chars)
+            if idx is None:
+                break
+            sentence = sentence_buf[0][:idx].strip()
+            sentence_buf[0] = sentence_buf[0][idx:]
+            if not sentence:
+                continue
+            # TTS 触发
+            if can_clone:
+                try:
+                    async for pcm in f5_tts.synthesize_to_pcm(sentence):
+                        events.append(
+                            {
+                                "event": "audio",
+                                "data": encode_pcm_chunk(sentence_idx[0], pcm),
+                            }
+                        )
+                    sentence_idx[0] += 1
+                except Exception as e:
+                    logger.warning(f"[TTS] 句合成失败，降级: {e}")
+                    events.append(
+                        {
+                            "event": "tts_fallback",
+                            "data": json.dumps(
+                                {"type": "tts_fallback", "text": sentence}
+                            ),
+                        }
+                    )
+            else:
+                events.append(
+                    {
+                        "event": "tts_fallback",
+                        "data": json.dumps(
+                            {"type": "tts_fallback", "text": sentence}
+                        ),
+                    }
+                )
+        return events
+
+    async def flush_tail_events():
+        """流结束时 flush 残余 buffer, 返回 SSE 事件 list"""
+        tail = sentence_buf[0].strip()
+        sentence_buf[0] = ""
+        if not tail:
+            return []
+        events = []
+        if can_clone:
+            try:
+                async for pcm in f5_tts.synthesize_to_pcm(tail):
+                    events.append(
+                        {
+                            "event": "audio",
+                            "data": encode_pcm_chunk(sentence_idx[0], pcm),
+                        }
+                    )
+                sentence_idx[0] += 1
+            except Exception as e:
+                logger.warning(f"[TTS] tail 合成失败，降级: {e}")
+                events.append(
+                    {
+                        "event": "tts_fallback",
+                        "data": json.dumps({"type": "tts_fallback", "text": tail}),
+                    }
+                )
+        else:
+            events.append(
+                {
+                    "event": "tts_fallback",
+                    "data": json.dumps({"type": "tts_fallback", "text": tail}),
+                }
+            )
+        return events
+
     async def event_generator():
         import time as _time
         t_start = _time.time()
@@ -80,7 +179,6 @@ async def chat_stream(request: ChatRequest):
 
             # 如果提供了完整消息历史，使用它；否则使用 conversation_id
             if request.messages is not None:
-                # 使用传入的消息历史
                 full_response = ""
                 first_token = True
                 async for content in mediator.chat_engine.stream_chat_with_messages(
@@ -92,30 +190,27 @@ async def chat_stream(request: ChatRequest):
                     request.provider_id,
                 ):
                     if first_token:
-                        logger.info(f"[SSE] 首个数据到达, 耗时={(_time.time()-t_start)*1000:.0f}ms")
+                        logger.info(
+                            f"[SSE] 首个数据到达, 耗时={(_time.time()-t_start)*1000:.0f}ms"
+                        )
                         first_token = False
-                    # JSON events: tool_call, tool_result, thinking, thinking_start, thinking_end, topic_update
-                    if content.startswith('{'):
+                    if content.startswith("{"):
                         try:
                             evt = json.loads(content)
                             evt_type = evt.get("type", "unknown")
-                            # 工具事件用 'tool' 事件名, 其他 JSON 事件用 'token' (前端按 data.type 分类)
-                            sse_event = "tool" if evt_type.startswith("tool") else "token"
+                            sse_event = (
+                                "tool" if evt_type.startswith("tool") else "token"
+                            )
                             yield {"event": sse_event, "data": content}
                         except json.JSONDecodeError:
                             full_response += content
-                            yield {
-                                "event": "token",
-                                "data": json.dumps({"type": "token", "content": content})
-                            }
+                            async for ev in push_token_events(content):
+                                yield ev
                     else:
                         full_response += content
-                        yield {
-                            "event": "token",
-                            "data": json.dumps({"type": "token", "content": content})
-                        }
+                        async for ev in push_token_events(content):
+                            yield ev
             else:
-                # 使用 conversation_id 获取历史
                 full_response = ""
                 async for content in mediator.chat_engine.stream_chat(
                     request.message,
@@ -124,33 +219,49 @@ async def chat_stream(request: ChatRequest):
                     request.user_id,
                     request.provider_id,
                 ):
-                    # 检查是否是 JSON 事件（tool_call 或 tool_result）
-                    if content.startswith('{'):
-                        # 直接发送 JSON 事件
-                        yield {
-                            "event": "tool",
-                            "data": content
-                        }
+                    if content.startswith("{"):
+                        yield {"event": "tool", "data": content}
                     else:
-                        # 普通文本 token
                         full_response += content
-                        yield {
-                            "event": "token",
-                            "data": json.dumps({"type": "token", "content": content})
-                        }
+                        async for ev in push_token_events(content):
+                            yield ev
 
-            # 发送完成状态
+            # flush 残余
+            async for ev in flush_tail_events():
+                yield ev
+
+            # audio_done
+            if enable_tts:
+                yield {
+                    "event": "audio_done",
+                    "data": json.dumps(
+                        {
+                            "type": "audio_done",
+                            "sentences": sentence_idx[0],
+                            "sample_rate": 24000,
+                            "sample_width": 2,
+                            "channels": 1,
+                        }
+                    ),
+                }
+
+            # done
             yield {
                 "event": "done",
-                "data": json.dumps({
-                    "type": "done",
-                    "content": full_response,
-                    "conversation_id": mediator.chat_engine.current_conversation.conversation_id
-                    if mediator.chat_engine.current_conversation else None
-                })
+                "data": json.dumps(
+                    {
+                        "type": "done",
+                        "content": full_response,
+                        "conversation_id": (
+                            mediator.chat_engine.current_conversation.conversation_id
+                            if mediator.chat_engine.current_conversation
+                            else None
+                        ),
+                    }
+                ),
             }
         except Exception as e:
-            logger.error(f"Stream chat error: {e}")
+            logger.error(f"Stream chat error: {e}", exc_info=True)
             yield {
                 "event": "error",
                 "data": json.dumps({"type": "error", "content": str(e)})

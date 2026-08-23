@@ -162,6 +162,21 @@ async def startup_event():
     await store.load()
     logger.info(f"Provider instances loaded: {[i.id for i in store.get_all()]}")
 
+    # TTS / 声音克隆探测（不强制依赖）
+    try:
+        settings.voice_clone.refs_dir.mkdir(parents=True, exist_ok=True)
+        settings.voice_clone.outputs_dir.mkdir(parents=True, exist_ok=True)
+        from jarvis.services.tts import f5_tts, voice_ref_manager
+        logger.info(
+            f"[TTS] F5-TTS enabled={settings.voice_clone.enabled}, "
+            f"available={f5_tts.available}, device={f5_tts.device}, "
+            f"ref_exists={voice_ref_manager.has_active()}"
+        )
+        if f5_tts.last_error:
+            logger.warning(f"[TTS] last error: {f5_tts.last_error}")
+    except Exception as e:
+        logger.warning(f"[TTS] 初始化检查失败：{e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

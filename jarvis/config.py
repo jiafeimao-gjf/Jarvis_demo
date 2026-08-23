@@ -66,6 +66,46 @@ class HardwareConfig(BaseModel):
     audio_channels: int = 1
 
 
+# ============== Voice Clone Configuration ==============
+
+class VoiceCloneConfig(BaseModel):
+    """声音克隆（F5-TTS）配置
+
+    默认开启。未装 f5-tts / 没上传参考音频时自动降级到浏览器 TTS。
+    启用前需：
+      1. pip install f5-tts soundfile
+      2. 在前端 Settings 上传参考音频（ref_text 已有默认值）
+    """
+    # 屏蔽 pydantic v2 的 protected namespace 警告（model_name 是合法字段名）
+    model_config = {"protected_namespaces": ()}
+
+    enabled: bool = True
+    ref_audio: Path = Path("workspace/voice/refs/voice.wav")
+    ref_text_path: Path = Path("workspace/voice/refs/voice.txt")
+    refs_dir: Path = Path("workspace/voice/refs")
+    outputs_dir: Path = Path("workspace/voice/outputs")
+
+    model_name: str = "F5TTS_Base"     # F5TTS_Base / F5TTS_v1_Base
+    device: str = "auto"               # auto | mps | cuda | cpu
+    speed: float = 1.0                 # 语速倍率
+
+    # 流式 PCM 块（demo 默认 24000Hz mono int16）
+    stream_chunk_ms: int = 300
+
+    # 句切分阈值（流式 chat 时按句触发 TTS）
+    sentence_min_chars: int = 6
+    sentence_max_chars: int = 25
+
+    # 上传限制
+    upload_max_bytes: int = 20 * 1024 * 1024  # 20MB
+
+    # 默认参考文本（用户自己的声音签名）。上传新参考音频时该文本作为初始 ref_text，
+    # 但用户仍可在 Settings 中改写。
+    default_ref_text: str = (
+        "我是顾家飞，请克隆我的声音，我是要成为海贼王的男人。"
+    )
+
+
 # ============== Storage Configuration ==============
 
 class StorageConfig(BaseModel):
@@ -124,6 +164,7 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     hardware: HardwareConfig = Field(default_factory=HardwareConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
+    voice_clone: VoiceCloneConfig = Field(default_factory=VoiceCloneConfig)
 
     # STT 后端: "paraformer" (中文优化) | "whisper" (fallback)
     # 环境变量: STT__BACKEND=whisper

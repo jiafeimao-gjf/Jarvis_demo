@@ -78,7 +78,8 @@ class VoiceEngine:
     def __init__(self):
         self.pipeline = VoicePipeline()
         self._setup_pipeline()
-        self.tts_provider = "browser"  # browser | qwen3-tts
+        # tts_provider: browser (默认) | f5_tts (声音克隆, 启用 voice_clone 即可)
+        self.tts_provider = "browser"
         logger.info("VoiceEngine initialized")
 
     def _setup_pipeline(self):
@@ -87,24 +88,56 @@ class VoiceEngine:
                       .add_stage(NoiseReductionStage())
 
     async def process_voice_input(self, audio_data: bytes) -> str:
-        """处理语音输入"""
+        """处理语音输入（已迁移到 SubModelProcessor.process_audio，本方法保留兼容）"""
         result = await self.pipeline.execute(audio_data)
         logger.debug(f"Voice input processed: {len(audio_data)} bytes -> '{result}'")
         return result
 
     async def text_to_speech(self, text: str) -> dict:
-        """文字转语音 - 返回播放指令"""
-        if self.tts_provider == "browser":
-            # 前端处理 TTS
-            return {"type": "browser_tts", "text": text}
-        else:
-            # 后端 Qwen3-TTS 处理
-            return await self._qwen3_tts(text)
+        """文字转语音 → 返回 dict，前端按 type 路由。
+
+        返回形态:
+          - {type: "voice_clone", audio_url, duration, text, mime}  F5-TTS 成功
+          - {type: "browser_tts", text}                              降级
+
+        F5-TTS 不可用 / 缺 ref / 推理异常 → 自动降级到浏览器 TTS。
+        """
+        from jarvis.services.tts import (
+            F5TTSUnavailable,
+            browser_tts_payload,
+            f5_tts,
+            voice_clone_url_payload,
+        )
+
+        if not text or not text.strip():
+            return browser_tts_payload(text or "")
+
+        if not f5_tts.available:
+            return browser_tts_payload(text)
+
+        try:
+            import time
+            output_name = f"clone_{int(time.time() * 1000)}.wav"
+            result = f5_tts.synthesize_to_wav(text, output_name=output_name)
+            logger.info(
+                f"[TTS] cloned {len(text)} chars → {result['output_url']}, "
+                f"duration={result['duration']:.2f}s"
+            )
+            return voice_clone_url_payload(
+                audio_url=result["output_url"],
+                duration=result["duration"],
+                text=text,
+            )
+        except F5TTSUnavailable as e:
+            logger.warning(f"[TTS] 克隆不可用，降级: {e}")
+            return browser_tts_payload(text)
+        except Exception as e:
+            logger.error(f"[TTS] 克隆失败，降级: {e}", exc_info=True)
+            return browser_tts_payload(text)
 
     async def _qwen3_tts(self, text: str) -> dict:
-        """调用 Qwen3-TTS"""
-        # TODO: 实现 Qwen3-TTS 调用
-        logger.warning("Qwen3-TTS not yet implemented")
+        """旧接口保留（Qwen3-TTS 尚未实现）。"""
+        logger.warning("Qwen3-TTS not yet implemented, fallback to browser")
         return {"type": "browser_tts", "text": text}
 
     async def stream_audio(self, audio_data: bytes) -> AsyncIterator[bytes]:

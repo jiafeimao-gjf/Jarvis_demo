@@ -4,6 +4,7 @@ import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
 import { useApi } from '@/composables/useApi'
+import { usePCMPlayer } from '@/composables/usePCMPlayer'
 import ChatMessage from './ChatMessage.vue'
 import SubagentSessionPanel from './SubagentSessionPanel.vue'
 
@@ -11,6 +12,7 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const providersStore = useProvidersStore()
 const api = useApi()
+const pcmPlayer = usePCMPlayer()
 const inputValue = ref('')
 const isLoading = ref(false)
 let abortController: AbortController | null = null
@@ -238,9 +240,30 @@ async function handleSend() {
         if (chatStore.currentConversationId) {
           chatStore.applyTopicUpdate(chatStore.currentConversationId, topic)
         }
+      },
+      // TTS: 收到 audio_chunk → 推 PCM 到 Web Audio 播放器
+      (chunk) => {
+        // 收到第一块音频时, 取消浏览器 TTS 兜底避免双播放
+        speechSynthesis.cancel()
+        pcmPlayer.pushChunk(chunk.pcm_b64, { sample_rate: chunk.sample_rate })
+      },
+      () => {
+        // audio_done — 不需要主动 stop, Web Audio 队列自然播完
+      },
+      (fallback) => {
+        // 后端降级: 用浏览器 TTS 兜底
+        try {
+          if ('speechSynthesis' in window) {
+            const u = new SpeechSynthesisUtterance(fallback.text)
+            u.lang = 'zh-CN'
+            speechSynthesis.speak(u)
+          }
+        } catch { /* ignore */ }
       }
     )
   } catch (e) {
+    pcmPlayer.stop()  // 停止 PCM 播放
+    speechSynthesis.cancel()  // 同时停掉浏览器 TTS 兜底
     if ((e as Error).name === 'AbortError') {
       // User stopped — add placeholder for what we got so far
       if (currentResponse.value && chatStore.messages[msgIndex]) {
@@ -256,6 +279,8 @@ async function handleSend() {
 }
 
 function handleStop() {
+  pcmPlayer.stop()
+  speechSynthesis.cancel()
   if (abortController) {
     abortController.abort()
     abortController = null

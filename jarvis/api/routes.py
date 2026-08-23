@@ -32,6 +32,7 @@ from jarvis.api.memory import router as memory_router
 from jarvis.api.execute import router as execute_router
 from jarvis.api.camera import router as camera_router
 from jarvis.api.providers import router as providers_router
+from jarvis.api.voice_tts import router as voice_tts_router
 
 api_router.include_router(chat_router)
 api_router.include_router(voice_router)
@@ -39,3 +40,4 @@ api_router.include_router(memory_router)
 api_router.include_router(execute_router)
 api_router.include_router(camera_router)
 api_router.include_router(providers_router)
+api_router.include_router(voice_tts_router)
