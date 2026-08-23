@@ -557,7 +557,13 @@ class LanceDBMemoryRepository(MemoryRepository):
             return []
         try:
             query_vector = await simple_embed(query)
-            results = self._table.search(query_vector, top_k).to_list()
+            # LanceDB 0.8+ API: search(query_vector) 返回 Query 对象，链式 .limit(top_k)
+            # 第二个位置参数是 vector_column_name（必须 str），不能再传 top_k
+            results = (
+                self._table.search(query_vector, vector_column_name="vector")
+                .limit(top_k)
+                .to_list()
+            )
             return [
                 {
                     "key": r["key"],
