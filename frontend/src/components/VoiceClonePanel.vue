@@ -23,6 +23,9 @@ const uploadError = ref<string | null>(null)
 const mediaRecorder = ref<MediaRecorder | null>(null)
 const audioChunks = ref<Blob[]>([])
 
+// 录音时提示用户念出的固定文本（与后端默认 ref_text 一致）
+const RECORDING_PROMPT = '我是顾家飞，请克隆我的声音，我是要成为海贼王的男人。'
+
 const status = computed(() => store.status)
 const refInfo = computed(() => store.refInfo)
 const isAvailable = computed(() => status.value?.available ?? false)
@@ -198,7 +201,7 @@ function formatDuration(sec: number | undefined): string {
         @click="toggleRecording"
         :disabled="isUploading"
       >
-        {{ isRecording ? '● 停止录音' : '🎤 录制 5-10 秒' }}
+        {{ isRecording ? '● 停止录音' : '🎤 录制参考音频' }}
       </button>
       <input
         ref="fileInput"
@@ -210,6 +213,28 @@ function formatDuration(sec: number | undefined): string {
       <span class="text-xs text-muted-foreground">
         支持 wav/mp3/m4a/ogg/flac/webm，建议 5-15 秒干净人声
       </span>
+    </div>
+
+    <!-- 录音提示: 让用户照着念 -->
+    <div
+      :class="[
+        'p-3 rounded-lg border-2 transition-colors',
+        isRecording
+          ? 'border-destructive bg-destructive/10'
+          : 'border-primary/30 bg-primary/5'
+      ]"
+    >
+      <div class="flex items-center gap-2 text-sm font-medium mb-2">
+        <span :class="isRecording ? 'text-destructive' : 'text-primary'">
+          {{ isRecording ? '🎙️ 正在录音 — 请照着念' : '📢 录音时照着念（ref_text）' }}
+        </span>
+      </div>
+      <p class="text-base leading-relaxed font-medium select-none">
+        {{ RECORDING_PROMPT }}
+      </p>
+      <p class="text-xs text-muted-foreground mt-2">
+        ⚠ 录出来的内容必须与上方文本<strong>一字不差</strong>，F5-TTS 会基于文本和音频对齐韵律
+      </p>
     </div>
 
     <!-- ref_text 输入 -->
