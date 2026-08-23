@@ -57,19 +57,18 @@ class SubModelProcessor:
         return self._vision_model
 
     async def process_audio(self, audio_data: bytes) -> str:
-        """STT: 音频 bytes → 文本"""
+        """STT: 音频 bytes → 文本
+
+        强制走 OllamaAdapter（本地 openai-whisper），不跟随 ProviderInstance。
+        原因: openai / anthropic / minimax 等 adapter 的 transcribe_audio
+        都是直接 return ""（不支持 STT），切到这些 instance 会导致语音静默失败。
+        """
         if not self._router:
             logger.error("SubModelProcessor: no AI Router set")
             return ""
 
         try:
-            from jarvis.services.ai.instance_config import get_instance_store
-            store = get_instance_store()
-            inst = store.get_active_instance()
-            if inst:
-                client = self._router._get_client_with_instance(inst, self.stt_model)
-            else:
-                client = self._router._get_client("ollama", self.stt_model)
+            client = self._router._get_client("ollama", self.stt_model)
             text = await client.transcribe_audio(audio_data)
             result = text.strip() if text else ""
             logger.info(f"STT result ({len(result)} chars): {result[:100]}...")
