@@ -38,6 +38,46 @@ class F5TTSBridge:
         self._last_error: Optional[str] = None
         self._demo_path_added = False
         self._add_demo_to_path()
+        self._patch_seed_everything()
+
+    @staticmethod
+    def _patch_seed_everything():
+        """Monkey-patch f5_tts.model.utils.seed_everything。
+
+        原实现: ``os.environ["PYTHONHASHSEED"] = str(seed)``，其中 seed
+        来自 ``random.randint(0, sys.maxsize)``。64 位 macOS 上 sys.maxsize
+        远超 Python 允许的 [0, 2**32-1] 范围，子进程启动时直接 Fatal:
+        ``config_init_hash_seed: PYTHONHASHSEED must be "random" or an
+        integer in range [0; 4294967295]``。
+
+        解决: 把 seed clamp 到 [0, 2**32-1] 后再写环境变量。
+        """
+        try:
+            import f5_tts.model.utils as _f5utils
+        except Exception:
+            return  # f5-tts 未装就不动
+
+        _orig = _f5utils.seed_everything
+
+        def _clamped(seed=0):
+            import random as _rnd
+            if seed is None:
+                seed = _rnd.randint(0, 2**32 - 1)
+            else:
+                try:
+                    seed = int(seed) & 0xFFFFFFFF
+                except (TypeError, ValueError):
+                    seed = 0
+            _orig(seed)
+
+        _f5utils.seed_everything = _clamped
+        # 同时 patch api.py 的本地引用 (它做的是 ``from ... import seed_everything``)
+        try:
+            import f5_tts.api as _f5api
+            _f5api.seed_everything = _clamped
+        except Exception:
+            pass
+        logger.debug("[F5TTS] seed_everything patched (PYTHONHASHSEED clamp)")
 
     @staticmethod
     def _add_demo_to_path():

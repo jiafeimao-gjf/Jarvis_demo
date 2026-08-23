@@ -4,6 +4,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
 import { formatTime } from '@/lib/utils'
+import { useApi } from '@/composables/useApi'
 import SubagentCard from './SubagentCard.vue'
 
 const props = defineProps<{
@@ -14,6 +15,8 @@ const emit = defineEmits<{
   openSubagentSession: [subSessionId: string]
   openSubagentBatch: [subSessionIds: string[], activeIndex: number]
 }>()
+
+const api = useApi()
 
 const isUser = computed(() => props.message.role === 'user')
 const isTool = computed(() => props.message.role === 'tool')
@@ -101,17 +104,89 @@ const viewerZoom = ref(1)
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4
 const isSpeaking = ref(false)
+const isSynthesizing = ref(false)
+let currentAudio: HTMLAudioElement | null = null
+let synthAbort: { aborted: boolean } | null = null
 
-function speakContent() {
+/**
+ * 朗读消息内容 — 优先用克隆声音 (F5-TTS) 合成 wav URL 播放,
+ * 后端降级 (browser_tts) 时回落到浏览器 SpeechSynthesis。
+ * 再次点击同一气泡可中断播放。
+ */
+async function speakContent() {
+  // 已经在读 — 停止
+  if (isSpeaking.value || isSynthesizing.value) {
+    stopSpeaking()
+    return
+  }
+  const text = (props.message.content || '').trim()
+  if (!text) return
+
+  // 取消浏览器 TTS 兜底, 避免和克隆声音双播放
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+
+  const myAbort = { aborted: false }
+  synthAbort = myAbort
+  isSynthesizing.value = true
+  try {
+    const result = await api.synthesize(text)
+    if (myAbort.aborted) return
+    isSynthesizing.value = false
+
+    if (result.type === 'voice_clone') {
+      const url = api.cloneAudioUrl(result.audio_url)
+      const audio = new Audio(url)
+      currentAudio = audio
+      isSpeaking.value = true
+      audio.onended = () => {
+        if (currentAudio === audio) currentAudio = null
+        isSpeaking.value = false
+      }
+      audio.onerror = () => {
+        if (currentAudio === audio) currentAudio = null
+        isSpeaking.value = false
+        // 播放失败兜底到浏览器 TTS
+        fallbackToBrowserTTS(text)
+      }
+      try {
+        await audio.play()
+      } catch (e) {
+        if (currentAudio === audio) currentAudio = null
+        isSpeaking.value = false
+        fallbackToBrowserTTS(text)
+      }
+    } else {
+      // 后端降级 → 浏览器 TTS
+      fallbackToBrowserTTS(text)
+    }
+  } catch (e) {
+    isSynthesizing.value = false
+    fallbackToBrowserTTS(text)
+  }
+}
+
+function fallbackToBrowserTTS(text: string) {
   if (!('speechSynthesis' in window)) return
   window.speechSynthesis.cancel()
-  const utterance = new SpeechSynthesisUtterance(props.message.content)
+  const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = 'zh-CN'
   utterance.rate = 1.0
   isSpeaking.value = true
   utterance.onend = () => { isSpeaking.value = false }
   utterance.onerror = () => { isSpeaking.value = false }
   speechSynthesis.speak(utterance)
+}
+
+function stopSpeaking() {
+  if (synthAbort) synthAbort.aborted = true
+  if (currentAudio) {
+    currentAudio.pause()
+    currentAudio.src = ''
+    currentAudio = null
+  }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  isSynthesizing.value = false
+  isSpeaking.value = false
 }
 
 function openViewer() {
@@ -131,7 +206,10 @@ function onWheel(e: WheelEvent) {
   e.deltaY < 0 ? zoomIn() : zoomOut()
 }
 
-onUnmounted(() => { document.body.style.overflow = '' })
+onUnmounted(() => {
+  document.body.style.overflow = ''
+  stopSpeaking()
+})
 </script>
 
 <template>
@@ -247,11 +325,12 @@ onUnmounted(() => { document.body.style.overflow = '' })
       {{ formatTime(message.timestamp) }}
       <button
         v-if="!isUser"
-        class="ml-2 align-middle opacity-50 hover:opacity-100 transition-opacity"
-        :class="isSpeaking ? 'text-primary' : ''"
+        class="ml-2 align-middle opacity-50 hover:opacity-100 transition-opacity disabled:opacity-30"
+        :class="isSpeaking || isSynthesizing ? 'text-primary' : ''"
+        :disabled="isSynthesizing"
         @click="speakContent"
-        :title="isSpeaking ? '播放中...' : '朗读'"
-      >{{ isSpeaking ? '🔊' : '🔈' }}</button>
+        :title="isSynthesizing ? '合成中...' : isSpeaking ? '点击停止' : '朗读 (克隆声音)'"
+      >{{ isSynthesizing ? '⏳' : isSpeaking ? '🔊' : '🔈' }}</button>
     </span>
   </div>
 </template>
