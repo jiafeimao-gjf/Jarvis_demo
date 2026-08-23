@@ -131,6 +131,9 @@ async function handleSend() {
   const text = inputValue.value.trim()
   if (!text || isLoading.value) return
 
+  // 在用户手势内 resume AudioContext, 让后续 SSE 推来的 PCM chunks 跨任意 await 仍可播放
+  pcmPlayer.ensureResumed()
+
   inputValue.value = ''
   const userMsg = chatStore.addMessage('user', text)
   if (!userMsg) {

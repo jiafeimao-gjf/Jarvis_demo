@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
 import { formatTime } from '@/lib/utils'
 import { useApi } from '@/composables/useApi'
+import { usePCMPlayer } from '@/composables/usePCMPlayer'
 import SubagentCard from './SubagentCard.vue'
 
 const props = defineProps<{
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 }>()
 
 const api = useApi()
+const pcmPlayer = usePCMPlayer()
 
 const isUser = computed(() => props.message.role === 'user')
 const isTool = computed(() => props.message.role === 'tool')
@@ -105,13 +107,17 @@ const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4
 const isSpeaking = ref(false)
 const isSynthesizing = ref(false)
-let currentAudio: HTMLAudioElement | null = null
 let synthAbort: { aborted: boolean } | null = null
 
 /**
  * 朗读消息内容 — 优先用克隆声音 (F5-TTS) 合成 wav URL 播放,
  * 后端降级 (browser_tts) 时回落到浏览器 SpeechSynthesis。
  * 再次点击同一气泡可中断播放。
+ *
+ * 注意: 不能用 ``new Audio(url); audio.play()``, 因为浏览器 autoplay
+ * 策略会在 await synthesize() (秒级到分钟级) 后拒绝 play()。
+ * 改走 Web Audio API + 在 click handler 内 ensureResumed():
+ * AudioContext 在用户手势内 resume 后, 跨任意 await 仍可播放。
  */
 async function speakContent() {
   // 已经在读 — 停止
@@ -121,6 +127,9 @@ async function speakContent() {
   }
   const text = (props.message.content || '').trim()
   if (!text) return
+
+  // ⭐ 在用户手势内同步 resume AudioContext, 之后跨 await 仍可播
+  pcmPlayer.ensureResumed()
 
   // 取消浏览器 TTS 兜底, 避免和克隆声音双播放
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
@@ -135,23 +144,12 @@ async function speakContent() {
 
     if (result.type === 'voice_clone') {
       const url = api.cloneAudioUrl(result.audio_url)
-      const audio = new Audio(url)
-      currentAudio = audio
       isSpeaking.value = true
-      audio.onended = () => {
-        if (currentAudio === audio) currentAudio = null
-        isSpeaking.value = false
-      }
-      audio.onerror = () => {
-        if (currentAudio === audio) currentAudio = null
-        isSpeaking.value = false
-        // 播放失败兜底到浏览器 TTS
-        fallbackToBrowserTTS(text)
-      }
       try {
-        await audio.play()
+        // 走 Web Audio API — 不受 autoplay 策略限制
+        await pcmPlayer.playUrl(url)
+        isSpeaking.value = false
       } catch (e) {
-        if (currentAudio === audio) currentAudio = null
         isSpeaking.value = false
         fallbackToBrowserTTS(text)
       }
@@ -179,11 +177,7 @@ function fallbackToBrowserTTS(text: string) {
 
 function stopSpeaking() {
   if (synthAbort) synthAbort.aborted = true
-  if (currentAudio) {
-    currentAudio.pause()
-    currentAudio.src = ''
-    currentAudio = null
-  }
+  pcmPlayer.stop()
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
   isSynthesizing.value = false
   isSpeaking.value = false

@@ -110,10 +110,51 @@ export function usePCMPlayer() {
     isPlaying.value = false
   }
 
+  /**
+   * 在用户手势内调用 (例如 click handler), 创建并 resume AudioContext,
+   * 之后即使经历任意 await, 该 ctx 仍可被 resume/play — 用来绕开浏览器
+   * autoplay 策略 (HTMLAudioElement.play() 跨 await 会被拒)。
+   */
+  function ensureResumed(): void {
+    const sr = 24000
+    const audioCtx = ensureCtx(sr)
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => { /* ignore */ })
+    }
+  }
+
+  /**
+   * 通过 Web Audio API 播放任意可解码的音频 URL (wav/mp3/ogg...)。
+   * 适用于后端返回 audio_url 但 synthesize 跨 await 完成后
+   * HTMLAudioElement.play() 被浏览器拒绝的场景。
+   *
+   * 流程: fetch → arrayBuffer → decodeAudioData → BufferSource.start
+   * 必须先调 ensureResumed() (在用户 click 内) 才能跨 await 仍可播。
+   */
+  async function playUrl(url: string): Promise<void> {
+    const sr = 24000
+    const audioCtx = ensureCtx(sr)
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume()
+    }
+    const resp = await fetch(url)
+    if (!resp.ok) throw new Error(`fetch audio failed: ${resp.status}`)
+    const ab = await resp.arrayBuffer()
+    const buf = await audioCtx.decodeAudioData(ab)
+    const src = audioCtx.createBufferSource()
+    src.buffer = buf
+    src.connect(audioCtx.destination)
+    isPlaying.value = true
+    src.onended = () => { isPlaying.value = false }
+    src.start(0)
+  }
+
   return {
     isPlaying,
     lastError,
     pushChunk,
     stop,
+    ensureResumed,
+    playUrl,
   }
 }

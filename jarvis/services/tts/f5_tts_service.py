@@ -143,6 +143,49 @@ class F5TTSBridge:
         except Exception:
             return "unknown"
 
+    async def prewarm(self) -> bool:
+        """后台预热 — 跑一次空推理让 MPS/CUDA 完成 kernel 编译。
+
+        首次推理耗时 10-100s（MPS 模型加载 + kernel JIT），
+        通过在 startup 阶段触发一次 dummy infer 把延迟挪到启动期，
+        让用户首条合成请求 < 2s 完成。
+        """
+        if not settings.voice_clone.enabled:
+            return False
+        if not (
+            settings.voice_clone.ref_audio.exists()
+            and settings.voice_clone.ref_text_path.exists()
+        ):
+            return False
+        try:
+            service = self.ensure_service()
+            logger.info("[TTS] prewarm start (~10-60s, MPS kernel compile)...")
+            import time as _t
+            t0 = _t.time()
+            # 线程池里跑, 不阻塞事件循环
+            await asyncio.to_thread(
+                service.clone,
+                ref_audio=str(settings.voice_clone.ref_audio),
+                ref_text=self.get_ref_text(),
+                gen_text="预热",
+                output_name="prewarm.wav",
+                speed=2.0,  # 用最快速度
+            )
+            elapsed = _t.time() - t0
+            logger.info(f"[TTS] prewarm done in {elapsed:.1f}s")
+            # 清理预热产物
+            try:
+                from pathlib import Path
+                prewarm_path = settings.voice_clone.outputs_dir / "prewarm.wav"
+                if prewarm_path.exists():
+                    prewarm_path.unlink()
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            logger.warning(f"[TTS] prewarm failed: {e}")
+            return False
+
     def get_ref_text(self) -> str:
         p = settings.voice_clone.ref_text_path
         if not p.exists():

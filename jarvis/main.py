@@ -174,6 +174,10 @@ async def startup_event():
         )
         if f5_tts.last_error:
             logger.warning(f"[TTS] last error: {f5_tts.last_error}")
+        # 后台预热 — 避免首次合成卡 10-60s (MPS kernel 编译 + 模型加载)
+        if f5_tts.available:
+            import asyncio as _aio
+            _aio.create_task(f5_tts.prewarm())
     except Exception as e:
         logger.warning(f"[TTS] 初始化检查失败：{e}")
 
