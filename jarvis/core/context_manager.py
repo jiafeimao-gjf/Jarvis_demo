@@ -266,6 +266,34 @@ class ContextManager:
 
     DEFAULT_BUDGET = ContextBudget()
 
+    # Anthropic /v1/messages 严格只接受 system/user/assistant 三种 role.
+    # 其他 role (tool/tool_result 等) 是工具运行期的中间表示, 无法在不丢失
+    # 上下文的前提下回放 — 必须从 history 中剥离, 否则 LLM 代理会 4xx.
+    HISTORY_ALLOWED_ROLES = {"system", "user", "assistant"}
+
+    @classmethod
+    def _sanitize_history(cls, history: list[dict]) -> tuple[list[dict], int]:
+        """剔除 history 里不能回放给 LLM 的角色 (tool / tool_result 等).
+
+        同时规整: 非 dict 项、缺 content 的项、空 content 项一并丢弃.
+        """
+        cleaned: list[dict] = []
+        dropped = 0
+        for m in history or []:
+            if not isinstance(m, dict):
+                dropped += 1
+                continue
+            role = m.get("role")
+            if role not in cls.HISTORY_ALLOWED_ROLES:
+                dropped += 1
+                continue
+            content = m.get("content")
+            if content is None or (isinstance(content, str) and not content.strip()):
+                dropped += 1
+                continue
+            cleaned.append(m)
+        return cleaned, dropped
+
     def __init__(
         self,
         strategy: Optional[CompactionStrategy] = None,
@@ -334,6 +362,15 @@ class ContextManager:
         """
         budget = budget or self.budget_for(model_id)
 
+        # 0a) 剔除 history 里不能回放的中间角色 (tool / tool_result 等)
+        # — 详见 HISTORY_ALLOWED_ROLES 注释.
+        history, dropped_tool_msgs = self._sanitize_history(history)
+        if dropped_tool_msgs:
+            logger.info(
+                f"[Context] filtered {dropped_tool_msgs} non-replayable "
+                f"tool/tool_result messages from history"
+            )
+
         # 0) 可选: 触发 per-conversation 自动压缩
         compressed = False
         if self.compressor is not None and conversation is not None:
@@ -348,6 +385,12 @@ class ContextManager:
                         {"role": m.role, "content": m.content}
                         for m in conversation.messages
                     ]
+                    history, dropped2 = self._sanitize_history(history)
+                    if dropped2:
+                        logger.info(
+                            f"[Context] filtered {dropped2} non-replayable "
+                            f"messages after compressor refresh"
+                        )
                     compressed = True
                     logger.info(
                         f"[Context] per-conversation 压缩完成 | "

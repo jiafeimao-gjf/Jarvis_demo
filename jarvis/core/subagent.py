@@ -288,23 +288,42 @@ class BaseSubagent(ABC):
                     break
 
                 # 把 assistant 的 tool_use 块加入下一轮上下文
-                messages.append({
-                    "role": "assistant",
-                    "content": resp.content_blocks
-                    or [{"type": "text", "text": final_output}],
-                })
+                assistant_blocks = resp.content_blocks or [{"type": "text", "text": final_output}]
+                # 检测 assistant turn 是否包含真正的 Anthropic tool_use 块;
+                # 仅有 text 块时 (regex 回退路径), 后续 tool_result 也只能发纯文本,
+                # 否则发结构化 tool_result 块会因找不到匹配的 tool_use 触发 2013.
+                has_tool_use_blocks = any(
+                    isinstance(b, dict) and b.get("type") == "tool_use"
+                    for b in assistant_blocks
+                )
+                messages.append({"role": "assistant", "content": assistant_blocks})
+
+                def _push_tool_result(content: str, tool_use_id: str = "") -> None:
+                    """根据 assistant turn 是否有 tool_use 块决定发结构化/纯文本 user 消息."""
+                    if has_tool_use_blocks and tool_use_id:
+                        messages.append({
+                            "role": "user",
+                            "content": [{
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": content,
+                            }],
+                        })
+                    else:
+                        messages.append({"role": "user", "content": content})
 
                 # 逐个执行工具
                 for tu in tool_uses:
                     tool_name = tu.get("name", "")
                     inp = tu.get("input", {}) or {}
+                    tu_id = tu.get("id", "") if isinstance(tu, dict) else ""
 
                     # 递归保护: 子代理内禁止再调 subagent
                     if tool_name == "subagent":
                         blocked_msg = (
                             "[工具结果] subagent: 子代理内禁止嵌套调用 subagent"
                         )
-                        messages.append({"role": "user", "content": blocked_msg})
+                        _push_tool_result(blocked_msg, tu_id)
                         if sub_session is not None:
                             sub_session.add_message(
                                 "tool",
@@ -325,7 +344,7 @@ class BaseSubagent(ABC):
                             f"[工具结果] {tool_name}: 该子代理无权调用此工具 "
                             f"(allowed_tools 限制)"
                         )
-                        messages.append({"role": "user", "content": blocked_msg})
+                        _push_tool_result(blocked_msg, tu_id)
                         if sub_session is not None:
                             sub_session.add_message(
                                 "tool",
@@ -357,7 +376,7 @@ class BaseSubagent(ABC):
                         params=inp,
                         result=result,
                     )
-                    messages.append({"role": "user", "content": result_content})
+                    _push_tool_result(result_content, tu_id)
                     if sub_session is not None:
                         sub_session.add_message("tool_result", result_content)
                     tool_calls_log.append({

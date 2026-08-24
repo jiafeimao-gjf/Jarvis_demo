@@ -17,6 +17,7 @@ class ToolCall:
     action: str
     params: dict
     raw: str  # 原始 JSON 字符串
+    id: str = ""  # Anthropic/Ollama /v1/messages 返回的 tool_use_id；为空时表示本地正则解析得到的结果，回填走纯文本 user 消息分支
 
 
 class ToolCallParser:

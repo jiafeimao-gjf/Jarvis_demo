@@ -155,11 +155,19 @@ async function handleSend() {
     chatStore.addMessage('assistant', '')
     msgIndex = chatStore.messages.length - 1
 
-    // Use streaming API with current conversation context
-    const messagesToSend = chatStore.messages.map(m => ({
-      role: m.role,
-      content: m.content
-    }))
+    // Use streaming API with current conversation context.
+    // 重要: 只挑 LLM 能理解的 role (system/user/assistant) 转给后端.
+    // tool/tool_result 已经在 UI 上以 status 卡片形式展示过,
+    // 而且:
+    //   - Anthropic /v1/messages 拒绝 role=tool / role=tool_result (4xx)
+    //   - 它们携带的是 JSON.stringify 的工具元数据, LLM 当对话读也无意义
+    // 后端 ContextManager 也有兜底过滤, 但前端先过滤节省一次往返.
+    const messagesToSend = chatStore.messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({
+        role: m.role,
+        content: m.content
+      }))
 
     await api.chatStream(
       {

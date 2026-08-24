@@ -175,7 +175,8 @@ class ChatEngine:
                     tool=tool_name,
                     action=action,
                     params=params,
-                    raw=block.get("id", json.dumps(block))  # 优先使用 id
+                    raw=block.get("id", json.dumps(block)),  # 优先使用 id
+                    id=block.get("id", ""),
                 )
                 tool_calls.append(tool_call)
                 logger.debug(f"[ChatEngine] 从 block 提取工具调用: {tool_name}.{action}")
@@ -345,7 +346,9 @@ class ChatEngine:
                     logger.error(f"[Chat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
                     result = {"status": "error", "message": str(e)}
 
-                # 格式化结果 — Ollama 需要纯文本, 不能用 Anthropic tool_result 块
+                # 格式化结果 — Anthropic /v1/messages 要求严格的 tool_result 结构化块
+                # 旧版走纯文本 user 消息会导致 Anthropic / MiniMax 代理抛 2013
+                # 只在缺失 tool_use_id (本地正则解析得到) 的情况下才退回纯文本分支
                 result_content = ToolResultFormatter.format_plain(
                     tool=tool_call.tool,
                     action=tool_call.action,
@@ -353,8 +356,19 @@ class ChatEngine:
                     result=result,
                 )
                 self.current_conversation.add_message("tool_result", result_content)
-                # 作为 user 消息追加 (Ollama 不支持 structured tool_result 格式)
-                messages.append({"role": "user", "content": result_content})
+                if tool_call.id:
+                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
+                    messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": result_content,
+                        }],
+                    })
+                else:
+                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
+                    messages.append({"role": "user", "content": result_content})
 
             # 检查后续响应是否也有工具调用
             has_tools = self.tool_parser.has_tool_calls(response_text)
@@ -589,6 +603,7 @@ class ChatEngine:
                     action=action,
                     params=params,
                     raw=tu.get("id", json.dumps(tu)),
+                    id=tu.get("id", ""),
                 )
                 tool_calls.append(tc)
 
@@ -634,7 +649,19 @@ class ChatEngine:
                     result=result,
                 )
                 self.current_conversation.add_message("tool_result", result_content)
-                messages.append({"role": "user", "content": result_content})
+                if tool_call.id:
+                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
+                    messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": result_content,
+                        }],
+                    })
+                else:
+                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
+                    messages.append({"role": "user", "content": result_content})
 
                 yield json.dumps({
                     "type": "tool_result",
@@ -874,6 +901,7 @@ class ChatEngine:
                     action=action,
                     params=params,
                     raw=tu.get("id", json.dumps(tu)),
+                    id=tu.get("id", ""),
                 )
                 tool_calls.append(tc)
 
@@ -921,7 +949,19 @@ class ChatEngine:
                     result=result,
                 )
                 self.current_conversation.add_message("tool_result", result_content)
-                messages.append({"role": "user", "content": result_content})
+                if tool_call.id:
+                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
+                    messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_call.id,
+                            "content": result_content,
+                        }],
+                    })
+                else:
+                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
+                    messages.append({"role": "user", "content": result_content})
 
                 yield json.dumps({
                     "type": "tool_result",
