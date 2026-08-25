@@ -11,6 +11,7 @@ const emit = defineEmits<{
 const chatStore = useChatStore()
 const { theme, toggleTheme } = useTheme()
 const isDarkMode = ref(theme.value === 'dark')
+const showArchived = ref(false)
 
 function handleNewChat() {
   chatStore.createConversation()
@@ -27,6 +28,23 @@ function selectConversation(id: string) {
 function deleteConversation(id: string, event: Event) {
   event.stopPropagation()
   chatStore.deleteConversation(id)
+}
+
+function archiveFromSidebar(id: string, event: Event) {
+  event.stopPropagation()
+  chatStore.archiveConversation(id)
+}
+
+function restoreArchived(id: string, event: Event) {
+  event.stopPropagation()
+  chatStore.restoreConversation(id).catch(() => {})
+}
+
+function deleteArchived(id: string, event: Event) {
+  event.stopPropagation()
+  if (confirm('永久删除这条归档对话?')) {
+    chatStore.deleteArchived(id)
+  }
 }
 
 function onToggleTheme() {
@@ -111,6 +129,7 @@ function onEditKeydown(e: KeyboardEvent) {
     </div>
 
     <div class="flex-1 overflow-y-auto p-2 space-y-1 relative z-10">
+      <!-- 主列表 (active) -->
       <div
         v-for="conv in chatStore.conversations"
         :key="conv.id"
@@ -121,7 +140,6 @@ function onEditKeydown(e: KeyboardEvent) {
             : 'border-transparent hover:bg-primary/5 hover:border-primary/20 hover:text-foreground'
         ]"
       >
-        <!-- Display mode: click selects, pencil edits -->
         <template v-if="editingId !== conv.id">
           <button
             class="flex-1 text-left truncate text-xs"
@@ -140,6 +158,15 @@ function onEditKeydown(e: KeyboardEvent) {
             </svg>
           </button>
           <button
+            class="opacity-0 group-hover:opacity-100 p-1 hover:bg-yellow-500/20 rounded transition-all shrink-0"
+            @click="archiveFromSidebar(conv.id, $event)"
+            title="归档对话"
+          >
+            <svg class="w-3 h-3 text-yellow-400/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>
+            </svg>
+          </button>
+          <button
             class="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all shrink-0"
             @click="deleteConversation(conv.id, $event)"
             title="删除对话"
@@ -149,7 +176,6 @@ function onEditKeydown(e: KeyboardEvent) {
             </svg>
           </button>
         </template>
-        <!-- Edit mode -->
         <template v-else>
           <input
             ref="editInput"
@@ -162,11 +188,61 @@ function onEditKeydown(e: KeyboardEvent) {
           />
         </template>
       </div>
+
+      <!-- 归档 section -->
+      <div v-if="chatStore.archivedConversations.length > 0" class="pt-2 mt-2 border-t border-primary/10">
+        <button
+          class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-primary/60 hover:text-primary transition-colors"
+          @click="showArchived = !showArchived"
+        >
+          <svg class="w-3 h-3 transition-transform" :class="showArchived ? 'rotate-90' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4"/>
+          </svg>
+          <span class="font-medium">已归档 ({{ chatStore.archivedConversations.length }})</span>
+        </button>
+
+        <div v-if="showArchived" class="mt-1 space-y-1">
+          <div
+            v-for="conv in chatStore.archivedConversations"
+            :key="conv.id"
+            class="w-full px-3 py-1.5 rounded text-xs border border-transparent flex items-center gap-2 group opacity-60 hover:opacity-100 transition-all"
+          >
+            <button
+              class="flex-1 text-left truncate text-muted-foreground hover:text-foreground"
+              :title="displayTitle(conv)"
+            >
+              {{ displayTitle(conv) }}
+            </button>
+            <button
+              class="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/20 rounded transition-all shrink-0"
+              @click="restoreArchived(conv.id, $event)"
+              title="恢复到主列表"
+            >
+              <svg class="w-3 h-3 text-primary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+              </svg>
+            </button>
+            <button
+              class="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded transition-all shrink-0"
+              @click="deleteArchived(conv.id, $event)"
+              title="永久删除"
+            >
+              <svg class="w-3 h-3 text-red-400/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="p-3 border-t border-primary/20 relative z-10">
       <div class="text-[10px] text-primary/40 text-center tracking-widest uppercase">
-        {{ chatStore.conversations.length }} CONVERSATIONS
+        {{ chatStore.conversations.length }} ACTIVE · {{ chatStore.archivedConversations.length }} ARCHIVED
       </div>
     </div>
   </aside>

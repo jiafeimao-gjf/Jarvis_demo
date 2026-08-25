@@ -29,9 +29,35 @@ function saveTopicCache(cache: Record<string, string>) {
 export const useChatStore = defineStore('chat', () => {
   const settingsStore = useSettingsStore()
   const conversations = ref<Conversation[]>([])
+  const archivedConversations = ref<Conversation[]>([])
   const currentConversationId = ref<string | null>(null)
   const isLoading = ref(false)
   const isSyncing = ref(false)
+
+  // ── Archive persistence ────────────────────────────────────────────────
+  // 归档 ID 列表 (conversations 数据本身已存后端, 这里只记 "哪些 ID 已归档")
+  // 用独立 localStorage key, 与 topic cache 解耦
+  const ARCHIVE_KEY = 'jarvis_archived_ids_v1'
+  const archivedIds = ref<Set<string>>(loadArchiveIds())
+
+  function loadArchiveIds(): Set<string> {
+    try {
+      const raw = localStorage.getItem(ARCHIVE_KEY)
+      if (!raw) return new Set()
+      const arr = JSON.parse(raw)
+      return new Set(Array.isArray(arr) ? arr : [])
+    } catch {
+      return new Set()
+    }
+  }
+
+  function saveArchiveIds() {
+    try {
+      localStorage.setItem(ARCHIVE_KEY, JSON.stringify(Array.from(archivedIds.value)))
+    } catch {
+      // Quota or disabled storage — silently ignore
+    }
+  }
 
   // Reactive copy of sessionStorage topic cache — updated whenever topics change
   const topicCache = ref<Record<string, string>>(loadTopicCache())
@@ -66,22 +92,52 @@ export const useChatStore = defineStore('chat', () => {
         const backendConvs = data.conversations || []
         const cache = topicCache.value
 
-        conversations.value = backendConvs.map((conv: any) => {
-          // Prefer backend topic; fall back to sessionStorage cache for instant display
+        // 按 archivedIds 拆成 active / archived 两组
+        const active: Conversation[] = []
+        const archived: Conversation[] = []
+        const seenIds = new Set<string>()
+
+        for (const conv of backendConvs) {
+          seenIds.add(conv.conversation_id)
           const topic = conv.topic || cache[conv.conversation_id] || undefined
-          // If we served from cache but backend has a topic now, sync back to cache
           if (conv.topic && cache[conv.conversation_id] !== conv.topic) {
             rememberTopic(conv.conversation_id, conv.topic)
           }
-          return {
+          const c: Conversation = {
             id: conv.conversation_id,
             title: conv.title || `对话 ${conv.message_count} 条消息`,
             topic,
             messages: [],
             createdAt: new Date(conv.created_at),
-            updatedAt: new Date(conv.updated_at)
+            updatedAt: new Date(conv.updated_at),
+            userId: settingsStore.settings.user_name || '',
           }
-        })
+          if (archivedIds.value.has(conv.conversation_id)) {
+            archived.push(c)
+          } else {
+            active.push(c)
+          }
+        }
+
+        // 兜底: localStorage 标记为 archived 但后端没返回的 ID
+        // (可能归档时 sync 没成功 / conv 没消息 / 后端被清理)
+        // 也要展示为 placeholder, 避免用户以为归档丢失
+        for (const archivedId of archivedIds.value) {
+          if (!seenIds.has(archivedId)) {
+            archived.push({
+              id: archivedId,
+              title: `归档对话 ${archivedId.slice(0, 8)}`,
+              topic: undefined,
+              messages: [],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              userId: settingsStore.settings.user_name || '',
+            })
+          }
+        }
+
+        conversations.value = active
+        archivedConversations.value = archived
       }
     } catch (e) {
       console.error('Failed to load from backend:', e)
@@ -149,11 +205,11 @@ export const useChatStore = defineStore('chat', () => {
   // Select conversation
   let previousConversationId: string | null = null
   async function selectConversation(id: string) {
-    // Sync previous conversation before switching
+    // Sync previous conversation in background (不阻塞消息加载)
     if (previousConversationId && previousConversationId !== id) {
       const prevConv = conversations.value.find(c => c.id === previousConversationId)
       if (prevConv) {
-        await syncToBackend(prevConv)
+        syncToBackend(prevConv).catch(() => { /* 后台 sync, 失败不影响切换 */ })
       }
     }
 
@@ -236,6 +292,78 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // ── Archive: 把当前 conv 从主列表移到归档, 清空 messages ──────────
+  function archiveConversation(id: string): boolean {
+    const index = conversations.value.findIndex(c => c.id === id)
+    if (index === -1) return false
+    const [conv] = conversations.value.splice(index, 1)
+    if (conv) {
+      // fire-and-forget sync: 没消息 / 同步失败也能立即归档
+      // (归档标记走 localStorage, 不依赖后端 sync 成功)
+      syncToBackend(conv).catch(() => { /* sync 失败不影响归档 */ })
+      conv.messages = []   // 清空, 不再占内存
+      archivedConversations.value.unshift(conv)
+    }
+    archivedIds.value.add(id)
+    saveArchiveIds()
+    if (currentConversationId.value === id) {
+      currentConversationId.value = conversations.value[0]?.id || null
+    }
+    return true
+  }
+
+  // 从归档恢复到主列表
+  async function restoreConversation(id: string): Promise<boolean> {
+    const index = archivedConversations.value.findIndex(c => c.id === id)
+    if (index === -1) return false
+    const [conv] = archivedConversations.value.splice(index, 1)
+    if (conv) {
+      conversations.value.unshift(conv)
+    }
+    archivedIds.value.delete(id)
+    saveArchiveIds()
+
+    // 独立 fetch messages (不复用 selectConversation, 避免 syncToBackend 阻塞)
+    try {
+      const response = await fetch(`/api/memory/conversation/${id}`)
+      if (response.ok) {
+        const data = await response.json()
+        if (data.messages) {
+          const restored = conversations.value.find(c => c.id === id)
+          if (restored) {
+            restored.messages = data.messages.map((m: any) => ({
+              id: crypto.randomUUID(),
+              role: m.role,
+              content: m.content,
+              image: m.image || undefined,
+              timestamp: new Date(m.timestamp || Date.now())
+            }))
+          }
+        }
+      } else {
+        console.error(`Restore: GET failed ${response.status}`)
+      }
+    } catch (e) {
+      console.error('Restore: failed to load messages', e)
+    }
+
+    // 切到这条对话 (即使 fetch 失败也切, 至少 UI 切过去了)
+    currentConversationId.value = id
+    previousConversationId = null  // 重置, 避免下次 sync 混乱
+    return true
+  }
+
+  // 永久删除归档 (本地 + 后端)
+  function deleteArchived(id: string): boolean {
+    const index = archivedConversations.value.findIndex(c => c.id === id)
+    if (index === -1) return false
+    archivedConversations.value.splice(index, 1)
+    archivedIds.value.delete(id)
+    saveArchiveIds()
+    fetch(`/api/memory/conversation/${id}`, { method: 'DELETE' }).catch(() => {})
+    return true
+  }
+
   // Debounced sync helper
   let syncTimeout: ReturnType<typeof setTimeout> | null = null
   function debouncedSync(conv: Conversation) {
@@ -299,6 +427,7 @@ export const useChatStore = defineStore('chat', () => {
 
   return {
     conversations,
+    archivedConversations,
     currentConversationId,
     currentConversation,
     messages,
@@ -309,6 +438,9 @@ export const useChatStore = defineStore('chat', () => {
     addMessage,
     clearCurrentMessages,
     deleteConversation,
+    archiveConversation,
+    restoreConversation,
+    deleteArchived,
     syncToBackend,
     loadFromBackend,
     updateTopic,

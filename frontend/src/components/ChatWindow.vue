@@ -3,14 +3,17 @@ import { ref, watch, nextTick, onMounted, computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
+import { useSkillsStore } from '@/stores/skills'
 import { useApi } from '@/composables/useApi'
 import { usePCMPlayer } from '@/composables/usePCMPlayer'
 import ChatMessage from './ChatMessage.vue'
 import SubagentSessionPanel from './SubagentSessionPanel.vue'
+import type { Skill } from '@/types'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const providersStore = useProvidersStore()
+const skillsStore = useSkillsStore()
 const api = useApi()
 const pcmPlayer = usePCMPlayer()
 const inputValue = ref('')
@@ -127,14 +130,210 @@ function scrollToBottom(smooth = true) {
   })
 }
 
+// ── Slash commands ──────────────────────────────────────────────────────────
+interface SlashCommand {
+  id: string
+  label: string          // 输入框完整前缀 (e.g. "/clear")
+  hint: string           // 简短描述 (e.g. "归档 + 清空")
+  desc: string           // 详细描述 (autocomplete 显示)
+  type: 'builtin' | 'skill'
+  matchPrefix: string    // 用于过滤的关键词 (无 /)
+  execute?: (rest: string) => Promise<void> | void
+  skillRef?: Skill
+}
+
+const slashMenuOpen = ref(false)
+const slashSelectedIndex = ref(0)
+
+const slashCommands = computed<SlashCommand[]>(() => {
+  const builtins: SlashCommand[] = [
+    {
+      id: 'clear', label: '/clear',
+      hint: '归档 + 清空', desc: '归档当前对话到侧栏, 并开启新对话',
+      type: 'builtin', matchPrefix: 'clear',
+    },
+    {
+      id: 'stop', label: '/stop',
+      hint: '停止推理', desc: '立即中止当前正在进行的推理',
+      type: 'builtin', matchPrefix: 'stop',
+    },
+    {
+      id: 'context', label: '/context',
+      hint: '查看上下文用量', desc: '显示当前会话的 token 估算和上下文窗口占比',
+      type: 'builtin', matchPrefix: 'context',
+    },
+  ]
+  // 每个 enabled skill 自动注册一个 /<skill-id> 命令
+  const skillCmds: SlashCommand[] = skillsStore.enabledSkills.map(s => ({
+    id: `skill:${s.id}`,
+    label: `/${s.id}`,
+    hint: '调用技能',
+    desc: s.description || '加载技能内容到上下文',
+    type: 'skill',
+    matchPrefix: s.id,
+    skillRef: s,
+  }))
+  return [...builtins, ...skillCmds]
+})
+
+// 当前输入是不是在选命令 (有 / 前缀, 且后面还没空格 = 还在选 label)
+const slashQuery = computed(() => {
+  const v = inputValue.value
+  if (!v.startsWith('/')) return null
+  // 一旦用户敲了空格, 表示命令已锁定, 不再显示菜单
+  if (v.includes(' ')) return null
+  return v.slice(1)  // 不含前导 /
+})
+
+const slashFiltered = computed(() => {
+  if (slashQuery.value === null) return []
+  const q = slashQuery.value.toLowerCase()
+  if (q === '') return slashCommands.value  // 刚打 / 时显示全部
+  return slashCommands.value.filter(c => c.matchPrefix.toLowerCase().includes(q))
+})
+
+watch(slashQuery, () => {
+  slashMenuOpen.value = slashQuery.value !== null
+  slashSelectedIndex.value = 0
+})
+
+// 滚动到选中项 (autocomplete 滚动跟随)
+watch(slashSelectedIndex, () => {
+  nextTick(() => {
+    const el = document.getElementById(`slash-cmd-${slashSelectedIndex.value}`)
+    el?.scrollIntoView({ block: 'nearest' })
+  })
+})
+
+function selectSlashCommand(cmd: SlashCommand) {
+  // 替换输入框为完整的命令 + 一个空格 (用户继续输入实际请求)
+  // /{skill_name} 需要保留后面用户可能输入的具体请求
+  if (cmd.type === 'skill') {
+    inputValue.value = `${cmd.label} `
+    slashMenuOpen.value = false
+    // 焦点回到 textarea 让用户继续打字
+    nextTick(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>('textarea.input-cyber')
+      ta?.focus()
+    })
+  } else {
+    // builtin 命令: 直接执行
+    inputValue.value = ''
+    slashMenuOpen.value = false
+    executeBuiltinCommand(cmd.id)
+  }
+}
+
+function executeBuiltinCommand(id: string) {
+  const convId = chatStore.currentConversationId
+  if (id === 'clear') {
+    if (!convId) {
+      // 还没对话, 直接什么都不做
+      return
+    }
+    const ok = chatStore.archiveConversation(convId)
+    if (ok) {
+      chatStore.createConversation()
+    }
+  } else if (id === 'stop') {
+    handleStop()
+  } else if (id === 'context') {
+    showContextStats()
+  }
+}
+
+async function showContextStats() {
+  // 估算当前会话 token 用量
+  const messages = chatStore.messages.filter(m => m.role === 'user' || m.role === 'assistant')
+  const totalChars = messages.reduce((sum, m) => sum + (m.content?.length || 0), 0)
+  // 粗估: 1 token ≈ 4 字符 (中文略多, 这里偏乐观)
+  const estTokens = Math.ceil(totalChars / 3)  // 中文按 3 字符/token 估
+  // 上下文窗口估算 (默认 8192, 不同模型差异较大)
+  const model = providersStore.activeInstance?.default_model
+    || settingsStore.settings.ai_default_model
+    || 'qwen3:4b'
+  const ctxWindow = estimateContextWindow(model)
+  const pct = ctxWindow > 0 ? Math.round((estTokens / ctxWindow) * 100) : 0
+  const sysPromptEst = 1500  // persona + skills + memory 估算
+  const totalWithSystem = estTokens + sysPromptEst
+  const totalPct = ctxWindow > 0 ? Math.round((totalWithSystem / ctxWindow) * 100) : 0
+
+  const lines: string[] = [
+    `📊 **当前会话上下文**`,
+    ``,
+    `• 消息数: ${messages.length} 条`,
+    `• 字符数: ${totalChars.toLocaleString()}`,
+    `• 估算 token (对话): ~${estTokens.toLocaleString()}`,
+    `• 估算 token (含 system prompt): ~${totalWithSystem.toLocaleString()}`,
+    `• 当前模型: \`${model}\``,
+    `• 模型上下文窗口: ${ctxWindow.toLocaleString()} tokens`,
+    `• 对话占用: **${pct}%** · 含 system prompt: **${totalPct}%**`,
+  ]
+  if (totalPct > 80) {
+    lines.push(``, `⚠️ 上下文使用率已超过 80%, 建议使用 \`/clear\` 开启新对话避免早期消息被压缩`)
+  }
+  chatStore.addMessage('assistant', lines.join('\n'))
+  nextTick(() => scrollToBottom(false))
+}
+
+function estimateContextWindow(model: string): number {
+  // 常见模型的粗略 ctx window (tokens)
+  const m = model.toLowerCase()
+  if (m.includes('qwen3') || m.includes('qwen2.5') || m.includes('llama3')) return 32768
+  if (m.includes('claude-3') || m.includes('claude-3-5')) return 200000
+  if (m.includes('gpt-4o') || m.includes('gpt-4-turbo')) return 128000
+  if (m.includes('gpt-3.5')) return 16385
+  if (m.includes('gemini')) return 1000000
+  return 8192  // 保守默认
+}
+
+// 处理 /{skill_name} [request] — 把 skill 内容注入到消息前
+function applySkillPrefix(skillId: string, rest: string): string {
+  const skill = skillsStore.skills.find(s => s.id === skillId)
+  if (!skill) {
+    // 没找到, 让 LLM 自己处理 (或者原样发)
+    return rest
+  }
+  const header = `[用户调用了技能: ${skill.name}]\n${skill.description}\n\n${skill.content || '(此技能无详细说明)'}`
+  const userReq = rest.trim()
+  if (userReq) {
+    return `${header}\n\n---\n\n${userReq}`
+  }
+  return `${header}\n\n请基于以上技能内容执行`
+}
+
 async function handleSend() {
   const text = inputValue.value.trim()
   if (!text || isLoading.value) return
 
+  // ── Slash command 检测 ────────────────────────────────────────────
+  // /clear /stop /context 走 builtin; /{skill_name} [request] 注入 skill 后正常发
+  if (text.startsWith('/')) {
+    const firstToken = text.split(/\s+/)[0]
+    const rest = text.slice(firstToken.length).trim()
+    const cmd = slashCommands.value.find(c => c.label === firstToken)
+    if (cmd && cmd.type === 'builtin') {
+      inputValue.value = ''
+      executeBuiltinCommand(cmd.id)
+      return
+    }
+    if (cmd && cmd.type === 'skill' && cmd.skillRef) {
+      // 注入 skill 内容, 转成普通消息发出
+      const augmented = applySkillPrefix(cmd.skillRef.id, rest)
+      inputValue.value = ''
+      await sendNormalMessage(augmented)
+      return
+    }
+    // 未匹配: 继续走正常发送 (让 LLM 看到 /xxx, 由它自己判断)
+  }
+
+  await sendNormalMessage(text)
+}
+
+async function sendNormalMessage(text: string) {
   // 在用户手势内 resume AudioContext, 让后续 SSE 推来的 PCM chunks 跨任意 await 仍可播放
   pcmPlayer.ensureResumed()
 
-  inputValue.value = ''
   const userMsg = chatStore.addMessage('user', text)
   if (!userMsg) {
     // user_name not set, prompt to configure
@@ -300,6 +499,31 @@ function handleStop() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Slash menu 打开时: 上下/Enter/Esc 由菜单处理
+  if (slashMenuOpen.value && slashFiltered.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      slashSelectedIndex.value = (slashSelectedIndex.value + 1) % slashFiltered.value.length
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      slashSelectedIndex.value = (slashSelectedIndex.value - 1 + slashFiltered.value.length) % slashFiltered.value.length
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      const cmd = slashFiltered.value[slashSelectedIndex.value]
+      if (cmd) selectSlashCommand(cmd)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      slashMenuOpen.value = false
+      inputValue.value = ''
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
@@ -452,10 +676,42 @@ onMounted(() => {
 
     <div class="p-4 border-t border-primary/20 relative">
       <div class="absolute inset-0 bg-gradient-to-t from-background via-background/95 to-transparent pointer-events-none h-10 -top-10" />
+
+      <!-- Slash 命令 autocomplete 面板 -->
+      <div
+        v-if="slashMenuOpen && slashFiltered.length > 0"
+        class="absolute bottom-full left-4 right-4 mb-2 bg-background/95 backdrop-blur border border-primary/40 rounded-lg shadow-lg overflow-hidden z-20"
+      >
+        <div class="px-3 py-1.5 text-[10px] text-muted-foreground tracking-wider uppercase border-b border-primary/10 flex items-center justify-between">
+          <span>命令 · ↑↓ 选择 · Enter 执行 · Esc 关闭</span>
+          <span class="font-mono">{{ slashFiltered.length }}</span>
+        </div>
+        <div class="max-h-64 overflow-y-auto">
+          <button
+            v-for="(cmd, idx) in slashFiltered"
+            :id="`slash-cmd-${idx}`"
+            :key="cmd.id"
+            class="w-full flex items-center gap-3 px-3 py-2 text-left transition-colors"
+            :class="idx === slashSelectedIndex ? 'bg-primary/15 text-primary' : 'hover:bg-accent/40'"
+            @mousedown.prevent="selectSlashCommand(cmd)"
+            @mouseenter="slashSelectedIndex = idx"
+          >
+            <span
+              class="font-mono text-sm font-medium shrink-0"
+              :class="cmd.type === 'skill' ? 'text-blue-400' : 'text-primary'"
+            >{{ cmd.label }}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded shrink-0"
+              :class="cmd.type === 'skill' ? 'bg-blue-500/15 text-blue-400' : 'bg-primary/15 text-primary/70'"
+            >{{ cmd.hint }}</span>
+            <span class="text-xs text-muted-foreground truncate flex-1">{{ cmd.desc }}</span>
+          </button>
+        </div>
+      </div>
+
       <div class="flex gap-3 relative z-10">
         <textarea
           v-model="inputValue"
-          placeholder="输入指令回车发送，Shift+Enter 换行，可粘贴图片"
+          placeholder="输入 / 触发命令面板，回车发送，Shift+Enter 换行，可粘贴图片"
           class="flex-1 input-cyber rounded-2xl px-4 py-3 text-sm outline-none glow-border resize-none"
           :disabled="isLoading"
           rows="1"
