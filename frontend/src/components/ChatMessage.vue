@@ -6,6 +6,7 @@ import type { Message } from '@/types'
 import { formatTime } from '@/lib/utils'
 import { useApi } from '@/composables/useApi'
 import { usePCMPlayer } from '@/composables/usePCMPlayer'
+import { useSettingsStore } from '@/stores/settings'
 import SubagentCard from './SubagentCard.vue'
 
 const props = defineProps<{
@@ -19,6 +20,7 @@ const emit = defineEmits<{
 
 const api = useApi()
 const pcmPlayer = usePCMPlayer()
+const settingsStore = useSettingsStore()
 
 const isUser = computed(() => props.message.role === 'user')
 const isTool = computed(() => props.message.role === 'tool')
@@ -120,6 +122,8 @@ let synthAbort: { aborted: boolean } | null = null
  * AudioContext 在用户手势内 resume 后, 跨任意 await 仍可播放。
  */
 async function speakContent() {
+  // 全局 TTS 关闭 — 直接拒绝 (即使按钮隐藏, 兜底)
+  if (!settingsStore.settings.tts_enabled) return
   // 已经在读 — 停止
   if (isSpeaking.value || isSynthesizing.value) {
     stopSpeaking()
@@ -318,7 +322,7 @@ onUnmounted(() => {
     >
       {{ formatTime(message.timestamp) }}
       <button
-        v-if="!isUser"
+        v-if="!isUser && settingsStore.settings.tts_enabled"
         class="ml-2 align-middle opacity-50 hover:opacity-100 transition-opacity disabled:opacity-30"
         :class="isSpeaking || isSynthesizing ? 'text-primary' : ''"
         :disabled="isSynthesizing"

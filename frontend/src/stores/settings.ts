@@ -17,6 +17,7 @@ export interface Settings {
   abilities_prompt: string
   memory_prompt: string
   tools_prompt: string
+  tts_enabled: boolean  // 全局 TTS 开关: 关闭后聊天不注入 TTS, 单条 � 按钮也禁用
   hardware: {
     camera_device_id: number
     camera_width: number
@@ -41,6 +42,7 @@ const DEFAULT_SETTINGS: Settings = {
   abilities_prompt: '',
   memory_prompt: '',
   tools_prompt: '',
+  tts_enabled: true,
   hardware: {
     camera_device_id: 0,
     camera_width: 1280,

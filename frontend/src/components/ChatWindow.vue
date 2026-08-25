@@ -178,7 +178,8 @@ async function handleSend() {
         force_refresh_models: false,
         model: providersStore.activeInstance?.default_model || settingsStore.settings.ai_default_model,
         provider_id: providersStore.activeProviderId || undefined,
-        messages: messagesToSend
+        messages: messagesToSend,
+        enable_tts: settingsStore.settings.tts_enabled,
       },
       (token: string) => {
         // First token means we started typing

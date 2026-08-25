@@ -82,6 +82,9 @@ async def chat_stream(request: ChatRequest):
     min_chars = app_settings.voice_clone.sentence_min_chars
     max_chars = app_settings.voice_clone.sentence_max_chars
 
+    # 全局 TTS 关闭: 直接不触发任何 TTS / tts_fallback 事件 (避免聊天被音频干扰)
+    tts_disabled = not enable_tts
+
     # 状态 (list-as-mutable-box 方便闭包修改)
     sentence_buf = [""]
     sentence_idx = [0]
@@ -90,6 +93,9 @@ async def chat_stream(request: ChatRequest):
         """async generator: 处理一个文本 token, 累加 + 切句 + 触发 TTS, yield SSE 事件 dict"""
         sentence_buf[0] += token
         yield {"event": "token", "data": json.dumps({"type": "token", "content": token})}
+        # TTS 完全关闭 — 不做切句也不触发任何 TTS/fallback 事件
+        if tts_disabled:
+            return
         # 句切分循环
         while True:
             idx = _find_split(sentence_buf[0], min_chars, max_chars)
@@ -122,6 +128,9 @@ async def chat_stream(request: ChatRequest):
 
     async def flush_tail_events():
         """async generator: 流结束时 flush 残余 buffer, yield SSE 事件"""
+        if tts_disabled:
+            sentence_buf[0] = ""
+            return
         tail = sentence_buf[0].strip()
         sentence_buf[0] = ""
         if not tail:
