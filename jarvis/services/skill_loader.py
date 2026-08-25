@@ -30,7 +30,11 @@ def load_skills(skill_dir: Optional[Path] = None) -> list[SkillInfo]:
         return []
 
     skills: list[SkillInfo] = []
-    for md_file in sorted(skill_dir.rglob("skill.md")):
+    # Case-insensitive scan: match skill.md / SKILL.md / Skill.md etc.
+    md_files = set()
+    for pattern in ("skill.md", "SKILL.md"):
+        md_files.update(skill_dir.rglob(pattern))
+    for md_file in sorted(md_files):
         try:
             content = md_file.read_text(encoding="utf-8")
             match = YAML_RE.search(content)

@@ -11,6 +11,40 @@ export interface ProviderInstance {
   timeout?: number
 }
 
+// ── Skills ──────────────────────────────────────────────────────────────────
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  content: string
+  tags: string[]
+  groups: string[]
+  enabled: boolean
+  order: number
+  file_path: string
+  created_at?: string
+  updated_at?: string
+  missing?: boolean  // DB row exists but file deleted externally
+}
+
+export interface SkillConfig {
+  active_groups: string[]
+  known_tags: string[]
+  known_groups: string[]
+}
+
+export interface SkillGroup {
+  name: string
+  skill_count: number
+  is_active: boolean
+}
+
+export interface SkillTag {
+  name: string
+  skill_count: number
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool' | 'tool_result'

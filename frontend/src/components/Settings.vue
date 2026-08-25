@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import ProviderManager from './ProviderManager.vue'
 import VoiceClonePanel from './VoiceClonePanel.vue'
+import SkillManager from './SkillManager.vue'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -382,9 +383,36 @@ async function loadOllamaModels() {
         <ProviderManager />
       </section>
 
+      <!-- 技能管理 -->
+      <section class="bg-secondary rounded-lg p-4">
+        <h2 class="text-lg font-semibold mb-4">技能管理</h2>
+        <SkillManager />
+      </section>
+
       <!-- 声音克隆 (F5-TTS) -->
       <section class="bg-secondary rounded-lg p-4">
-        <h2 class="text-lg font-semibold mb-4">声音克隆 (F5-TTS)</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold">声音克隆 (F5-TTS)</h2>
+          <label class="flex items-center gap-2 cursor-pointer" :title="settingsStore.settings.tts_enabled ? '点击关闭全局 TTS (聊天不再朗读, 单条喇叭也禁用)' : '点击启用全局 TTS'">
+            <span class="text-xs text-muted-foreground">全局 TTS</span>
+            <span
+              class="w-9 h-5 rounded-full flex-shrink-0 transition-colors"
+              :class="settingsStore.settings.tts_enabled ? 'bg-green-500' : 'bg-gray-600'"
+              @click="settingsStore.updateSetting('tts_enabled', !settingsStore.settings.tts_enabled)"
+            >
+              <span
+                class="block w-3.5 h-3.5 rounded-full bg-white transform transition-transform mt-[3px]"
+                :class="settingsStore.settings.tts_enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'"
+              />
+            </span>
+            <span class="text-xs" :class="settingsStore.settings.tts_enabled ? 'text-green-400' : 'text-gray-500'">
+              {{ settingsStore.settings.tts_enabled ? '开' : '关' }}
+            </span>
+          </label>
+        </div>
+        <p v-if="!settingsStore.settings.tts_enabled" class="text-xs text-muted-foreground mb-3 px-2 py-1.5 bg-yellow-500/10 text-yellow-400 rounded">
+          ⚠️ TTS 已关闭 — 聊天回复不再朗读, 单条消息的 🔈 喇叭按钮也已禁用 (声音克隆配置仍可调整)
+        </p>
         <VoiceClonePanel />
       </section>
 

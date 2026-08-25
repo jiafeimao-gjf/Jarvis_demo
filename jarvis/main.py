@@ -162,6 +162,12 @@ async def startup_event():
     await store.load()
     logger.info(f"Provider instances loaded: {[i.id for i in store.get_all()]}")
 
+    # Pre-load skills (seed from disk if first run, then sync metadata to DB)
+    from jarvis.services.skill_store import get_skill_store
+    skill_store = get_skill_store()
+    skills = await skill_store.load()
+    logger.info(f"Skills loaded: {[s.id for s in skill_store.list_all()]}")
+
     # TTS / 声音克隆探测（不强制依赖）
     try:
         settings.voice_clone.refs_dir.mkdir(parents=True, exist_ok=True)

@@ -18,7 +18,8 @@ from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter, MiniMaxAdapter
 from jarvis.services.ai.models import Provider
 from jarvis.services.ai.instance_config import get_instance_store
-from jarvis.services.skill_loader import load_skills, load_prompt_files
+from jarvis.services.skill_loader import load_prompt_files
+from jarvis.services.skill_store import get_skill_store
 from jarvis.core.topic_generator import generate_topic
 from jarvis.core.context_manager import ContextManager
 from jarvis.utils.logger import get_logger
@@ -118,8 +119,8 @@ class ChatEngine:
                 except Exception as e:
                     logger.warning(f"Failed to read prompt file {f}: {e}")
 
-        # 2. 技能列表 — workspace/skills/
-        skills = load_skills()
+        # 2. 技能列表 — 来自 SkillStore (内存缓存, 按 enabled + active_groups 过滤)
+        skills = get_skill_store().get_enabled_for_active_groups()
         if skills:
             skill_lines = ["## 可用技能\n你可以使用以下技能辅助完成任务："]
             for s in skills:

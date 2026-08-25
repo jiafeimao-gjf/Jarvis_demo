@@ -13,6 +13,10 @@ import type {
   TTSResult,
   VoiceRefInfo,
   TTSStatus,
+  Skill,
+  SkillConfig,
+  SkillGroup,
+  SkillTag,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -326,6 +330,167 @@ export function useApi() {
     return null
   }
 
+  // ============ 技能管理 API ============
+
+  async function listSkills(includeMissing = false): Promise<Skill[]> {
+    const res = await fetch(`${API_BASE}/skills?include_missing=${includeMissing}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.skills || []
+  }
+
+  async function getSkill(id: string): Promise<Skill> {
+    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    return data.skill
+  }
+
+  async function createSkill(skill: Partial<Skill>): Promise<Skill> {
+    const res = await fetch(`${API_BASE}/skills`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(skill),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    return data.skill
+  }
+
+  async function updateSkill(id: string, partial: Partial<Skill>): Promise<Skill> {
+    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(partial),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    const data = await res.json()
+    return data.skill
+  }
+
+  async function deleteSkill(id: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return true
+  }
+
+  async function toggleSkill(id: string): Promise<Skill | null> {
+    const res = await fetch(`${API_BASE}/skills/${encodeURIComponent(id)}/toggle`, {
+      method: 'PATCH',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.skill || null
+  }
+
+  async function reorderSkills(orderedIds: string[]): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/reorder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ordered_ids: orderedIds }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return true
+  }
+
+  async function refreshSkillsFromDisk(): Promise<{ count: number }> {
+    const res = await fetch(`${API_BASE}/skills/refresh`, { method: 'POST' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return { count: data.count || 0 }
+  }
+
+  async function getSkillConfig(): Promise<SkillConfig> {
+    const res = await fetch(`${API_BASE}/skills/config`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.config
+  }
+
+  async function setActiveGroups(groups: string[]): Promise<string[]> {
+    const res = await fetch(`${API_BASE}/skills/config/active_groups`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groups }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.active_groups || []
+  }
+
+  async function getSkillGroups(): Promise<SkillGroup[]> {
+    const res = await fetch(`${API_BASE}/skills/groups`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.groups || []
+  }
+
+  async function getSkillTags(): Promise<SkillTag[]> {
+    const res = await fetch(`${API_BASE}/skills/tags`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.tags || []
+  }
+
+  async function renameSkillTag(oldName: string, newName: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/tags/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old: oldName, new: newName }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return true
+  }
+
+  async function renameSkillGroup(oldName: string, newName: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/groups/rename`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old: oldName, new: newName }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return true
+  }
+
+  async function deleteSkillTag(name: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/tags/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return true
+  }
+
+  async function deleteSkillGroup(name: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/skills/groups/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return true
+  }
+
   return {
     error,
     chat,
@@ -347,5 +512,22 @@ export function useApi() {
     ttsStatus,
     refAudioUrl,
     cloneAudioUrl,
+    // 技能管理
+    listSkills,
+    getSkill,
+    createSkill,
+    updateSkill,
+    deleteSkill,
+    toggleSkill,
+    reorderSkills,
+    refreshSkillsFromDisk,
+    getSkillConfig,
+    setActiveGroups,
+    getSkillGroups,
+    getSkillTags,
+    renameSkillTag,
+    renameSkillGroup,
+    deleteSkillTag,
+    deleteSkillGroup,
   }
 }
