@@ -104,17 +104,18 @@ jarvis/                         # Backend (Python)
 ├── config.py                   # Pydantic-based config (AI, hardware, storage, CORS)
 ├── api/                        # API route layer
 │   ├── routes.py               # Route aggregation (status, health)
-│   ├── chat.py                 # /api/chat (REST) + /api/chat/stream (SSE, with optional audio chunks)
+│   ├── chat.py                 # /api/chat (REST) + /api/chat/stream (SSE, with optional audio chunks + tts_disabled gate)
 │   ├── voice.py                # /api/voice (audio input → STT → chat → TTS)
 │   ├── voice_tts.py            # /api/voice/ref/* + /api/voice/synthesize + /api/voice/audio/* + /api/voice/status
 │   ├── camera.py               # /api/camera (frame analysis, WebSocket stream)
 │   ├── memory.py               # /api/memory (CRUD, conversation persistence)
 │   ├── execute.py              # /api/execute (task execution)
-│   └── providers.py            # /api/providers (ProviderInstance CRUD)
+│   ├── providers.py            # /api/providers (ProviderInstance CRUD)
+│   └── skills.py               # /api/skills (Skill CRUD + tags/groups 全套管理, 18 端点)
 ├── core/                       # Business logic engines
 │   ├── mediator.py             # JarvisMediator — central coordinator (Mediator Pattern)
 │   ├── entities.py             # Domain models: Message, Conversation, Task, Memory, Event
-│   ├── chat_engine.py          # ChatEngine — conversation context, LLM calls, tool execution loop
+│   ├── chat_engine.py          # ChatEngine — conversation context, LLM calls, tool execution loop; _build_system_prompt 注入 SkillStore 启用的 skill
 │   ├── context_manager.py      # ContextManager — token budget + sliding window + summarization + memory injection (Strategy Pattern: SlidingWindow / Summarization / Hybrid)
 │   ├── subagent.py             # BaseSubagent + Researcher/Coder/Reviewer/Summarizer/Planner/General + SubagentOrchestrator (sequential/parallel/map_reduce)
 │   ├── voice_engine.py         # Speech recognition & synthesis
@@ -128,7 +129,8 @@ jarvis/                         # Backend (Python)
 │   └── topic_generator.py      # Auto-generate conversation topics
 ├── services/                   # External service adapters
 │   ├── sub_model_processor.py # SubModelProcessor — STT+Vision sub-model facade
-│   ├── skill_loader.py         # Skill loader for workspace/skills/*.md (YAML frontmatter)
+│   ├── skill_loader.py         # Skill loader for workspace/skills/*.md (YAML frontmatter, case-insensitive)
+│   ├── skill_store.py          # SkillStore — 文件 + 元数据 DB 混合存储 (Repository Pattern), 镜像 InstanceConfigStore
 │   ├── ollama_client.py        # Raw HTTP client to Ollama API (legacy)
 │   ├── vision_processor.py     # Image frame analysis (legacy, subsumed by SubModelProcessor)
 │   ├── tts/                     # Voice cloning module (F5-TTS, optional)
@@ -158,28 +160,30 @@ frontend/                       # Frontend (Vue 3 + TypeScript)
 ├── src/
 │   ├── App.vue                 # Root component (status polling, layout orchestration)
 │   ├── main.ts                 # Vue app entry
-│   ├── types/index.ts          # Shared TypeScript interfaces (Message, Conversation, etc.)
+│   ├── types/index.ts          # Shared TypeScript interfaces (Message, Conversation, Skill, SkillConfig, ...)
 │   ├── stores/                 # Pinia stores
-│   │   ├── chat.ts             # Conversation state, sync from/to backend API
+│   │   ├── chat.ts             # Conversation state + archivedConversations + archive/restore/delete actions; sync from/to backend API
 │   │   ├── hardware.ts         # Camera/microphone/screen status
 │   │   ├── notification.ts     # Toast/notification queue
-│   │   ├── settings.ts         # App settings (theme, model selection, voice, provider)
+│   │   ├── settings.ts         # App settings (theme, model, voice, provider, tts_enabled 全局 TTS 开关)
 │   │   ├── providers.ts        # ProviderInstance management (CRUD against /api/providers)
+│   │   ├── skills.ts           # Skill CRUD (mirror providers.ts, localStorage 持久化)
 │   │   └── voice_clone.ts      # Voice clone state (ref audio info + TTS subsystem status)
 │   ├── composables/
-│   │   ├── useApi.ts           # API client: chat (REST+SSE with audio events), voice, camera, memory, execute, voice-clone
+│   │   ├── useApi.ts           # API client: chat (REST+SSE with audio events), voice, camera, memory, execute, voice-clone, skills (16 方法)
 │   │   ├── useSpeechRecognition.ts  # Browser Web Speech API wrapper
 │   │   └── usePCMPlayer.ts     # Web Audio API PCM int16 stream player (for cloned voice playback)
 │   └── components/
 │       ├── Header.vue          # Top nav bar with status indicators
-│       ├── Sidebar.vue         # Conversation list, new chat button
-│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display + PCM playback
-│       ├── ChatMessage.vue     # Single message bubble (markdown rendering)
+│       ├── Sidebar.vue         # Conversation list (主+归档双 section), new chat button, 归档/恢复/删除
+│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display + PCM playback + slash 命令面板 (输入 / 弹)
+│       ├── ChatMessage.vue     # Single message bubble (markdown rendering); 🔈 按钮受 tts_enabled 全局开关控制
 │       ├── CameraPreview.vue   # Camera feed + capture + analyze UI
 │       ├── HardwareControls.vue# Hardware toggle (camera, microphone, screen share)
 │       ├── ProviderManager.vue # Provider instance CRUD (multi-provider per project)
 │       ├── VoiceClonePanel.vue # Voice clone Settings UI: upload/record ref audio, ref_text, test synthesis
-│       ├── Settings.vue        # Settings panel (model, voice clone, provider, theme, hardware)
+│       ├── SkillManager.vue    # Skill 管理 UI (3 Tab: 列表/标签/分组 + 编辑 modal markdown 预览 + active groups 切换)
+│       ├── Settings.vue        # Settings panel: 左右布局 (sidebar 菜单 + 主内容), sticky 保存按钮
 │       └── Notification.vue    # Toast/notification display
 ├── stores/voice_clone.ts       # Pinia store: ref audio state + TTS subsystem status
 ├── package.json                # Vue 3, Vite, Pinia, Tailwind, lucide-vue, marked
@@ -196,7 +200,8 @@ tests/                          # pytest unit tests
 ├── test_tool_parser.py         # Tool call parsing
 ├── test_tool_registry.py       # Tool registration and schema generation
 ├── test_instance_config.py     # ProviderInstance lifecycle
-└── test_router_instance.py     # AIRouter with ProviderInstance
+├── test_router_instance.py     # AIRouter with ProviderInstance
+└── test_skill_store.py         # SkillStore CRUD + seed + filter + tags/groups + refresh (36 用例)
 ```
 
 DEVELOPMENT_PLAN.md             # Architecture docs, design decisions, feature roadmap
@@ -348,6 +353,132 @@ pip install f5-tts soundfile      # 1. 装包 (默认未装, 注释在 requireme
 
 **扩展点**: 自定义 TTS backend 实现 `STTEngine` 接口（虽然命名是 STT 但语义是 synthesis），注册到 `get_stt_engine()` 工厂即可。后续可加 OpenAI TTS API、CosyVoice 等。
 
+**全局 TTS 开关** (`frontend/src/stores/settings.ts` 的 `tts_enabled`, 默认 `true`):
+- 关闭后: 聊天请求 `enable_tts=false` → 后端 `chat.py` 加 `tts_disabled = not enable_tts` 短路 → `push_token_events` / `flush_tail_events` 早 return, 不推任何 `audio` / `tts_fallback` 事件
+- 前端: `ChatMessage.vue` 的 🔈 按钮 `v-if && tts_enabled` 隐藏, `speakContent()` 顶部兜底 `if (!tts_enabled) return`
+- 声音克隆配置 + 试合成仍可用 (用户主动行为, 不自动触发)
+- Settings UI: 声音克隆 section 顶部 iOS 风格 toggle, 关闭时显示黄色警告条
+
+## Skill Management Module (新增模块)
+
+`jarvis/services/skill_store.py` + `jarvis/api/skills.py` + `frontend/src/components/SkillManager.vue` — 把原 workspace/skills/ 扫描器升级为完整 CRUD 系统。
+
+**存储模型**: 文件 + 元数据 DB 混合
+- 内容: `workspace/skills/<id>/skill.md` (git 可追踪, 手工可编辑, 文件名大小写不敏感兼容 `SKILL.md`)
+- 元数据: SQLite (via `memory_store.save_setting("skills_v1")` + `("skill_config_v1")`),存 `enabled` / `tags` / `groups` / `order` / `created_at` / `updated_at`
+
+**为什么需要它**: 原 `skill_loader.load_skills()` 只读不写; 无法关闭某个 skill; 无法按场景切换技能集; 无法在 UI 中管理。
+
+**Skill dataclass** (`jarvis/services/skill_store.py`):
+```python
+@dataclass
+class Skill:
+    id: str                    # kebab-case, 与目录名一致
+    name: str
+    description: str
+    content: str               # markdown body (无 frontmatter)
+    tags: list[str]
+    groups: list[str]          # 空 list = 总是可用
+    enabled: bool = True
+    order: int = 0
+    file_path: str
+    created_at: str
+    updated_at: str
+    missing: bool = False      # 文件被外部删除但 DB 仍存
+```
+
+**启用过滤逻辑** (`SkillStore.get_enabled_for_active_groups()`):
+```python
+active = set(config.active_groups)
+for s in skills:
+    if not s.enabled or s.missing: continue
+    if not s.groups or (set(s.groups) & active):
+        yield s   # 按 order 排序
+```
+- `groups=[]` = 总是注入 (跨所有场景)
+- `groups=[default]` = 仅当 `default` 在 active_groups 时注入
+
+**chat_engine 集成** (`core/chat_engine.py:121-127`):
+```python
+skills = get_skill_store().get_enabled_for_active_groups()  # sync, 内存缓存
+if skills:
+    parts.append("## 可用技能\n" + "\n".join(f"- **{s.name}**: {s.description}" for s in skills))
+```
+- `main.py:startup_event` eager load
+- 缓存: `_cached_enabled_skills` 在 create/update/delete/toggle/reorder 后失效
+
+**API 端点** (`jarvis/api/skills.py`, 18 端点):
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/skills` | list (含 metadata) |
+| GET | `/api/skills/{id}` | get full content |
+| POST | `/api/skills` | create (写文件 + DB) |
+| PUT | `/api/skills/{id}` | partial update |
+| DELETE | `/api/skills/{id}` | remove file + DB |
+| PATCH | `/api/skills/{id}/toggle` | flip enabled |
+| PATCH | `/api/skills/reorder` | bulk order |
+| POST | `/api/skills/refresh` | rescan disk (auto-add new, mark missing) |
+| GET/PUT | `/api/skills/config*` | active_groups, known_tags, known_groups |
+| GET/POST/DELETE | `/api/skills/tags*` | rename / delete tags |
+| GET/POST/DELETE | `/api/skills/groups*` | rename / delete groups |
+
+**文件 ↔ DB 一致性规则**:
+- 启动时 `refresh_from_disk()`: 磁盘有 + DB 无 → 新建 DB row (默认 enabled=True, groups=["default"]); 磁盘无 + DB 有 → 标记 `missing=True` (不删除, 保留编辑历史)
+- 手工 `mkdir workspace/skills/<id>/` + 写 `skill.md`: 重启自动入库; 运行中需点 🔄「从磁盘刷新」或 `POST /api/skills/refresh`
+
+**前端 UI** (`SkillManager.vue`, 3 Tab):
+- **列表**: 搜索/过滤 (tag/group/enabled), 行内 enable toggle + 标签 chips + group badges, hover 显示 编辑/归档/删除
+- **标签管理**: rename / delete (影响所有 skill)
+- **分组管理**: rename / delete (默认组不可删), active groups 切换 (实时影响 chat)
+
+**复用模式**: 完全镜像 `jarvis/services/ai/instance_config.py:InstanceConfigStore` — dataclass + store class + `memory_store.save_setting` 持久化 + lazy load 单例。
+
+**测试**: `tests/test_skill_store.py` 36 个用例 (helpers / dataclass / seed / CRUD / toggle / reorder / filter / groups+tags / refresh / singleton), 全通过。
+
+## Slash Commands & Conversation Archive (新增模块)
+
+前端输入框 `/` 触发 autocomplete 面板,执行内置命令或调用 skill;后端无改动。
+
+**4 个内置命令** (`ChatWindow.vue` 的 `slashCommands` computed):
+| 命令 | 行为 |
+|------|------|
+| `/clear` | 归档当前 conv + 创建新 conv |
+| `/stop` | `abortController.abort()` 中止当前 SSE 流 |
+| `/context` | 估算 token 用量 + 显示消息数/字符数/对话占用%/含 system prompt %/模型窗口 (>80% 提示 `/clear`) |
+| `/{skill_id}` | 自动从 `skillsStore.enabledSkills` 生成, 把 skill 描述+content 拼到用户消息前走普通 chat 流程 |
+
+**autocomplete 面板 UX**:
+- 输入 `/` 立刻弹出 (输入框上方 absolute 定位)
+- builtin (绿色 tag) + skill (蓝色 tag) 混排
+- `↑↓` 切换 / `Enter` 执行 / `Esc` 关闭
+- 输入空格自动锁定命令, 菜单收起
+- builtin: 直接执行; skill: 插入 `/skill_name ` 让用户继续输入具体请求
+
+**`/context` 模型窗口估算** (`estimateContextWindow(model)`):
+- qwen3 / qwen2.5 / llama3 → 32K
+- claude-3 / claude-3-5 → 200K
+- gpt-4o / gpt-4-turbo → 128K
+- gpt-3.5 → 16K
+- gemini → 1M
+- 默认 8K
+- token 估算: 中文 3 字符/token (偏保守)
+
+**会话归档机制** (`frontend/src/stores/chat.ts`):
+- `archivedConversations` 数组 + `archivedIds: Set<string>` (localStorage `jarvis_archived_ids_v1` 持久化)
+- `archiveConversation(id)`: splice from active → fire-and-forget sync (sync 失败不影响归档) → 清空内存 messages → unshift 到 archived → 写 archivedIds
+- `restoreConversation(id)`: splice from archived → unshift to active → **独立 fetch messages** (不复用 selectConversation, 避免 syncToBackend await 阻塞) → 立刻切 currentConversationId
+- `deleteArchived(id)`: 永久删除 (本地 + 后端)
+- `loadFromBackend`: 按 archivedIds 自动分流; 对 localStorage 有但后端无的 ID 创建 placeholder, 避免用户以为归档丢失
+
+**Sidebar 归档 section**:
+- 主列表每条 conv hover 增加 📦 归档按钮 (yellow)
+- 底部 "已归档 (N)" 可折叠 section, 每项可 ↺ 恢复 / 🗑 永久删除
+- 底部统计改为 `N ACTIVE · M ARCHIVED`
+
+**selectConversation fire-and-forget** 修复:
+- 旧: `await syncToBackend(prevConv)` 阻塞消息加载, 归档→恢复 / 切对话可能等几秒才看到内容
+- 新: `syncToBackend(prevConv).catch(() => {})` 后台跑, 消息加载始终在主流程上
+
 ## Multimodal Sub-Model Pipeline
 
 Audio and image processed by dedicated sub-models → plain text → injected into chat.
@@ -414,11 +545,14 @@ Primary: **Ollama** (local). OpenAI/Anthropic adapters exist but are not in fall
 
 ## Frontend Interaction Summary
 
-- **Chat**: Enter to send, Shift+Enter newline, Ctrl+V paste image
+- **Chat**: Enter to send, Shift+Enter newline, Ctrl+V paste image, **`/` 触发 slash 命令面板** (`/clear` / `/stop` / `/context` / `/{skill_id}`)
 - **Voice**: single mic button (HardwareControls) — start/stop recording, timer, send to backend
+- **🔈 Speaker button** on each assistant message: 朗读该消息 (受 `tts_enabled` 全局开关控制, 关闭后按钮隐藏)
 - **Camera**: video preview + toggle start/stop auto-analysis (30s), image cards with fullscreen viewer
-- **Settings**: provider/model selection, prompts, hardware config — saved to memory DB
+- **Settings** (左右布局 — 侧栏菜单 + 主内容): provider/model selection, prompts, hardware config — saved to memory DB
+- **Sidebar 主列表**: hover 显示 ✏️ 编辑 / 📦 归档 / 🗑 删除; 底部 "已归档 (N)" 可折叠 section, 每项可 ↺ 恢复 / 🗑 永久删除
 - **ProviderManager**: add/edit/delete ProviderInstances with custom model names and API keys (for proxy providers like MiniMax)
+- **SkillManager** (Settings → 技能管理): 3 Tab (列表/标签/分组) + 编辑 modal (markdown 实时预览) + active groups 切换
 
 ## Environment Variables
 
@@ -429,7 +563,7 @@ Copy `.env.example` to `.env`. Key vars:
 
 ## Workspace & Skills System
 
-`workspace/` directory holds user-editable configuration and skills.
+`workspace/` directory holds user-editable configuration and skills. **Skill 的完整 CRUD 现在走 `SkillStore` (见 [Skill Management Module](#skill-management-module-新增模块) 章节), 不再只靠 `skill_loader` 扫描。**
 
 ```
 workspace/
@@ -437,7 +571,7 @@ workspace/
 ├── abilities.md        ← 能力说明
 ├── memory.md           ← 记忆说明
 ├── tools.md            ← 额外工具说明
-└── skills/             ← 技能目录
+└── skills/             ← 技能目录 (git 可追踪, SkillStore 文件来源)
     └── my-skill/
         └── skill.md    ← YAML frontmatter + 技能文档
 ```
@@ -448,6 +582,7 @@ workspace/
 ---
 name: my-skill
 description: 一句话描述技能能力（注入 system prompt）
+tags: demo, alpha          # 可选, 自动识别
 ---
 ## 详细说明
 ...markdown body (LLM 可读取完整文件)...
@@ -456,15 +591,16 @@ description: 一句话描述技能能力（注入 system prompt）
 ### System Prompt Injection
 
 对话开始时:
-1. `load_skills()` 扫描 `workspace/skills/*/skill.md`
-2. 解析 YAML frontmatter → 提取 `name` + `description`
-3. 注入: `## 可用技能\n- **name**: description`
+1. `ChatEngine._build_system_prompt` 调 `skill_store.get_enabled_for_active_groups()`
+2. 过滤: `enabled=True AND (no groups OR groups ∩ active_groups ≠ ∅) AND not missing`
+3. 按 `order` 排序, 注入: `## 可用技能\n- **name**: description`
 4. Workspace 文件优先级 > DB 设置 (persona.md 覆盖 DB)
 
 ### Workflow
-- 新增/修改 skill: 创建 `workspace/skills/<name>/skill.md` → 重启生效
-- 修改角色: 编辑 `workspace/persona.md` → 重启生效
-- 保存设置: 同时写入 DB + workspace/*.md 文件
+- **新增/修改 skill**: UI (SkillManager) 编辑 → 立即写文件 + DB; 或手工创建 `workspace/skills/<name>/skill.md` → 重启生效, 或点 🔄「从磁盘刷新」/ `POST /api/skills/refresh` 实时入库
+- **删除 skill**: UI 删除按钮 (物理删除文件 + DB) 或手工 `rm -rf workspace/skills/<name>/`
+- **修改角色**: 编辑 `workspace/persona.md` → 重启生效
+- **保存设置**: 同时写入 DB + workspace/*.md 文件
 
 ## Documentation
 
@@ -482,3 +618,6 @@ description: 一句话描述技能能力（注入 system prompt）
 - **新增 LLM 模型要双写**: 一是 `MODELS` 字典 (`services/ai/models.py`)，二是注册 ProviderAdapter (`ChatEngine.__init__`)。
 - **测试时记得 mock AIRouter** — `router.chat` 和 `router.chat_stream_full` 都是异步的，用 `AsyncMock`。
 - **`SubagentConfig` 必填 `system_prompt`** — 自定义配置时显式提供，否则构造失败。
+- **运行中手工加 skill 文件不自动入库** — `SkillStore.refresh_from_disk()` 只在 `load()` 和 `POST /api/skills/refresh` 时跑, 重启会重新扫描; 想要实时同步改 `chat_engine._build_system_prompt` 里调 `await skill_store.refresh_from_disk()`(有 IO 开销)。
+- **chat_stream 的 `enable_tts=False` 仍推 `tts_fallback`** — 后端 `chat.py` 加 `tts_disabled = not enable_tts` 短路 `push_token_events` / `flush_tail_events`, 早 return; 不要只靠前端忽略事件, 否则带宽 + 后端 CPU 都浪费。
+- **归档恢复看不到内容** — `archiveConversation` 清空 `conv.messages` 省内存, 恢复必须重新 fetch; `restoreConversation` 独立 await fetch + 切 ID, **不复用 `selectConversation`**, 否则 `await syncToBackend(prevConv)` 会阻塞。
