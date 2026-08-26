@@ -209,8 +209,10 @@ class BaseSubagent(ABC):
                     parser = ToolCallParser(self.work_folder)
                     if parser.has_tool_calls(content):
                         for tc in parser.parse(content):
+                            # tc.id 必填 (__post_init__ 兜底生成稳定哈希),
+                            # 不再借用旧的 tc.raw 当 ID.
                             tool_uses.append(
-                                {"name": tc.tool, "input": tc.params, "id": tc.raw}
+                                {"name": tc.tool, "input": tc.params, "id": tc.id}
                             )
                 except Exception as e:
                     logger.debug(f"[Subagent {self.role.value}] text tool parse failed: {e}")

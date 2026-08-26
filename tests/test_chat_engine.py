@@ -261,7 +261,7 @@ class TestChatMethod:
         ])
         engine.tool_parser.has_tool_calls = MagicMock(return_value=True)
         engine.tool_parser.parse = MagicMock(side_effect=[
-            [ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw='{}')],
+            [ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw_input_json='{}')],
             []
         ])
         engine.task_executor.execute_step = AsyncMock(return_value={"status": "success", "content": "file content"})
@@ -285,7 +285,7 @@ class TestChatMethod:
         engine.router.chat = AsyncMock(return_value=MagicMock(content="Response"))
         engine.tool_parser.has_tool_calls = MagicMock(return_value=True)
         engine.tool_parser.parse = MagicMock(return_value=[
-            ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw='{}')
+            ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw_input_json='{}')
         ])
         engine.task_executor.execute_step = AsyncMock(return_value={"status": "success"})
         engine._save_conversation_to_file = AsyncMock()
@@ -308,7 +308,7 @@ class TestChatMethod:
         engine.router.chat = AsyncMock(return_value=MagicMock(content="Done", content_blocks=[]))
         engine.tool_parser.has_tool_calls = MagicMock(side_effect=[True, False, False])
         engine.tool_parser.parse = MagicMock(side_effect=[
-            [ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw='{}')],
+            [ToolCall(tool="file", action="read", params={"path": "test.txt"}, raw_input_json='{}')],
             []
         ])
         # Simulate tool execution error

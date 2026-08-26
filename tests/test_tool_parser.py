@@ -83,7 +83,7 @@ class TestToolCall:
             tool="file",
             action="read",
             params={"path": "test.txt"},
-            raw='{"tool": "file", "params": {"path": "test.txt"}}'
+            raw_input_json='{"tool": "file", "params": {"path": "test.txt"}}'
         )
         assert call.tool == "file"
         assert call.action == "read"
@@ -91,9 +91,67 @@ class TestToolCall:
 
     def test_tool_call_with_empty_params(self):
         """测试空参数"""
-        call = ToolCall(tool="bash", action="execute", params={}, raw="{}")
+        call = ToolCall(tool="bash", action="execute", params={}, raw_input_json="{}")
         assert call.tool == "bash"
         assert call.params == {}
+
+
+class TestToolCallIdGeneration:
+    """ToolCall.id 兜底哈希生成 + 显式 ID 透传."""
+
+    def test_id_empty_generates_stable_hash(self):
+        """空 id 时, __post_init__ 生成 tc-<sha1[:12]>, 格式稳定."""
+        call = ToolCall(
+            tool="file",
+            action="read",
+            params={"path": "test.txt"},
+        )
+        assert call.id != ""
+        assert call.id.startswith("tc-")
+        assert len(call.id) == len("tc-") + 12   # 12 char hex
+
+    def test_id_hash_stable_for_same_inputs(self):
+        """相同 (tool, params) → 相同 id (幂等, 可重放)."""
+        a = ToolCall(tool="bash", action="execute",
+                     params={"command": "ls /tmp"})
+        b = ToolCall(tool="bash", action="execute",
+                     params={"command": "ls /tmp"})
+        assert a.id == b.id
+
+    def test_id_hash_differs_for_different_inputs(self):
+        """不同 params → 不同 id."""
+        a = ToolCall(tool="bash", action="execute",
+                     params={"command": "ls /tmp"})
+        b = ToolCall(tool="bash", action="execute",
+                     params={"command": "ls /"})
+        assert a.id != b.id
+
+    def test_explicit_id_preserved(self):
+        """调用方显式传 id 时, 不被兜底覆盖."""
+        call = ToolCall(
+            tool="file",
+            action="read",
+            params={"path": "x.txt"},
+            id="toolu_abc123",
+        )
+        assert call.id == "toolu_abc123"
+
+    def test_params_key_order_does_not_affect_id(self):
+        """params 字段顺序不影响 id (sort_keys=True)."""
+        a = ToolCall(tool="bash", action="execute",
+                     params={"command": "ls", "cwd": "/tmp"})
+        b = ToolCall(tool="bash", action="execute",
+                     params={"cwd": "/tmp", "command": "ls"})
+        assert a.id == b.id
+
+    def test_chinese_params_handled(self):
+        """中文参数也能生成稳定 id (utf-8 encoding)."""
+        a = ToolCall(tool="file", action="write",
+                     params={"path": "中文.txt", "content": "你好"})
+        b = ToolCall(tool="file", action="write",
+                     params={"path": "中文.txt", "content": "你好"})
+        assert a.id == b.id
+        assert a.id.startswith("tc-")
 
 
 if __name__ == "__main__":

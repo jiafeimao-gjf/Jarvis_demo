@@ -1,8 +1,9 @@
 # jarvis/core/tool_parser.py
 """工具调用解析器 - 从 LLM 响应中解析工具调用"""
+import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any
 from jarvis.utils.logger import get_logger
 from jarvis.core.tool_registry import tool_registry
@@ -12,12 +13,31 @@ logger = get_logger(__name__)
 
 @dataclass
 class ToolCall:
-    """解析后的工具调用结构"""
+    """解析后的工具调用结构.
+
+    Fields:
+      tool:          工具名 (file / bash / ...)
+      action:        操作 (read / write / execute / ...)
+      params:        工具参数
+      id:            工具调用唯一 ID (Anthropic /v1/messages 返回的 tool_use_id;
+                     正则解析路径下若缺失, __post_init__ 兜底生成稳定哈希
+                     "tc-<sha1[:12]>", 保证 tool_result 始终能匹配)
+      raw_input_json: 原始 JSON 字符串 — 仅供 debug / 持久化, 不要再当 ID 用.
+                     字段名变更: 旧名 `raw` 歧义太大 (有时是 id, 有时是 JSON 全文).
+    """
     tool: str
     action: str
     params: dict
-    raw: str  # 原始 JSON 字符串
-    id: str = ""  # Anthropic/Ollama /v1/messages 返回的 tool_use_id；为空时表示本地正则解析得到的结果，回填走纯文本 user 消息分支
+    id: str = ""
+    raw_input_json: str = ""
+
+    def __post_init__(self):
+        """id 缺失时生成稳定哈希, 保证 tool_result 始终能配对."""
+        if not self.id:
+            seed = json.dumps(self.params, sort_keys=True, ensure_ascii=False)
+            self.id = "tc-" + hashlib.sha1(
+                f"{self.tool}|{seed}".encode("utf-8")
+            ).hexdigest()[:12]
 
 
 class ToolCallParser:
@@ -96,7 +116,8 @@ class ToolCallParser:
             tool=tool_name,
             action=action,
             params=params,
-            raw=raw
+            id="",            # __post_init__ 兜底生成稳定哈希
+            raw_input_json=raw,
         )
 
     def has_tool_calls(self, text: str) -> bool:

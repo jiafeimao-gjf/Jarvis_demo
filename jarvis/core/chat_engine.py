@@ -176,8 +176,8 @@ class ChatEngine:
                     tool=tool_name,
                     action=action,
                     params=params,
-                    raw=block.get("id", json.dumps(block)),  # 优先使用 id
-                    id=block.get("id", ""),
+                    id=block.get("id", ""),              # __post_init__ 兜底生成稳定哈希
+                    raw_input_json=json.dumps(block),    # 原始 block JSON, 仅 debug
                 )
                 tool_calls.append(tool_call)
                 logger.debug(f"[ChatEngine] 从 block 提取工具调用: {tool_name}.{action}")
@@ -328,7 +328,7 @@ class ChatEngine:
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "params": tool_call.params,
-                    "raw": tool_call.raw
+                    "raw_input_json": tool_call.raw_input_json
                 }
                 self.current_conversation.add_message("tool", json.dumps(tool_call_message))
 
@@ -603,8 +603,8 @@ class ChatEngine:
                     tool=tool_name,
                     action=action,
                     params=params,
-                    raw=tu.get("id", json.dumps(tu)),
-                    id=tu.get("id", ""),
+                    id=tu.get("id", ""),                # __post_init__ 兜底
+                    raw_input_json=json.dumps(tu),      # 原始 tool_use 块, 仅 debug
                 )
                 tool_calls.append(tc)
 
@@ -630,7 +630,7 @@ class ChatEngine:
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "params": tool_call.params,
-                    "raw": tool_call.raw,
+                    "raw_input_json": tool_call.raw_input_json,
                 }
                 self.current_conversation.add_message("tool", json.dumps(tool_call_message))
 
@@ -901,8 +901,8 @@ class ChatEngine:
                     tool=tool_name,
                     action=action,
                     params=params,
-                    raw=tu.get("id", json.dumps(tu)),
-                    id=tu.get("id", ""),
+                    id=tu.get("id", ""),                # __post_init__ 兜底
+                    raw_input_json=json.dumps(tu),      # 原始 tool_use 块, 仅 debug
                 )
                 tool_calls.append(tc)
 
@@ -930,7 +930,7 @@ class ChatEngine:
                     "tool": tool_call.tool,
                     "action": tool_call.action,
                     "params": tool_call.params,
-                    "raw": tool_call.raw,
+                    "raw_input_json": tool_call.raw_input_json,
                 }
                 self.current_conversation.add_message("tool", json.dumps(tool_call_message))
 
