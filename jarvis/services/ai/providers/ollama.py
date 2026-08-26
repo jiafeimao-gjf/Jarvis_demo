@@ -28,6 +28,7 @@ class OllamaAdapter(AIClient):
         max_retries: int = 3,
     ):
         super().__init__(model=model, provider="ollama")
+        self.provider_protocol = "anthropic"
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
@@ -116,6 +117,7 @@ class OllamaAdapter(AIClient):
                     done=True,
                     raw=data,
                     content_blocks=content_blocks,
+                    provider_protocol=self.provider_protocol,
                 )
             except httpx.HTTPError as e:
                 logger.error(f"Ollama chat error (attempt {attempt + 1}/{self.max_retries}): {e}")

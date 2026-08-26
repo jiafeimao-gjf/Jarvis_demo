@@ -32,6 +32,10 @@ class AIResponse:
     raw: Optional[dict] = None
     content_blocks: Optional[list] = None  # For tool_use blocks in Anthropic
     thinking: Optional[str] = None  # Model reasoning/thinking content
+    # PR3: 标识 provider 使用的 tool-call 协议, AgentLoopRunner 据此分发 tool_result 格式
+    # "anthropic" — Anthropic /v1/messages 协议 (Ollama 默认走这个, 兼容模式)
+    # "openai"    — OpenAI /v1/chat/completions 协议 (OpenAI / MiniMax)
+    provider_protocol: Optional[str] = None
 
 
 class AIClient(ABC):

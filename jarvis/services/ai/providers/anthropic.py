@@ -23,6 +23,7 @@ class AnthropicAdapter(AIClient):
         timeout: float = 60.0,
     ):
         super().__init__(model=model, provider="anthropic")
+        self.provider_protocol = "anthropic"
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -89,6 +90,7 @@ class AnthropicAdapter(AIClient):
                 ),
                 raw=data,
                 content_blocks=data.get("content", []),
+                provider_protocol=self.provider_protocol,
             )
         except httpx.HTTPError as e:
             # Log response body for debugging

@@ -292,22 +292,90 @@ class AgentLoopRunner:
     ) -> dict:
         """构造 assistant turn — 修复 chat() 漏写的核心 bug.
 
-        返回的 dict 严格遵循 Anthropic /v1/messages 形态:
+        按 provider_protocol 决定输出形态:
+          - anthropic (默认):
             {"role": "assistant", "content": [<thinking>, <text>, <tool_use>, ...]}
-        即使 text 为空也保留 text block (Anthropic 允许 content=[] 但显式 text 更稳).
+          - openai:
+            {
+              "role": "assistant",
+              "content": <text or None>,
+              "tool_calls": [
+                {"id": "...", "type": "function",
+                 "function": {"name": "...", "arguments": "<json str>"}},
+                ...
+              ]
+            }
+            thinking 块在 OpenAI 协议里没有原生位置, 拼到 content 前面加 [思考] 前缀.
         """
+        if self.config.provider_protocol == "openai":
+            return self._build_assistant_turn_openai(content_blocks, text)
+
+        # anthropic 路径
         blocks: list[dict] = []
         if content_blocks:
-            # 把 thinking/text/tool_use 原样保留 (content_blocks 已经是 Anthropic 形态)
             for b in content_blocks:
                 if isinstance(b, dict):
                     blocks.append(b)
         if text and not any(b.get("type") == "text" for b in blocks if isinstance(b, dict)):
             blocks.append({"type": "text", "text": text})
         if not blocks:
-            # 兜底: 完全没有内容时给一个空 text block, 避免 Anthropic 协议报错
             blocks.append({"type": "text", "text": ""})
         return {"role": "assistant", "content": blocks}
+
+    @staticmethod
+    def _build_assistant_turn_openai(
+        content_blocks: Optional[list], text: str
+    ) -> dict:
+        """OpenAI 形态的 assistant turn.
+
+        - text → "content" (str, 可能为 None)
+        - thinking → 拼到 content 前面 (加 [思考] 前缀), OpenAI 没有原生 reasoning 字段
+        - tool_use → "tool_calls" 列表
+        """
+        blocks = content_blocks or []
+        tool_calls: list[dict] = []
+        thinking_parts: list[str] = []
+        # text 优先取已有 text 块, 没有则用传入 text
+        text_content = text or ""
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            btype = b.get("type", "")
+            if btype == "tool_use":
+                try:
+                    args_str = json.dumps(b.get("input", {}) or {}, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    args_str = "{}"
+                tool_calls.append({
+                    "id": b.get("id", ""),
+                    "type": "function",
+                    "function": {
+                        "name": b.get("name", ""),
+                        "arguments": args_str,
+                    },
+                })
+            elif btype == "thinking":
+                thinking_text = b.get("thinking") or b.get("text") or ""
+                if thinking_text:
+                    thinking_parts.append(thinking_text)
+            elif btype == "text":
+                # 用 blocks 里的 text 覆盖入参 text (后者通常是 fallback)
+                if b.get("text"):
+                    text_content = b["text"]
+
+        content_parts: list[str] = []
+        if thinking_parts:
+            content_parts.append("[思考]\n" + "\n".join(thinking_parts))
+        if text_content:
+            content_parts.append(text_content)
+
+        msg: dict = {
+            "role": "assistant",
+            "content": "\n\n".join(content_parts) if content_parts else None,
+        }
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        return msg
 
     def _append_tool_result(
         self, messages: list[dict], tool_call: ToolCall, exec_result: Any

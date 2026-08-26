@@ -115,6 +115,20 @@ class ChatEngine:
             logger.warning(f"[ChatEngine] provider_id={provider_id!r} not found or disabled, using active")
         return store.get_active_instance()
 
+    def _resolve_provider_protocol(self, instance) -> str:
+        """PR3: 根据 instance.type 决定 tool-call 协议.
+
+        - "openai" / "minimax" → "openai" (tool_calls + role=tool)
+        - "ollama" / "anthropic" → "anthropic" (tool_use blocks + user tool_result)
+        - 默认回退到 "anthropic"
+        """
+        if instance is None:
+            return "anthropic"
+        prov_type = (getattr(instance, "type", "") or "").lower()
+        if prov_type in ("openai", "minimax"):
+            return "openai"
+        return "anthropic"
+
     def _build_system_prompt(self, settings: SystemPromptSettings = None) -> str:
         """构建系统提示词 — 从 workspace/prompts/*.md 文件拼接"""
         parts = []
@@ -327,6 +341,10 @@ class ChatEngine:
             }
 
         # 7b. Phase 2+: 调公共 AgentLoopRunner — 修复 chat() 漏 assistant turn 的核心 bug
+        # PR3: 按 instance.type 动态切 provider_protocol (OpenAI / MiniMax 用 openai 协议)
+        self.agent_loop_runner.config.provider_protocol = (
+            self._resolve_provider_protocol(instance)
+        )
         final_result: Optional[AgentLoopResult] = None
         async for event in self.agent_loop_runner.run_iterations(
             messages, self.router,
@@ -591,6 +609,10 @@ class ChatEngine:
         phase1_text = streamed_text
 
         if tool_uses:
+            # PR3: 按 instance.type 动态切 provider_protocol
+            self.agent_loop_runner.config.provider_protocol = (
+                self._resolve_provider_protocol(instance)
+            )
             # Phase 1 的 assistant turn 已经在 content_blocks 中, runner 会复用
             # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
             final_result: Optional[AgentLoopResult] = None
@@ -872,6 +894,10 @@ class ChatEngine:
         phase1_text = streamed_text
 
         if tool_uses:
+            # PR3: 按 instance.type 动态切 provider_protocol
+            self.agent_loop_runner.config.provider_protocol = (
+                self._resolve_provider_protocol(instance)
+            )
             # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
             final_result: Optional[AgentLoopResult] = None
             async for event in self.agent_loop_runner.run_iterations(

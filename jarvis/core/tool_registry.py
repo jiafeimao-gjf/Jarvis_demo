@@ -254,6 +254,38 @@ class ToolRegistry:
             })
         return tools
 
+    def build_openai_tools(self) -> list[dict]:
+        """构建 OpenAI-compatible 工具列表 (用于 /v1/chat/completions).
+
+        区别于 build_anthropic_tools:
+          - 参数定义包在 function.parameters (JSON Schema)
+          - schema 含 "strict": True (OpenAI Structured Outputs 风格)
+        """
+        tools = []
+        for tool in self._tools.values():
+            props = {}
+            required_params = []
+            for pname, p in tool.parameters.items():
+                prop = {"type": p.type, "description": p.description}
+                if p.enum:
+                    prop["enum"] = p.enum
+                props[pname] = prop
+                if p.required:
+                    required_params.append(pname)
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": props,
+                        "required": required_params,
+                    },
+                },
+            })
+        return tools
+
 
 # 全局工具注册表
 tool_registry = ToolRegistry()
