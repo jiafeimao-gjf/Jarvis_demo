@@ -8,12 +8,13 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any
-from jarvis.core.entities import Message, Conversation, Step
+from jarvis.core.entities import Message, Conversation
 from jarvis.core.memory_store import memory_store
 from jarvis.core.task_engine import TaskExecutor
 from jarvis.core.tool_parser import ToolCallParser, ToolCall
 from jarvis.core.tool_result_formatter import ToolResultFormatter
 from jarvis.core.tool_registry import tool_registry
+from jarvis.core.agent_loop import AgentLoopRunner, AgentLoopResult, AgentLoopConfig
 from jarvis.services.ai import AIRouter, AIConfig, ProviderRegistry
 from jarvis.services.ai.providers import OllamaAdapter, OpenAIAdapter, AnthropicAdapter, MiniMaxAdapter
 from jarvis.services.ai.models import Provider
@@ -25,9 +26,6 @@ from jarvis.core.context_manager import ContextManager
 from jarvis.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-# 最大工具调用迭代次数，防止无限循环
-MAX_TOOL_ITERATIONS = 5
 
 
 @dataclass
@@ -60,6 +58,22 @@ class ChatEngine:
         # 工具执行器
         self.task_executor = TaskExecutor(self.work_folder)
         self.tool_parser = ToolCallParser(self.work_folder)
+
+        # Agent Loop Runner — 三处入口 (chat/stream_chat/stream_chat_with_messages) 共用.
+        # PR2 引入: 修 chat() 漏 assistant turn 的核心 bug + 加 hint/dedup/parallel.
+        # max_iterations / provider_protocol 由每次对话根据 Settings 和 instance 动态注入.
+        self.agent_loop_runner = AgentLoopRunner(
+            config=AgentLoopConfig(
+                max_iterations=8,                # PR2 默认 8; PR4 改为从 Settings 读
+                provider_protocol="anthropic",   # PR3 改为按 instance.type 动态判断
+                parallel_tool_exec=True,
+                dedup_tool_calls=True,
+                inject_iteration_hint=True,
+                inject_stop_hint_on_max=True,
+            ),
+            task_executor=self.task_executor,
+            tool_parser=self.tool_parser,
+        )
 
         # 上下文管理器 — 按 token 预算裁剪历史, 注入相关记忆
         # 关联一个 ContextCompressor 实现 per-conversation 自动压缩:
@@ -265,125 +279,146 @@ class ChatEngine:
             f"budget={stats['budget_available']}"
         )
 
-        # 7. 工具调用迭代循环
-        final_response = ""
-        iteration_count = 0
+        # 7. Phase 1: 调 LLM (非流式, 一次)
+        logger.debug("[Chat] Phase 1: 调 LLM...")
+        response = await self.router.chat(
+            messages, model=model, instance=instance, stream=False
+        )
+        response_text = response.content or ""
+        response_thinking = (
+            response.thinking
+            if isinstance(getattr(response, "thinking", ""), str)
+            else ""
+        )
+        content_blocks = response.content_blocks or []
+        tool_uses = AgentLoopRunner._extract_tool_uses(content_blocks, response_text)
 
-        for iteration_count in range(MAX_TOOL_ITERATIONS):
-            logger.debug(f"[Chat] 第 {iteration_count + 1} 次迭代，调用 LLM...")
-            # 调用 LLM (传 instance, 与主对话 ProviderInstance 保持一致)
-            response = await self.router.chat(
-                messages,
-                model=model,
-                instance=instance,
-                stream=False
+        # 7a. 无工具调用 → 直接返回 (修核心 bug 前的旧行为)
+        if not tool_uses:
+            logger.info(
+                f"[Chat] Phase 1 无工具调用 | text_len={len(response_text)} | 直接返回"
             )
+            self.current_conversation.add_message(
+                "assistant", response_text, thinking=response_thinking
+            )
+            # 保存 + 主题生成 与正常路径一致
+            save_result = await self.memory.save_conversation(
+                self.current_conversation.conversation_id,
+                self.current_conversation.user_id,
+                [msg.to_dict() for msg in self.current_conversation.messages],
+                self.current_conversation.context
+            )
+            logger.info(
+                f"[Chat] 对话已保存 | conv_id={self.current_conversation.conversation_id} "
+                f"| success={save_result}"
+            )
+            await self._save_conversation_to_file()
+            # 保存相关记忆（如果是有意义的信息）
+            if len(user_input) > 10 and "记住" in user_input:
+                key = user_input[:50].strip()
+                save_mem_result = await self.memory.save(key, user_input)
+                logger.info(f"[Chat] 保存记忆 | key={key} | success={save_mem_result}")
+            generated_topic = await self._generate_topic_for_first_turn(
+                user_input, model=model, instance=instance
+            )
+            return {
+                "text": self._resolve_image_paths(response_text),
+                "topic": generated_topic or self.current_conversation.topic,
+            }
 
-            response_text = response.content
-            final_response = response_text
+        # 7b. Phase 2+: 调公共 AgentLoopRunner — 修复 chat() 漏 assistant turn 的核心 bug
+        final_result: Optional[AgentLoopResult] = None
+        async for event in self.agent_loop_runner.run_iterations(
+            messages, self.router,
+            model=model, instance=instance,
+            current_text=response_text,
+            current_thinking=response_thinking,
+            current_content_blocks=content_blocks,
+            current_tool_uses=tool_uses,
+        ):
+            etype = event.get("type", "")
 
-            # 检查是否有工具调用（检查 content 或 content_blocks 中的 tool_use）
-            has_tools = self.tool_parser.has_tool_calls(response_text)
-            if response.content_blocks:
-                for block in response.content_blocks:
-                    if block.get("type") == "tool_use":
-                        has_tools = True
-                        logger.debug(f"[Chat] 在 content_blocks 中发现 tool_use block: {block.get('name', 'unknown')}")
-                        break
-
-            logger.info(f"[Chat] LLM 响应 | len={len(response_text)} | has_tool_calls={has_tools}")
-            logger.debug(f"[Chat] LLM 响应内容: {response_text[:200]}...")
-
-            # 检查是否有工具调用
-            if not has_tools:
-                logger.debug("[Chat] 无工具调用，结束迭代")
-                # 没有工具调用，返回响应
-                break
-
-            tool_calls = self.tool_parser.parse(response_text)
-
-            # 如果文本解析失败但有 content_blocks，尝试从 content_blocks 提取
-            if not tool_calls and response.content_blocks:
-                tool_calls = self._extract_tool_calls_from_blocks(response.content_blocks)
-                logger.debug(f"[Chat] 从 content_blocks 提取到 {len(tool_calls)} 个工具调用")
-
-            if not tool_calls:
-                # 解析失败但有工具标记，跳出
-                logger.warning("[Chat] 检测到工具调用但解析失败")
-                break
-
-            logger.info(f"[Chat] 迭代 {iteration_count + 1}: 发现 {len(tool_calls)} 个工具调用")
-            for tc in tool_calls:
-                logger.info(f"[Chat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
-
-            # 7. 顺序执行工具调用
-            for tool_call in tool_calls:
-                step = Step(
-                    tool=tool_call.tool,
-                    params=tool_call.params
+            if etype == "tool_iter":
+                logger.info(
+                    f"[Chat] AgentLoop iter {event['iteration']}/{event['max']}"
                 )
 
-                # 将工具调用作为独立消息记录（role: tool）
+            elif etype == "tool_call":
+                # 持久化: 记录 tool 调用 (与旧实现一致)
                 tool_call_message = {
-                    "tool": tool_call.tool,
-                    "action": tool_call.action,
-                    "params": tool_call.params,
-                    "raw_input_json": tool_call.raw_input_json
+                    "tool": event["tool"],
+                    "action": event["action"],
+                    "params": event["params"],
                 }
-                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
+                self.current_conversation.add_message(
+                    "tool", json.dumps(tool_call_message)
+                )
+                logger.info(
+                    f"[Chat] 工具调用: {event['tool']}.{event['action']} | "
+                    f"params={event['params']}"
+                )
 
-                try:
-                    logger.debug(f"[Chat] 执行工具: {tool_call.tool}.{tool_call.action}")
-                    result = await self.task_executor.execute_step(step)
-                    status = result.get("status") if isinstance(result, dict) else "success"
-                    err_detail = ""
-                    if isinstance(result, dict) and status == "error":
-                        err_detail = result.get("stderr") or result.get("message") or ""
-                        logger.warning(f"[Chat] 工具错误详情: {str(err_detail)[:300]}")
-                    logger.info(f"[Chat] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
-                    if isinstance(result, dict) and 'content' in result:
-                        logger.debug(f"[Chat] 工具结果内容: {str(result['content'])[:100]}...")
-                except Exception as e:
-                    logger.error(f"[Chat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
-                    result = {"status": "error", "message": str(e)}
-
-                # 格式化结果 — Anthropic /v1/messages 要求严格的 tool_result 结构化块
-                # 旧版走纯文本 user 消息会导致 Anthropic / MiniMax 代理抛 2013
-                # 只在缺失 tool_use_id (本地正则解析得到) 的情况下才退回纯文本分支
+            elif etype == "tool_result":
+                # 持久化: 记录 tool_result (与旧实现一致)
                 result_content = ToolResultFormatter.format_plain(
-                    tool=tool_call.tool,
-                    action=tool_call.action,
-                    params=tool_call.params,
-                    result=result,
+                    tool=event["tool"],
+                    action=event["action"],
+                    params=event.get("params", {}),
+                    result=event["result"],
                 )
                 self.current_conversation.add_message("tool_result", result_content)
-                if tool_call.id:
-                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
-                    messages.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_call.id,
-                            "content": result_content,
-                        }],
-                    })
-                else:
-                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
-                    messages.append({"role": "user", "content": result_content})
+                status = (
+                    event["result"].get("status", "success")
+                    if isinstance(event["result"], dict)
+                    else "success"
+                )
+                logger.info(
+                    f"[Chat] 工具 {event['tool']}.{event['action']} 执行完成 | "
+                    f"status={status}"
+                )
 
-            # 检查后续响应是否也有工具调用
-            has_tools = self.tool_parser.has_tool_calls(response_text)
-            if response.content_blocks:
-                for block in response.content_blocks:
-                    if block.get("type") == "tool_use":
-                        has_tools = True
-                        logger.debug(f"[Chat] 后续响应中发现 tool_use block")
-                        break
+            elif etype == "tool_skipped":
+                # dedup: 重复调用, 记录但不执行
+                tool_call_message = {
+                    "tool": event["tool"],
+                    "skipped": True,
+                    "reason": event.get("reason", ""),
+                }
+                self.current_conversation.add_message(
+                    "tool", json.dumps(tool_call_message)
+                )
+                logger.info(
+                    f"[Chat] 工具重复跳过: {event['tool']} | "
+                    f"reason={event.get('reason', '')}"
+                )
 
-        # 8. 添加助手消息（最终响应）
-        thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
-        self.current_conversation.add_message("assistant", final_response, thinking=thinking)
-        logger.info(f"[Chat] 对话完成 | total_messages={len(self.current_conversation.messages)}")
+            elif etype == "result":
+                final_result = event["result"]
+
+        if final_result is None:
+            # 防御性: runner 没产出 result 事件时, 用 Phase 1 响应兜底
+            logger.warning("[Chat] AgentLoopRunner 未返回 result, 兜底使用 Phase 1 响应")
+            final_result = AgentLoopResult(
+                final_text=response_text,
+                final_thinking=response_thinking,
+                iterations_used=1,
+            )
+
+        # 8. 添加助手消息 (最终响应) + 持久化
+        self.current_conversation.add_message(
+            "assistant", final_result.final_text,
+            thinking=final_result.final_thinking,
+        )
+        logger.info(
+            f"[Chat] 对话完成 | iterations={final_result.iterations_used} | "
+            f"max_reached={final_result.max_iterations_reached} | "
+            f"total_messages={len(self.current_conversation.messages)}"
+        )
+
+        if final_result.max_iterations_reached:
+            logger.warning(
+                f"[Chat] 达到最大工具迭代次数 ({self.agent_loop_runner.config.max_iterations})"
+            )
 
         # 9. 保存对话历史到 DB
         save_result = await self.memory.save_conversation(
@@ -403,43 +438,14 @@ class ChatEngine:
             save_mem_result = await self.memory.save(key, user_input)
             logger.info(f"[Chat] 保存记忆 | key={key} | success={save_mem_result}")
 
-        if iteration_count >= MAX_TOOL_ITERATIONS - 1:
-            logger.warning(f"[Chat] 达到最大工具迭代次数 ({MAX_TOOL_ITERATIONS})")
-
-        # 11. 第一轮对话: 自动生成主题 (不会覆盖已有主题)
-        generated_topic = None
-        if not self.current_conversation.topic:
-            # First-turn condition: only user + assistant messages
-            if all(m.role in ("user", "assistant", "tool", "tool_result")
-                   for m in self.current_conversation.messages):
-                # Skip if the first user message was image-only
-                first_user = next(
-                    (m for m in self.current_conversation.messages if m.role == "user"),
-                    None,
-                )
-                if first_user and not first_user.image and first_user.content:
-                    try:
-                        generated_topic = await generate_topic(
-                            self.router,
-                            first_user.content,
-                            model=model,
-                            instance=instance,
-                        )
-                        self.current_conversation.set_topic(generated_topic)
-                        await self.memory.update_conversation_topic(
-                            self.current_conversation.conversation_id,
-                            generated_topic,
-                        )
-                        logger.info(
-                            f"[Chat] 已生成对话主题 | conv_id={self.current_conversation.conversation_id} | "
-                            f"topic={generated_topic!r}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"[Chat] 主题生成失败: {e}")
+        # 12. 第一轮对话: 自动生成主题 (不会覆盖已有主题)
+        generated_topic = await self._generate_topic_for_first_turn(
+            user_input, model=model, instance=instance
+        )
 
         return {
-            "text": self._resolve_image_paths(final_response),
-            "topic": self.current_conversation.topic,
+            "text": self._resolve_image_paths(final_result.final_text),
+            "topic": generated_topic or self.current_conversation.topic,
         }
 
     async def stream_chat(
@@ -579,124 +585,108 @@ class ChatEngine:
             f"耗时={(_t.time()-_t0)*1000:.0f}ms"
         )
 
-        # 6. 检测并执行工具调用（如有）
+        # 6. Phase 2+: 通过 AgentLoopRunner 跑工具循环 (修 chat() 漏 assistant turn 的核心 bug)
         final_response = streamed_text
         thinking = streamed_thinking
-        has_tools = len(tool_uses) > 0
+        phase1_text = streamed_text
 
-        for iteration_count in range(MAX_TOOL_ITERATIONS):
-            if not has_tools:
-                logger.debug("[StreamChat] 无工具调用，结束迭代")
-                break
+        if tool_uses:
+            # Phase 1 的 assistant turn 已经在 content_blocks 中, runner 会复用
+            # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
+            final_result: Optional[AgentLoopResult] = None
+            async for event in self.agent_loop_runner.run_iterations(
+                messages, self.router,
+                model=model, instance=instance,
+                current_text=streamed_text,
+                current_thinking=streamed_thinking,
+                current_content_blocks=content_blocks,
+                current_tool_uses=tool_uses,
+            ):
+                etype = event.get("type", "")
 
-            yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
-
-            tool_calls: list[ToolCall] = []
-            for tu in tool_uses:
-                tool_name = tu.get("name", "")
-                if not tool_name or tool_name not in tool_registry.get_tool_names():
-                    logger.warning(f"[StreamChat] 未知工具: {tool_name}")
-                    continue
-                params = tu.get("input", {})
-                action = params.get("action", "")
-                tc = ToolCall(
-                    tool=tool_name,
-                    action=action,
-                    params=params,
-                    id=tu.get("id", ""),                # __post_init__ 兜底
-                    raw_input_json=json.dumps(tu),      # 原始 tool_use 块, 仅 debug
-                )
-                tool_calls.append(tc)
-
-            if not tool_calls:
-                break
-
-            logger.info(f"[StreamChat] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
-            for tc in tool_calls:
-                logger.info(f"[StreamChat] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
-                yield json.dumps({
-                    "type": "tool_call",
-                    "tool": tc.tool,
-                    "action": tc.action,
-                    "params": tc.params,
-                })
-
-            messages.append({"role": "assistant", "content": content_blocks})
-
-            for tool_call in tool_calls:
-                step = Step(tool=tool_call.tool, params=tool_call.params)
-
-                tool_call_message = {
-                    "tool": tool_call.tool,
-                    "action": tool_call.action,
-                    "params": tool_call.params,
-                    "raw_input_json": tool_call.raw_input_json,
-                }
-                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
-
-                try:
-                    logger.debug(f"[StreamChat] 执行工具: {tool_call.tool}.{tool_call.action}")
-                    result = await self.task_executor.execute_step(step)
-                    status = result.get("status") if isinstance(result, dict) else "success"
-                    logger.info(f"[StreamChat] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
-                except Exception as e:
-                    logger.error(f"[StreamChat] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
-                    result = {"status": "error", "message": str(e)}
-
-                result_content = ToolResultFormatter.format_plain(
-                    tool=tool_call.tool,
-                    action=tool_call.action,
-                    params=tool_call.params,
-                    result=result,
-                )
-                self.current_conversation.add_message("tool_result", result_content)
-                if tool_call.id:
-                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
-                    messages.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_call.id,
-                            "content": result_content,
-                        }],
+                if etype == "tool_iter":
+                    yield json.dumps({
+                        "type": "status",
+                        "content": f"tool_iter_{event['iteration']}",
                     })
-                else:
-                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
-                    messages.append({"role": "user", "content": result_content})
 
-                yield json.dumps({
-                    "type": "tool_result",
-                    "tool": tool_call.tool,
-                    "action": tool_call.action,
-                    "status": result.get("status", "success"),
-                    "result": result,
-                })
+                elif etype == "tool_call":
+                    # SSE 通知前端 + 持久化
+                    yield json.dumps({
+                        "type": "tool_call",
+                        "tool": event["tool"],
+                        "action": event["action"],
+                        "params": event["params"],
+                    })
+                    self.current_conversation.add_message(
+                        "tool",
+                        json.dumps({
+                            "tool": event["tool"],
+                            "action": event["action"],
+                            "params": event["params"],
+                        }),
+                    )
+                    logger.info(
+                        f"[StreamChat] 工具调用: {event['tool']}.{event['action']} "
+                        f"| params={event['params']}"
+                    )
 
-            _t1 = _t.time()
-            logger.debug(f"[StreamChat] 再次调用 LLM (迭代 {iteration_count + 1})...")
-            response = await self.router.chat(messages, model=model, instance=instance, stream=False)
-            response_text = response.content
-            thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
-            final_response = response_text
-            content_blocks = (
-                response.content_blocks
-                if response.content_blocks
-                else [{"type": "text", "text": response_text}]
-            )
-            logger.info(
-                f"[StreamChat] LLM 后续响应 | len={len(response_text)} | "
-                f"耗时={(_t.time()-_t1)*1000:.0f}ms"
-            )
+                elif etype == "tool_skipped":
+                    self.current_conversation.add_message(
+                        "tool",
+                        json.dumps({
+                            "tool": event["tool"],
+                            "skipped": True,
+                            "reason": event.get("reason", ""),
+                        }),
+                    )
 
-            tool_uses = []
-            has_tools = self.tool_parser.has_tool_calls(response_text)
-            if response.content_blocks:
-                for block in response.content_blocks:
-                    if block.get("type") == "tool_use":
-                        has_tools = True
-                        tool_uses.append(block)
-                        logger.debug(f"[StreamChat] 后续响应中发现 tool_use block")
-                        break
+                elif etype == "tool_result":
+                    result = event["result"]
+                    status = (
+                        result.get("status", "success")
+                        if isinstance(result, dict)
+                        else "success"
+                    )
+                    result_content = ToolResultFormatter.format_plain(
+                        tool=event["tool"],
+                        action=event["action"],
+                        params=event.get("params", {}),
+                        result=result,
+                    )
+                    self.current_conversation.add_message("tool_result", result_content)
+                    logger.info(
+                        f"[StreamChat] 工具 {event['tool']}.{event['action']} "
+                        f"执行完成 | status={status}"
+                    )
+                    yield json.dumps({
+                        "type": "tool_result",
+                        "tool": event["tool"],
+                        "action": event["action"],
+                        "status": status,
+                        "result": result,
+                    })
+
+                elif etype == "result":
+                    final_result = event["result"]
+
+            if final_result is None:
+                logger.warning(
+                    "[StreamChat] AgentLoopRunner 未返回 result, 兜底使用 Phase 1 响应"
+                )
+                final_result = AgentLoopResult(
+                    final_text=streamed_text,
+                    final_thinking=streamed_thinking,
+                    iterations_used=1,
+                )
+
+            final_response = final_result.final_text
+            thinking = final_result.final_thinking
+            if final_result.max_iterations_reached:
+                logger.warning(
+                    f"[StreamChat] 达到最大工具迭代次数 "
+                    f"({self.agent_loop_runner.config.max_iterations})"
+                )
 
         # 7. 解析响应中的本地图片路径 → base64
         final_response = self._resolve_image_paths(final_response)
@@ -723,7 +713,7 @@ class ChatEngine:
             yield json.dumps({"type": "thinking_end", "content": ""})
 
         # 11. 流式返回后续响应（仅当工具执行产生了新文本时）
-        if final_response != streamed_text:
+        if final_response != phase1_text:
             logger.info(f"[StreamChat] 流式返回后续响应 | len={len(final_response)}")
             for chunk in self._chunk_text(final_response, 8):
                 yield chunk
@@ -876,132 +866,106 @@ class ChatEngine:
             f"耗时={(_t.time()-_t0)*1000:.0f}ms"
         )
 
-        # 6. 检测并执行工具调用（如有）
+        # 6. Phase 2+: 通过 AgentLoopRunner 跑工具循环 (修 chat() 漏 assistant turn 的核心 bug)
         final_response = streamed_text
         thinking = streamed_thinking
-        has_tools = len(tool_uses) > 0
+        phase1_text = streamed_text
 
-        for iteration_count in range(MAX_TOOL_ITERATIONS):
-            if not has_tools:
-                logger.debug("[StreamChatWithMsgs] 无工具调用，结束迭代")
-                break
+        if tool_uses:
+            # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
+            final_result: Optional[AgentLoopResult] = None
+            async for event in self.agent_loop_runner.run_iterations(
+                messages, self.router,
+                model=model, instance=instance,
+                current_text=streamed_text,
+                current_thinking=streamed_thinking,
+                current_content_blocks=content_blocks,
+                current_tool_uses=tool_uses,
+            ):
+                etype = event.get("type", "")
 
-            yield json.dumps({"type": "status", "content": f"tool_iter_{iteration_count + 1}"})
-
-            # Convert tool_uses dicts to ToolCall objects
-            tool_calls: list[ToolCall] = []
-            for tu in tool_uses:
-                tool_name = tu.get("name", "")
-                if not tool_name or tool_name not in tool_registry.get_tool_names():
-                    logger.warning(f"[StreamChatWithMsgs] 未知工具: {tool_name}")
-                    continue
-                params = tu.get("input", {})
-                action = params.get("action", "")
-                tc = ToolCall(
-                    tool=tool_name,
-                    action=action,
-                    params=params,
-                    id=tu.get("id", ""),                # __post_init__ 兜底
-                    raw_input_json=json.dumps(tu),      # 原始 tool_use 块, 仅 debug
-                )
-                tool_calls.append(tc)
-
-            if not tool_calls:
-                break
-
-            logger.info(f"[StreamChatWithMsgs] 第 {iteration_count + 1} 次迭代: 发现 {len(tool_calls)} 个工具调用")
-            for tc in tool_calls:
-                logger.info(f"[StreamChatWithMsgs] 工具调用: {tc.tool}.{tc.action} | params={tc.params}")
-                yield json.dumps({
-                    "type": "tool_call",
-                    "tool": tc.tool,
-                    "action": tc.action,
-                    "params": tc.params,
-                })
-
-            # Add assistant response (with tool_use blocks) to message history
-            messages.append({"role": "assistant", "content": content_blocks})
-
-            # Execute tools
-            for tool_call in tool_calls:
-                step = Step(tool=tool_call.tool, params=tool_call.params)
-
-                tool_call_message = {
-                    "tool": tool_call.tool,
-                    "action": tool_call.action,
-                    "params": tool_call.params,
-                    "raw_input_json": tool_call.raw_input_json,
-                }
-                self.current_conversation.add_message("tool", json.dumps(tool_call_message))
-
-                try:
-                    logger.debug(f"[StreamChatWithMsgs] 执行工具: {tool_call.tool}.{tool_call.action}")
-                    result = await self.task_executor.execute_step(step)
-                    status = result.get("status") if isinstance(result, dict) else "success"
-                    logger.info(f"[StreamChatWithMsgs] 工具 {tool_call.tool}.{tool_call.action} 执行完成 | status={status}")
-                except Exception as e:
-                    logger.error(f"[StreamChatWithMsgs] 工具执行错误: {tool_call.tool}.{tool_call.action} | error={e}")
-                    result = {"status": "error", "message": str(e)}
-
-                result_content = ToolResultFormatter.format_plain(
-                    tool=tool_call.tool,
-                    action=tool_call.action,
-                    params=tool_call.params,
-                    result=result,
-                )
-                self.current_conversation.add_message("tool_result", result_content)
-                if tool_call.id:
-                    # Anthropic/Ollama /v1/messages — 必须用 tool_result 块结构化引用 tool_use_id
-                    messages.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_call.id,
-                            "content": result_content,
-                        }],
+                if etype == "tool_iter":
+                    yield json.dumps({
+                        "type": "status",
+                        "content": f"tool_iter_{event['iteration']}",
                     })
-                else:
-                    # 本地 ToolCallParser.parse() 路径 — 没有 tool_use_id, 退回纯文本 user 消息
-                    messages.append({"role": "user", "content": result_content})
 
-                yield json.dumps({
-                    "type": "tool_result",
-                    "tool": tool_call.tool,
-                    "action": tool_call.action,
-                    "status": result.get("status", "success"),
-                    "result": result,
-                })
+                elif etype == "tool_call":
+                    yield json.dumps({
+                        "type": "tool_call",
+                        "tool": event["tool"],
+                        "action": event["action"],
+                        "params": event["params"],
+                    })
+                    self.current_conversation.add_message(
+                        "tool",
+                        json.dumps({
+                            "tool": event["tool"],
+                            "action": event["action"],
+                            "params": event["params"],
+                        }),
+                    )
+                    logger.info(
+                        f"[StreamChatWithMsgs] 工具调用: {event['tool']}.{event['action']} "
+                        f"| params={event['params']}"
+                    )
 
-            # 再次调用 LLM 获取响应（后续迭代仍用非流式，因为前面已有工具进度反馈）
-            _t1 = _t.time()
-            logger.debug(f"[StreamChatWithMsgs] 再次调用 LLM (迭代 {iteration_count + 1})...")
-            response = await self.router.chat(messages, model=model, instance=instance, stream=False)
-            response_text = response.content
-            thinking = response.thinking if isinstance(getattr(response, 'thinking', ''), str) else ""
-            final_response = response_text
-            content_blocks = (
-                response.content_blocks
-                if response.content_blocks
-                else [{"type": "text", "text": response_text}]
-            )
-            logger.info(
-                f"[StreamChatWithMsgs] LLM 后续响应 | len={len(response_text)} | "
-                f"耗时={(_t.time()-_t1)*1000:.0f}ms"
-            )
+                elif etype == "tool_skipped":
+                    self.current_conversation.add_message(
+                        "tool",
+                        json.dumps({
+                            "tool": event["tool"],
+                            "skipped": True,
+                            "reason": event.get("reason", ""),
+                        }),
+                    )
 
-            # 检查后续响应是否也有工具调用
-            tool_uses = []
-            has_tools = self.tool_parser.has_tool_calls(response_text)
-            if response.content_blocks:
-                for block in response.content_blocks:
-                    if block.get("type") == "tool_use":
-                        has_tools = True
-                        tool_uses.append(block)
-                        logger.debug(
-                            f"[StreamChatWithMsgs] 后续响应中发现 tool_use block: "
-                            f"{block.get('name', 'unknown')}"
-                        )
-                        break
+                elif etype == "tool_result":
+                    result = event["result"]
+                    status = (
+                        result.get("status", "success")
+                        if isinstance(result, dict)
+                        else "success"
+                    )
+                    result_content = ToolResultFormatter.format_plain(
+                        tool=event["tool"],
+                        action=event["action"],
+                        params=event.get("params", {}),
+                        result=result,
+                    )
+                    self.current_conversation.add_message("tool_result", result_content)
+                    logger.info(
+                        f"[StreamChatWithMsgs] 工具 {event['tool']}.{event['action']} "
+                        f"执行完成 | status={status}"
+                    )
+                    yield json.dumps({
+                        "type": "tool_result",
+                        "tool": event["tool"],
+                        "action": event["action"],
+                        "status": status,
+                        "result": result,
+                    })
+
+                elif etype == "result":
+                    final_result = event["result"]
+
+            if final_result is None:
+                logger.warning(
+                    "[StreamChatWithMsgs] AgentLoopRunner 未返回 result, 兜底使用 Phase 1 响应"
+                )
+                final_result = AgentLoopResult(
+                    final_text=streamed_text,
+                    final_thinking=streamed_thinking,
+                    iterations_used=1,
+                )
+
+            final_response = final_result.final_text
+            thinking = final_result.final_thinking
+            if final_result.max_iterations_reached:
+                logger.warning(
+                    f"[StreamChatWithMsgs] 达到最大工具迭代次数 "
+                    f"({self.agent_loop_runner.config.max_iterations})"
+                )
 
         # 7. 解析响应中的本地图片路径 → base64
         final_response = self._resolve_image_paths(final_response)
@@ -1028,7 +992,7 @@ class ChatEngine:
             yield json.dumps({"type": "thinking_end", "content": ""})
 
         # 11. 流式返回后续响应（仅当工具执行产生了新文本时）
-        if final_response != streamed_text:
+        if final_response != phase1_text:
             logger.info(f"[StreamChatWithMsgs] 流式返回后续响应 | len={len(final_response)}")
             for chunk in self._chunk_text(final_response, 8):
                 yield chunk
@@ -1073,6 +1037,46 @@ class ChatEngine:
             yield json.dumps({"type": "topic_update", "topic": topic})
         except Exception as e:
             logger.warning(f"[Chat] 主题生成失败: {e}")
+
+    async def _generate_topic_for_first_turn(
+        self,
+        user_input: str,
+        model: Optional[str] = None,
+        instance=None,
+    ) -> Optional[str]:
+        """首轮对话的主题生成 — chat() 的两条分支共用.
+
+        Returns 生成的主题; 已存在 / 跳过 (纯图片 / 失败) 时返回 None.
+        副作用: 写 self.current_conversation.topic + 持久化到 DB.
+        """
+        if self.current_conversation.topic:
+            return None
+        if not all(m.role in ("user", "assistant", "tool", "tool_result")
+                   for m in self.current_conversation.messages):
+            return None
+        first_user = next(
+            (m for m in self.current_conversation.messages if m.role == "user"),
+            None,
+        )
+        if not first_user or first_user.image or not first_user.content:
+            return None
+        try:
+            topic = await generate_topic(
+                self.router, first_user.content,
+                model=model, instance=instance,
+            )
+            self.current_conversation.set_topic(topic)
+            await self.memory.update_conversation_topic(
+                self.current_conversation.conversation_id, topic
+            )
+            logger.info(
+                f"[Chat] 已生成对话主题 | conv_id={self.current_conversation.conversation_id} "
+                f"| topic={topic!r}"
+            )
+            return topic
+        except Exception as e:
+            logger.warning(f"[Chat] 主题生成失败: {e}")
+            return None
 
     @staticmethod
     def _chunk_text(text: str, size: int = 8):
