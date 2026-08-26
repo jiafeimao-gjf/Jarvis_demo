@@ -153,11 +153,28 @@ export function useApi() {
             } else if (currentEvent === 'tool') {
               // tool 事件: data 已经是 JSON object, 直接传给 onStatus
               onStatus?.(data)
+            } else if (currentEvent === 'done') {
+              // PR4: done 事件带 data.content (后端权威完整响应) + conversation_id
+              // 透传给 onStatus, 让 ChatWindow 做 reconcile (防 token 丢包) + 同步 conv_id
+              onStatus?.({
+                type: 'done',
+                content: (data && data.content) || '',
+                conversation_id: (data && data.conversation_id) || null,
+              })
+              onDone?.()                         // 显式触发, 不依赖 stream 关闭 fallback
+            } else if (currentEvent === 'error') {
+              // PR4: 修复 — 之前 error 事件被静默丢弃, 用户看不到具体错误
+              onStatus?.({
+                type: 'error',
+                content: (data && (data.content || data.message)) || 'Unknown stream error',
+              })
             }
           }
         }
       }
       // Stream ended normally — ensure onDone is called even if server didn't send done event
+      // (P1 修改 2: 不再依赖此 fallback — done SSE 事件已显式触发 onDone,
+      //  这里只兜底网络异常 / 后端忘了发 done 的情况)
       onDone?.()
     } catch (e) {
       error.value = (e as Error).message

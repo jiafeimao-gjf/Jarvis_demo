@@ -19,13 +19,25 @@ const pcmPlayer = usePCMPlayer()
 const inputValue = ref('')
 const isLoading = ref(false)
 let abortController: AbortController | null = null
-const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done'
+const thinkingStatus = ref('thinking') // 'thinking' | 'typing' | 'done' | 'error'
 const currentResponse = ref('')
 const currentThinking = ref('')
 const showThinking = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const showScrollBtn = ref(false)
 const isAtBottom = ref(true)
+
+// PR4 (frontend-agent-stream.md 修改 3): tool_skipped 1.5s 灰条提示
+const toolSkippedStatus = ref<string | null>(null)
+let toolSkippedTimer: number | null = null
+
+function flashToolSkipped(tool: string) {
+  toolSkippedStatus.value = `已跳过重复: ${tool}`
+  if (toolSkippedTimer) clearTimeout(toolSkippedTimer)
+  toolSkippedTimer = window.setTimeout(() => {
+    toolSkippedStatus.value = null
+  }, 1500)
+}
 
 // v3: subagent session 抽屉
 const activeSubSessionId = ref<string | null>(null)
@@ -434,6 +446,34 @@ async function sendNormalMessage(text: string) {
               || result.stderr || JSON.stringify(result)
             const prefix = resultStatus === 'success' ? '[工具结果]' : '[工具错误]'
             chatStore.addMessage('tool_result', `${prefix} ${tool}.${action}: ${detail}`)
+          } else if (status.type === 'tool_skipped') {
+            // PR4 (frontend-agent-stream.md 修改 3): dedup 跳过的重复调用 — 1.5s 灰条
+            const tool = (status.tool as string) || ''
+            flashToolSkipped(tool)
+          } else if (status.type === 'done') {
+            // PR4 (修改 2): reconcile — 后端 done.content 是权威完整响应,
+            // 与本地累积的 token 比较, 取最长 (防 token 丢包)
+            const doneContent = status.content as string
+            if (
+              typeof doneContent === 'string'
+              && doneContent.length > currentResponse.value.length
+            ) {
+              currentResponse.value = doneContent
+              if (chatStore.messages[msgIndex]) {
+                chatStore.messages[msgIndex].content = doneContent
+              }
+            }
+            // conversation_id 由 ChatRequest 隐式同步 (后端用 request.conversation_id
+            // 或新建; 这里不主动覆盖 chatStore.currentConversationId, 避免覆盖已选中的)
+          } else if (status.type === 'error') {
+            // PR4 (修改 1): 后端 stream 错误 — 替换占位 assistant 消息为具体错误
+            const errContent = (status.content as string) || 'Unknown error'
+            if (chatStore.messages[msgIndex]) {
+              chatStore.messages[msgIndex].content = `⚠️ 后端错误: ${errContent}`
+            }
+            isLoading.value = false
+            thinkingStatus.value = 'error'
+            // 不 throw — 让正常 onDone / 流关闭逻辑走完, UI 不会卡在 loading
           }
         }
       },
@@ -718,6 +758,14 @@ onMounted(() => {
           @keydown="handleKeydown"
           @paste="handlePaste"
         ></textarea>
+      </div>
+
+      <!-- PR4 (frontend-agent-stream.md 修改 3): tool_skipped 1.5s 灰条提示 -->
+      <div
+        v-if="toolSkippedStatus"
+        class="text-xs text-muted-foreground px-3 py-1.5 bg-secondary/40 rounded mx-auto my-1 transition-opacity"
+      >
+        ⚙ {{ toolSkippedStatus }}
       </div>
     </div>
 
