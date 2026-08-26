@@ -43,12 +43,15 @@ class TestFactory:
         assert agent.role == SubagentRole.GENERAL
 
     def test_config_overrides_applied(self):
+        # PR4: max_iterations 已从 SubagentConfig 移到 BaseSubagent 实例属性,
+        #   不再是 config_overrides 的合法 key. 改用 temperature 验证 overrides 路径.
         agent = create_subagent(
             SubagentRole.RESEARCHER,
             MagicMock(),
-            config_overrides={"max_iterations": 7, "temperature": 0.9},
+            max_iterations=7,                          # 新路径: BaseSubagent.__init__
+            config_overrides={"temperature": 0.9},     # 旧路径: SubagentConfig 字段
         )
-        assert agent.config.max_iterations == 7
+        assert agent.max_iterations == 7
         assert agent.config.temperature == 0.9
 
 

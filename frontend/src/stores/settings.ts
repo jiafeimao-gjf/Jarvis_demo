@@ -18,6 +18,7 @@ export interface Settings {
   memory_prompt: string
   tools_prompt: string
   tts_enabled: boolean  // 全局 TTS 开关: 关闭后聊天不注入 TTS, 单条 � 按钮也禁用
+  tool_loop_max_iterations: number  // PR4: 工具循环最大迭代次数 (1-20), 主对话 + subagent 同步
   hardware: {
     camera_device_id: number
     camera_width: number
@@ -43,6 +44,7 @@ const DEFAULT_SETTINGS: Settings = {
   memory_prompt: '',
   tools_prompt: '',
   tts_enabled: true,
+  tool_loop_max_iterations: 8,   // PR4: 与 AgentLoopConfig 默认一致
   hardware: {
     camera_device_id: 0,
     camera_width: 1280,

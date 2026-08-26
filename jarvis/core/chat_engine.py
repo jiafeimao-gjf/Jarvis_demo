@@ -183,6 +183,28 @@ class ChatEngine:
             logger.warning(f"Failed to load prompt settings: {e}")
             return SystemPromptSettings()
 
+    async def _apply_runtime_settings(self) -> None:
+        """PR4: 从 Settings 读 tool_loop_max_iterations, 注入 runner + subagent.
+
+        调用时机: chat / stream_chat / stream_chat_with_messages 开头, 用户改了 Settings
+        后下次对话立刻生效.
+        """
+        try:
+            all_settings = await memory_store.get_all_settings()
+            v = all_settings.get("tool_loop_max_iterations")
+            if v is None:
+                return  # 用 runner 默认值 8
+            n = int(v)
+            # 安全夹紧 (Settings UI 限制 1-20, 后端再保一道)
+            n = max(1, min(20, n))
+            self.agent_loop_runner.config.max_iterations = n
+            self.subagent_orchestrator.max_iterations = n
+            logger.debug(
+                f"[ChatEngine] max_iterations 从 Settings 注入: {n}"
+            )
+        except Exception as e:
+            logger.warning(f"[ChatEngine] 读 tool_loop_max_iterations 失败: {e}")
+
     def _extract_tool_calls_from_blocks(self, content_blocks: list) -> list:
         """从 Anthropic content_blocks 中提取工具调用"""
         tool_calls = []
@@ -249,6 +271,9 @@ class ChatEngine:
         instance = self._resolve_instance(provider_id)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
+
+        # PR4: 从 Settings 注入 max_iterations (主对话 + subagent 同步)
+        await self._apply_runtime_settings()
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -503,6 +528,9 @@ class ChatEngine:
         instance = self._resolve_instance(provider_id)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
+
+        # PR4: 从 Settings 注入 max_iterations (主对话 + subagent 同步)
+        await self._apply_runtime_settings()
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)
@@ -792,6 +820,9 @@ class ChatEngine:
         instance = self._resolve_instance(provider_id)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
+
+        # PR4: 从 Settings 注入 max_iterations (主对话 + subagent 同步)
+        await self._apply_runtime_settings()
 
         # 2. 添加用户消息
         self.current_conversation.add_message("user", user_input)

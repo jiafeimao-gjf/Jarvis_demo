@@ -202,6 +202,17 @@ function showMessage(msg: string, _type: 'success' | 'error') {
   setTimeout(() => { message.value = '' }, 3000)
 }
 
+// PR4: 工具循环上限变更 — 夹紧 1-20, 立刻同步到 backend DB
+async function onMaxIterChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  let n = parseInt(target.value, 10)
+  if (isNaN(n)) n = 8
+  n = Math.max(1, Math.min(20, n))
+  target.value = String(n)
+  await settingsStore.updateSetting('tool_loop_max_iterations', n)
+  showMessage(`工具循环上限已更新为 ${n} 轮 (下次对话生效)`, 'success')
+}
+
 async function loadOllamaModels() {
   isLoadingModels.value = true
   try {
@@ -465,27 +476,46 @@ async function loadOllamaModels() {
 
         <!-- 声音 -->
         <section v-show="activeSection === 'voice'" class="bg-secondary rounded-lg p-6 max-w-4xl">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
             <h2 class="text-lg font-semibold">声音克隆 (F5-TTS)</h2>
-            <label class="flex items-center gap-2 cursor-pointer" :title="settingsStore.settings.tts_enabled ? '点击关闭全局 TTS (聊天不再朗读, 单条喇叭也禁用)' : '点击启用全局 TTS'">
-              <span class="text-xs text-muted-foreground">全局 TTS</span>
-              <span
-                class="w-9 h-5 rounded-full flex-shrink-0 transition-colors"
-                :class="settingsStore.settings.tts_enabled ? 'bg-green-500' : 'bg-gray-600'"
-                @click="settingsStore.updateSetting('tts_enabled', !settingsStore.settings.tts_enabled)"
-              >
-                <span
-                  class="block w-3.5 h-3.5 rounded-full bg-white transform transition-transform mt-[3px]"
-                  :class="settingsStore.settings.tts_enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'"
+            <div class="flex items-center gap-4 flex-wrap">
+              <!-- PR4: 工具循环最大迭代次数 (放在 TTS 开关旁边, 同属"对话行为") -->
+              <label class="flex items-center gap-2" title="主对话与 subagent 共享, 1-20">
+                <span class="text-xs text-muted-foreground whitespace-nowrap">工具循环上限</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  step="1"
+                  class="w-16 bg-background border border-border rounded px-2 py-1 text-sm text-center"
+                  :value="settingsStore.settings.tool_loop_max_iterations"
+                  @change="onMaxIterChange($event)"
                 />
-              </span>
-              <span class="text-xs" :class="settingsStore.settings.tts_enabled ? 'text-green-400' : 'text-gray-500'">
-                {{ settingsStore.settings.tts_enabled ? '开' : '关' }}
-              </span>
-            </label>
+                <span class="text-xs text-muted-foreground">轮</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer" :title="settingsStore.settings.tts_enabled ? '点击关闭全局 TTS (聊天不再朗读, 单条喇叭也禁用)' : '点击启用全局 TTS'">
+                <span class="text-xs text-muted-foreground">全局 TTS</span>
+                <span
+                  class="w-9 h-5 rounded-full flex-shrink-0 transition-colors"
+                  :class="settingsStore.settings.tts_enabled ? 'bg-green-500' : 'bg-gray-600'"
+                  @click="settingsStore.updateSetting('tts_enabled', !settingsStore.settings.tts_enabled)"
+                >
+                  <span
+                    class="block w-3.5 h-3.5 rounded-full bg-white transform transition-transform mt-[3px]"
+                    :class="settingsStore.settings.tts_enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'"
+                  />
+                </span>
+                <span class="text-xs" :class="settingsStore.settings.tts_enabled ? 'text-green-400' : 'text-gray-500'">
+                  {{ settingsStore.settings.tts_enabled ? '开' : '关' }}
+                </span>
+              </label>
+            </div>
           </div>
           <p v-if="!settingsStore.settings.tts_enabled" class="text-xs text-muted-foreground mb-3 px-2 py-1.5 bg-yellow-500/10 text-yellow-400 rounded">
             ⚠️ TTS 已关闭 — 聊天回复不再朗读, 单条消息的 🔈 喇叭按钮也已禁用 (声音克隆配置仍可调整)
+          </p>
+          <p class="text-xs text-muted-foreground mb-3">
+            💡 <strong>工具循环上限</strong>: 单次对话中, LLM 最多连续调多少次工具 (包含 subagent 内部循环). 调高可处理更复杂的多步任务, 调低可加快响应.
           </p>
           <VoiceClonePanel />
         </section>

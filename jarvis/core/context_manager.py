@@ -271,24 +271,51 @@ class ContextManager:
     # 上下文的前提下回放 — 必须从 history 中剥离, 否则 LLM 代理会 4xx.
     HISTORY_ALLOWED_ROLES = {"system", "user", "assistant"}
 
+    # PR4: 不同 provider 对 history 的容错策略不同
+    # - STRICT: 严格剥离所有非 {system,user,assistant} role + 空 content
+    #          (Anthropic / MiniMax 严格模式, 错传 tool_result 会 4xx)
+    # - LENIENT: 保留 user role 的 tool_result blocks (结构化)
+    #          (OpenAI 兼容, 因为后续 agent_loop 会用 provider_protocol 决定 tool_result 形态,
+    #           但若 user msg.content 是 list 含 tool_result 块, OpenAI 会拒绝;
+    #           默认仍走 STRICT, 真正结构化 tool_result 由 AgentLoopRunner 在 Phase 2 注入)
+    HISTORY_REPLAY_POLICY_DEFAULT = "strict"
+
     @classmethod
     def _sanitize_history(cls, history: list[dict]) -> tuple[list[dict], int]:
-        """剔除 history 里不能回放给 LLM 的角色 (tool / tool_result 等).
+        """PR4 兼容入口 — 等价于 policy=STRICT."""
+        return cls._normalize_history(history, policy="strict")
 
-        同时规整: 非 dict 项、缺 content 的项、空 content 项一并丢弃.
+    @classmethod
+    def _normalize_history(
+        cls, history: list[dict], policy: Optional[str] = None
+    ) -> tuple[list[dict], int]:
+        """PR4: 按 policy 规整 history.
+
+        policy:
+          - "strict"   (默认): 仅保留 {system, user, assistant}; 跳过空 content;
+                             跳过非 dict 项
+          - "lenient": 保留所有 role; 仅跳过非 dict / 完全空字符串 content;
+                       让 caller 自行决定能否回放
         """
         cleaned: list[dict] = []
         dropped = 0
+        use_strict = (policy or cls.HISTORY_REPLAY_POLICY_DEFAULT).lower() == "strict"
         for m in history or []:
             if not isinstance(m, dict):
                 dropped += 1
                 continue
             role = m.get("role")
-            if role not in cls.HISTORY_ALLOWED_ROLES:
+            if use_strict and role not in cls.HISTORY_ALLOWED_ROLES:
                 dropped += 1
                 continue
             content = m.get("content")
-            if content is None or (isinstance(content, str) and not content.strip()):
+            # STRICT: 空字符串 / None 都不要
+            # LENIENT: 保留 list 形态 (含 tool_result 块), 只跳过完全空字符串
+            if content is None:
+                if use_strict:
+                    dropped += 1
+                    continue
+            elif isinstance(content, str) and not content.strip():
                 dropped += 1
                 continue
             cleaned.append(m)

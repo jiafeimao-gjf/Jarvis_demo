@@ -59,12 +59,17 @@ class DispatchMode(str, Enum):
 
 @dataclass
 class SubagentConfig:
-    """子代理的运行时配置."""
+    """子代理的运行时配置.
+
+    PR4: 删除 max_iterations 字段 — 子代理的工具循环上限跟随主对话
+    (ChatEngine.agent_loop_runner.config.max_iterations), 由 SubagentOrchestrator
+    注入 BaseSubagent, 不再独立配置. 这样用户在 Settings 改一次, 主对话
+    和所有 subagent 同步生效.
+    """
     role: SubagentRole
     system_prompt: str
     allowed_tools: list[str] = field(default_factory=list)  # 空 = 全部
     model: Optional[str] = None         # None = 跟随主代理
-    max_iterations: int = 3             # 单个子代理内部 tool 循环上限
     max_tokens_output: int = 1024
     temperature: float = 0.4
     timeout: float = 120.0              # 总超时 (秒)
@@ -126,6 +131,7 @@ class BaseSubagent(ABC):
         main_model: Optional[str] = None,
         instance: Optional[Any] = None,
         task_executor: Optional[Any] = None,
+        max_iterations: Optional[int] = None,
     ):
         self.router = router
         self.config = config or self.default_config()
@@ -140,6 +146,9 @@ class BaseSubagent(ABC):
         # 工具执行器 — 注入后 run() 才能进入工具循环 (file/bash/...).
         # 为 None 时退化为单轮 LLM 调用 (单元测试 / 无工具场景).
         self.task_executor = task_executor
+        # PR4: 工具循环上限跟随主对话 (ChatEngine.agent_loop_runner.config.max_iterations)
+        # 8 是 AgentLoopConfig 默认; 未注入时 fallback.
+        self.max_iterations = max_iterations if max_iterations is not None else 8
 
     @classmethod
     def default_config(cls) -> SubagentConfig:
@@ -255,7 +264,7 @@ class BaseSubagent(ABC):
             from jarvis.core.entities import Step
             from jarvis.core.tool_result_formatter import ToolResultFormatter
 
-            for iteration in range(self.config.max_iterations):
+            for iteration in range(self.max_iterations):
                 total_iterations += 1
                 resp = await self.router.chat(
                     messages,
@@ -539,8 +548,9 @@ def create_subagent(
     main_model: Optional[str] = None,
     instance: Optional[Any] = None,
     task_executor: Optional[Any] = None,
+    max_iterations: Optional[int] = None,
 ) -> BaseSubagent:
-    """工厂方法: 按角色构造子代理 (v3 支持 parent / store / main_model / instance / task_executor)."""
+    """工厂方法: 按角色构造子代理 (PR4 加 max_iterations 跟随主对话)."""
     if isinstance(role, str):
         try:
             role = SubagentRole(role)
@@ -558,6 +568,7 @@ def create_subagent(
         main_model=main_model,
         instance=instance,
         task_executor=task_executor,
+        max_iterations=max_iterations,
     )
 
     if config_overrides:
@@ -632,6 +643,7 @@ class SubagentOrchestrator:
         model: Optional[str] = None,
         instance: Optional[Any] = None,
         task_executor: Optional[Any] = None,
+        max_iterations: Optional[int] = None,
     ):
         self.router = router
         self.work_folder = work_folder
@@ -644,6 +656,9 @@ class SubagentOrchestrator:
         self.instance = instance
         # 工具执行器 — 透传给每个 subagent, 使其 run() 可进入工具循环.
         self.task_executor = task_executor
+        # PR4: 子代理的 tool 循环上限 = 主对话上限 (由 ChatEngine.agent_loop_runner
+        # 注入). None 时 BaseSubagent 内部 fallback 8.
+        self.max_iterations = max_iterations
         # 默认 reducer: 把多个结果拼起来, 让 LLM 二次综合
         self.reducer = reducer or self._default_reducer
 
@@ -677,6 +692,7 @@ class SubagentOrchestrator:
             main_model=self.model,
             instance=self.instance,
             task_executor=self.task_executor,
+            max_iterations=self.max_iterations,
         )
         logger.info(
             f"[Orchestrator] dispatching {agent.role.value}: {task[:80]!r}"
