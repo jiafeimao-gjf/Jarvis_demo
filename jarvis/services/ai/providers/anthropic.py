@@ -54,10 +54,10 @@ class AnthropicAdapter(AIClient):
         return await self._messages(messages, temperature, max_tokens)
 
     async def chat(self, messages, stream=True, temperature=0.7,
-                   max_tokens=2048) -> AIResponse:
-        return await self._messages(messages, temperature, max_tokens)
+                   max_tokens=2048, *, call_id=None) -> AIResponse:
+        return await self._messages(messages, temperature, max_tokens, call_id=call_id)
 
-    async def _messages(self, messages, temperature, max_tokens) -> AIResponse:
+    async def _messages(self, messages, temperature, max_tokens, *, call_id=None) -> AIResponse:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -67,12 +67,18 @@ class AnthropicAdapter(AIClient):
         tools = tool_registry.build_anthropic_tools()
         if tools:
             payload["tools"] = tools
+        # ── raw HTTP body 捕获 (call_id 由 router 显式传入) ──
+        from jarvis.services.ai.call_logger import enrich_raw_body
+        if call_id is not None:
+            enrich_raw_body(call_id, raw_request=payload)
         try:
             resp = await self.client.post("/v1/messages", json=payload)
             if resp.status_code == 401:
                 raise AuthenticationError("anthropic", "Invalid API key")
             resp.raise_for_status()
             data = resp.json()
+            if call_id is not None:
+                enrich_raw_body(call_id, raw_response=data)
             content = ""
             for block in data.get("content", []):
                 if block.get("type") == "text":
@@ -93,7 +99,6 @@ class AnthropicAdapter(AIClient):
                 provider_protocol=self.provider_protocol,
             )
         except httpx.HTTPError as e:
-            # Log response body for debugging
             body = ""
             try:
                 body = getattr(e, "response", None)
@@ -107,8 +112,11 @@ class AnthropicAdapter(AIClient):
             )
             raise ProviderNotAvailableError("anthropic", str(e))
 
-    async def chat_stream_full(self, messages) -> AsyncIterator[dict]:
-        """Streaming with structured events: thinking + text + tool_use."""
+    async def chat_stream_full(self, messages, *, call_id=None) -> AsyncIterator[dict]:
+        """Streaming with structured events: thinking + text + tool_use.
+
+        call_id: 由 router 显式传入, 用于把 raw_request + raw_stream_events 写回日志.
+        """
         payload = {
             "model": self.model,
             "messages": messages,
@@ -125,6 +133,12 @@ class AnthropicAdapter(AIClient):
         tool_id = ""
         tool_input_parts = []
 
+        # ── raw HTTP body 捕获 ──
+        from jarvis.services.ai.call_logger import enrich_raw_body
+        if call_id is not None:
+            enrich_raw_body(call_id, raw_request=payload)
+        raw_sse_events: list[dict] = []
+
         try:
             async with self.client.stream("POST", "/v1/messages", json=payload) as resp:
                 resp.raise_for_status()
@@ -134,6 +148,8 @@ class AnthropicAdapter(AIClient):
                             data = _json.loads(line[6:])
                         except _json.JSONDecodeError:
                             continue
+                        if call_id is not None:
+                            raw_sse_events.append(data)
 
                         evt_type = data.get("type", "")
 
@@ -198,12 +214,18 @@ class AnthropicAdapter(AIClient):
                         elif evt_type == "message_stop":
                             yield {"type": "message_stop", "content": ""}
 
+            # 流结束 — 把所有 SSE 原始事件一次性写入日志
+            if call_id is not None and raw_sse_events:
+                enrich_raw_body(call_id, raw_stream_events=raw_sse_events)
+
         except httpx.HTTPError as e:
+            if call_id is not None and raw_sse_events:
+                enrich_raw_body(call_id, raw_stream_events=raw_sse_events)
             raise ProviderNotAvailableError("anthropic", str(e))
 
-    async def chat_stream(self, messages) -> AsyncIterator[str]:
+    async def chat_stream(self, messages, *, call_id=None) -> AsyncIterator[str]:
         """Streaming plain text (for backward compat)."""
-        async for event in self.chat_stream_full(messages):
+        async for event in self.chat_stream_full(messages, call_id=call_id):
             evt_type = event.get("type", "")
             if evt_type in ("thinking", "text"):
                 yield event["content"]

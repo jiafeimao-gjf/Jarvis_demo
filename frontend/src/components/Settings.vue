@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings'
 import ProviderManager from './ProviderManager.vue'
 import VoiceClonePanel from './VoiceClonePanel.vue'
 import SkillManager from './SkillManager.vue'
+import LLMCallLogViewer from './LLMCallLogViewer.vue'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -92,6 +93,8 @@ const sections: SectionDef[] = [
     icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
   { id: 'storage', label: '存储', desc: '记忆 / 日志目录',
     icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4' },
+  { id: 'llm_logs', label: 'LLM 日志', desc: '模型调用追溯 (body + response)',
+    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
 ]
 
 const activeSection = ref<string>('server')
@@ -557,6 +560,19 @@ async function loadOllamaModels() {
           <div class="space-y-2 text-sm text-muted-foreground">
             <div>记忆目录: {{ config.storage.memory_dir }}</div>
             <div>日志目录: {{ config.storage.logs_dir }}</div>
+          </div>
+        </section>
+
+        <!-- LLM 调用日志 -->
+        <section v-show="activeSection === 'llm_logs'" class="bg-secondary rounded-lg p-4 max-w-full" style="height: calc(100vh - 12rem);">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">LLM 调用日志追溯</h2>
+            <span class="text-xs text-muted-foreground">
+              路径: {{ config.storage.logs_dir }}/llm_calls/YYYY-MM-DD/
+            </span>
+          </div>
+          <div class="h-[calc(100%-3rem)]">
+            <LLMCallLogViewer />
           </div>
         </section>
 

@@ -137,6 +137,7 @@ class AgentLoopRunner:
         *,
         model: Optional[str],
         instance,
+        conversation_id: Optional[str] = None,
         # Phase 1 已完成, 由调用方把响应塞进来
         current_text: str,
         current_thinking: str = "",
@@ -235,7 +236,8 @@ class AgentLoopRunner:
 
             # 7) 下一轮非流式 LLM
             response = await router.chat(
-                messages, model=model, instance=instance, stream=False
+                messages, model=model, instance=instance, stream=False,
+                conversation_id=conversation_id,
             )
             text = response.content or ""
             thinking = (

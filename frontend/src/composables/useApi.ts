@@ -17,6 +17,9 @@ import type {
   SkillConfig,
   SkillGroup,
   SkillTag,
+  LLMCallLogDetail,
+  LLMCallLogListResponse,
+  LLMCallLogStats,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -508,6 +511,61 @@ export function useApi() {
     return true
   }
 
+  // ============ LLM 调用日志 API ============
+
+  async function listLLMCallDates(): Promise<{ dates: string[] }> {
+    const res = await fetch(`${API_BASE}/logs/llm_calls/dates`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
+  async function listLLMCallLogs(params: {
+    date?: string
+    limit?: number
+    offset?: number
+    conversation_id?: string
+    provider?: string
+    model?: string
+    status?: string
+  } = {}): Promise<LLMCallLogListResponse> {
+    const q = new URLSearchParams()
+    if (params.date) q.set('date', params.date)
+    if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.offset != null) q.set('offset', String(params.offset))
+    if (params.conversation_id) q.set('conversation_id', params.conversation_id)
+    if (params.provider) q.set('provider', params.provider)
+    if (params.model) q.set('model', params.model)
+    if (params.status) q.set('status', params.status)
+    const res = await fetch(`${API_BASE}/logs/llm_calls?${q}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
+  async function getLLMCallLog(callId: string): Promise<LLMCallLogDetail> {
+    const res = await fetch(`${API_BASE}/logs/llm_calls/${encodeURIComponent(callId)}`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || `HTTP ${res.status}`)
+    }
+    return res.json()
+  }
+
+  async function clearLLMCallLogs(date?: string): Promise<{ removed: number; path: string }> {
+    const url = date
+      ? `${API_BASE}/logs/llm_calls?date=${encodeURIComponent(date)}`
+      : `${API_BASE}/logs/llm_calls`
+    const res = await fetch(url, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
+  async function getLLMCallStats(date?: string): Promise<LLMCallLogStats> {
+    const q = date ? `?date=${encodeURIComponent(date)}` : ''
+    const res = await fetch(`${API_BASE}/logs/llm_calls_stats/summary${q}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
   return {
     error,
     chat,
@@ -546,5 +604,11 @@ export function useApi() {
     renameSkillGroup,
     deleteSkillTag,
     deleteSkillGroup,
+    // LLM 调用日志
+    listLLMCallDates,
+    listLLMCallLogs,
+    getLLMCallLog,
+    clearLLMCallLogs,
+    getLLMCallStats,
   }
 }

@@ -187,3 +187,85 @@ export interface MemoryQueryResponse {
   results: MemoryItem[]
   count: number
 }
+
+// ── LLM 调用日志 ────────────────────────────────────────────────────────
+
+/** 单条调用的摘要 (列表用, 不含完整 body) */
+export interface LLMCallLogSummary {
+  call_id: string
+  timestamp: string
+  timestamp_ms: number
+  model: string
+  provider: string
+  provider_protocol: string | null
+  conversation_id: string | null
+  source: string
+  latency_ms: number
+  status: 'success' | 'error' | 'stream_interrupted' | string
+  messages_count: number
+  has_tool_use: boolean
+  thinking_chars: number
+  response_chars: number
+  error: string | null
+}
+
+/** 单条调用的完整详情 */
+export interface LLMCallLogDetail {
+  call_id: string
+  timestamp: string
+  timestamp_ms: number
+  model: string
+  provider: string
+  provider_protocol: string | null
+  conversation_id: string | null
+  source: string
+  latency_ms: number
+  status: string
+  error: string | null
+  request: {
+    messages?: any[]
+    tools?: any[]
+    stream?: boolean
+    max_tokens?: number
+    temperature?: number
+    raw_http_body?: any  // 原始 HTTP request payload (model + max_tokens + tools 摘要)
+    [key: string]: any
+  }
+  response: {
+    content?: string
+    thinking?: string
+    content_blocks?: any[]
+    usage?: any
+    raw?: any
+    raw_http_body?: any  // 原始 HTTP response (非流场景)
+    raw_stream_events?: any[]  // 原始 SSE chunks (流场景)
+    stop_reason?: string
+    [key: string]: any
+  }
+  metadata: Record<string, any>
+}
+
+/** 列表 API 响应 */
+export interface LLMCallLogListResponse {
+  date: string
+  total: number
+  offset: number
+  limit: number
+  items: LLMCallLogSummary[]
+}
+
+/** 统计摘要响应 */
+export interface LLMCallLogStats {
+  date: string
+  total: number
+  by_status: Record<string, number>
+  by_provider: Record<string, number>
+  by_model: Record<string, number>
+  latency_ms: {
+    avg: number
+    p50: number
+    p95: number
+    count: number
+  }
+  error_rate: number
+}

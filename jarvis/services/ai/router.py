@@ -62,38 +62,90 @@ class AIRouter:
         self, messages: list[dict], model: Optional[str] = None,
         provider: Optional[str] = None, instance=None,
         enable_fallback: Optional[bool] = None,
+        conversation_id: Optional[str] = None,
         **kwargs
     ) -> AIResponse:
+        """非流式 chat — 接入 LLMCallLogger 记录 body + response."""
+        from jarvis.services.ai.call_logger import get_call_logger
         model_id = model or self.config.default_model
 
-        # 绑定到具体 ProviderInstance 时, 跳过 fallback chain (与 chat_stream_full 一致)
+        # 决定实际走的 provider (instance 绑定 → 强制用 instance.type)
         if instance is not None:
             client = self._get_client_with_instance(instance, model_id)
-            start = time.time()
-            resp = await client.chat(messages, **kwargs)
-            resp.metrics = ResponseMetrics(latency_ms=(time.time() - start) * 1000)
-            return resp
+            actual_provider = getattr(instance, "type", "") or self.config.default_provider
+            actual_provider_protocol = "openai" if actual_provider in ("openai", "minimax") else "anthropic"
+        else:
+            fallback = enable_fallback if enable_fallback is not None else self.config.enable_fallback
+            providers = self._chain(model_id, provider, fallback)
+            actual_provider = providers[0] if providers else (provider or self.config.default_provider)
+            actual_provider_protocol = "openai" if actual_provider in ("openai", "minimax") else "anthropic"
+            client = None
 
-        fallback = enable_fallback if enable_fallback is not None else self.config.enable_fallback
-        providers = self._chain(model_id, provider, fallback)
-
-        errors = []
-        for prov in providers:
-            try:
-                client = self._get_client(prov, model_id)
+        cl = get_call_logger()
+        rec = cl.start_call(
+            model=model_id,
+            provider=actual_provider,
+            provider_protocol=actual_provider_protocol,
+            conversation_id=conversation_id,
+            source="router.chat",
+            request={
+                "messages": messages,
+                "tools_count": len(kwargs.get("tools") or []),
+                "stream": False,
+                "max_tokens": kwargs.get("max_tokens"),
+                "temperature": kwargs.get("temperature"),
+            },
+            metadata={"provider_hint": provider},
+        )
+        # 把 call_id 显式传给 adapter, 不用 ContextVar (避免 async gen finally reset 抛 ValueError)
+        kwargs["call_id"] = rec.call_id
+        try:
+            if instance is not None:
                 start = time.time()
                 resp = await client.chat(messages, **kwargs)
                 resp.metrics = ResponseMetrics(latency_ms=(time.time() - start) * 1000)
-                return resp
-            except AIProviderError as e:
-                logger.warning(f"[Router] chat: {prov} failed — {e}")
-                errors.append(e)
-                continue
-        raise AllProvidersFailedError(providers, errors)
+            else:
+                fallback = enable_fallback if enable_fallback is not None else self.config.enable_fallback
+                providers = self._chain(model_id, provider, fallback)
+
+                errors = []
+                resp = None
+                for prov in providers:
+                    try:
+                        client = self._get_client(prov, model_id)
+                        start = time.time()
+                        resp = await client.chat(messages, **kwargs)
+                        resp.metrics = ResponseMetrics(latency_ms=(time.time() - start) * 1000)
+                        break
+                    except AIProviderError as e:
+                        logger.warning(f"[Router] chat: {prov} failed — {e}")
+                        errors.append(e)
+                        continue
+                if resp is None:
+                    cl.end_call(rec, status="error", error=f"all providers failed: {[str(e) for e in errors]}")
+                    raise AllProvidersFailedError(providers, errors)
+
+            cl.end_call(
+                rec,
+                response={
+                    "content": resp.content or "",
+                    "thinking": getattr(resp, "thinking", "") or "",
+                    "content_blocks": resp.content_blocks or [],
+                    "usage": resp.usage.__dict__ if resp.usage else {},
+                    "raw": resp.raw,
+                    "stop_reason": "",
+                },
+                status="success",
+            )
+            return resp
+        except Exception as e:
+            cl.end_call(rec, status="error", error=str(e))
+            raise
 
     async def chat_stream(
         self, messages: list[dict], model: Optional[str] = None,
-        provider: Optional[str] = None, instance=None, **kwargs
+        provider: Optional[str] = None, instance=None,
+        conversation_id: Optional[str] = None, **kwargs
     ) -> AsyncIterator[str]:
         model_id = model or self.config.default_model
         if instance is not None:
@@ -106,17 +158,126 @@ class AIRouter:
 
     async def chat_stream_full(
         self, messages: list[dict], model: Optional[str] = None,
-        provider: Optional[str] = None, instance=None, **kwargs
+        provider: Optional[str] = None, instance=None,
+        conversation_id: Optional[str] = None, **kwargs
     ) -> AsyncIterator[dict]:
-        """Stream chat with structured events for tool-use detection."""
+        """Stream chat with structured events for tool-use detection.
+
+        接入 LLMCallLogger: 累积 text / thinking / tool_use 事件, 流结束时
+        一次性把"重建的 response"写入日志. raw HTTP body 由各 adapter 单独记录.
+        """
+        from jarvis.services.ai.call_logger import get_call_logger
+
         model_id = model or self.config.default_model
         if instance is not None:
             client = self._get_client_with_instance(instance, model_id)
+            actual_provider = getattr(instance, "type", "") or self.config.default_provider
         else:
             prov = provider or self.config.default_provider
             client = self._get_client(prov, model_id)
-        async for event in client.chat_stream_full(messages):
-            yield event
+            actual_provider = prov
+        actual_provider_protocol = "openai" if actual_provider in ("openai", "minimax") else "anthropic"
+
+        cl = get_call_logger()
+        rec = cl.start_call(
+            model=model_id,
+            provider=actual_provider,
+            provider_protocol=actual_provider_protocol,
+            conversation_id=conversation_id,
+            source="router.chat_stream_full",
+            request={
+                "messages": messages,
+                "stream": True,
+                "max_tokens": kwargs.get("max_tokens"),
+                "temperature": kwargs.get("temperature"),
+            },
+        )
+        # ★ call_id 作为参数传给 client, 不再用 ContextVar
+        # 一次 chat 会触发多个 LLM 调用 (Phase 1 + Phase 2+ + topic 生成),
+        # 每个调用各自的 call_id, 互不干扰 — 通过参数显式传递最可靠.
+
+        # 流式累积状态
+        accumulated_text = ""
+        accumulated_thinking = ""
+        content_blocks: list[dict] = []
+        current_tool: Optional[dict] = None
+        tool_args_parts: list[str] = []
+        raw_finish_reason = ""
+        had_error = False
+        error_msg = ""
+        final_status = "success"
+        final_error: Optional[str] = None
+
+        try:
+            async for event in client.chat_stream_full(messages, call_id=rec.call_id):
+                etype = event.get("type", "")
+                if etype == "text":
+                    accumulated_text += event.get("content", "")
+                elif etype == "thinking":
+                    accumulated_thinking += event.get("content", "")
+                elif etype == "tool_use_start":
+                    current_tool = {
+                        "type": "tool_use",
+                        "id": event.get("id", ""),
+                        "name": event.get("name", ""),
+                        "input": {},
+                    }
+                    tool_args_parts = []
+                elif etype == "tool_use_delta":
+                    tool_args_parts.append(event.get("partial_json", ""))
+                elif etype == "tool_use_end":
+                    if current_tool is not None:
+                        full = "".join(tool_args_parts)
+                        try:
+                            import json as _json
+                            current_tool["input"] = _json.loads(full) if full else {}
+                        except Exception:
+                            current_tool["input"] = {}
+                        content_blocks.append(current_tool)
+                        current_tool = None
+                        tool_args_parts = []
+                elif etype == "message_delta":
+                    raw_finish_reason = event.get("stop_reason", "") or raw_finish_reason
+                elif etype == "error":
+                    had_error = True
+                    error_msg = event.get("content", "unknown stream error")
+                    final_status = "error"
+                    final_error = error_msg
+
+                yield event
+
+            # 流正常结束 — 补 text block
+            if accumulated_text and not any(
+                (isinstance(b, dict) and b.get("type") == "text") for b in content_blocks
+            ):
+                content_blocks.append({"type": "text", "text": accumulated_text})
+
+        except Exception as e:
+            final_status = "error"
+            final_error = str(e)
+            had_error = True
+            try:
+                yield {"type": "error", "content": str(e)}
+            except Exception:
+                pass
+        finally:
+            # ★ 同步写 — 不依赖 asyncio task 调度, 在 finally 里一定执行
+            try:
+                cl.end_call(
+                    rec,
+                    response={
+                        "content": accumulated_text,
+                        "thinking": accumulated_thinking,
+                        "content_blocks": content_blocks,
+                        "usage": {},
+                        "raw": None,
+                        "stop_reason": raw_finish_reason,
+                    },
+                    status=final_status,
+                    error=final_error,
+                )
+            except Exception as e:
+                logger.error(f"[Router] end_call failed: {type(e).__name__}: {e}")
 
     async def generate(
         self, prompt: str, model: Optional[str] = None,

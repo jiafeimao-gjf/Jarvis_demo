@@ -64,21 +64,36 @@ class AIClient(ABC):
         stream: bool = True,
         temperature: float = 0.7,
         max_tokens: int = 2048,
+        *,
+        call_id: Optional[str] = None,
     ) -> AIResponse:
-        """Multi-message chat completion"""
+        """Multi-message chat completion.
+
+        call_id:  LLMCallLogger 提供的 call record id. adapter 在 HTTP 调用前后
+                   调用 enrich_raw_body(call_id, raw_request=..., raw_response=...)
+                   把原始 HTTP body 写回日志. None 时 adapter 不写日志.
+        """
         pass
 
     @abstractmethod
     async def chat_stream(
         self,
         messages: list[dict],
+        *,
+        call_id: Optional[str] = None,
     ) -> AsyncIterator[str]:
-        """Stream chat completion tokens"""
-        pass
+        """Stream chat completion tokens.
+
+        call_id: 同 chat() — adapter 拿它写 raw_stream_events 到日志.
+        """
+        # Note: 子类应实现此方法. 实际 chat_stream_full() 是被 router 调用的主入口.
+        yield ""  # pragma: no cover
 
     async def chat_stream_full(
         self,
         messages: list[dict],
+        *,
+        call_id: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Stream chat with structured events (text, thinking, tool_use).
 
@@ -91,9 +106,12 @@ class AIClient(ABC):
           {"type": "message_delta", "stop_reason": "..."}
           {"type": "message_stop"}
           {"type": "error", "content": "..."}
+
+        call_id: 透传给底层 adapter 的 chat_stream — 让 adapter 把 raw_stream_events
+                 写回日志.
         """
         # Default: fall back to non-streaming chat, yield as single text block
-        resp = await self.chat(messages, stream=False)
+        resp = await self.chat(messages, stream=False, call_id=call_id)
         if resp.thinking:
             yield {"type": "thinking_start"}
             yield {"type": "thinking", "content": resp.thinking}

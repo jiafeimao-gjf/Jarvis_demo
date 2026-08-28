@@ -94,7 +94,7 @@ class OpenAIAdapter(AIClient):
         return await self.chat(messages, stream, temperature, max_tokens)
 
     async def chat(self, messages, stream=True, temperature=0.7,
-                   max_tokens=2048) -> AIResponse:
+                   max_tokens=2048, *, call_id=None) -> AIResponse:
         payload = {
             "model": self.model,
             "messages": messages,
@@ -107,12 +107,18 @@ class OpenAIAdapter(AIClient):
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        # ── raw HTTP body 捕获 ──
+        from jarvis.services.ai.call_logger import enrich_raw_body
+        if call_id is not None:
+            enrich_raw_body(call_id, raw_request=payload)
         try:
             resp = await self.client.post("/v1/chat/completions", json=payload)
             if resp.status_code == 401:
                 raise AuthenticationError("openai", "Invalid API key")
             resp.raise_for_status()
             data = resp.json()
+            if call_id is not None:
+                enrich_raw_body(call_id, raw_response=data)
             choice = data["choices"][0]
             message = choice.get("message", {})
             content = message.get("content", "") or ""
@@ -130,14 +136,16 @@ class OpenAIAdapter(AIClient):
         except httpx.HTTPError as e:
             raise ProviderNotAvailableError("openai", str(e))
 
-    async def chat_stream(self, messages) -> AsyncIterator[str]:
+    async def chat_stream(self, messages, *, call_id=None) -> AsyncIterator[str]:
         """Backward-compat: 仅 yield 文本 token. 推荐用 chat_stream_full."""
-        async for event in self.chat_stream_full(messages):
+        async for event in self.chat_stream_full(messages, call_id=call_id):
             if event.get("type") == "text":
                 yield event["content"]
 
-    async def chat_stream_full(self, messages) -> AsyncIterator[dict]:
+    async def chat_stream_full(self, messages, *, call_id=None) -> AsyncIterator[dict]:
         """Streaming + tool_calls delta 拼装.
+
+        call_id: 由 router 显式传入, 用于把 raw_request + raw_stream_events 写回日志.
 
         OpenAI delta 形态:
           - delta.content: 文本增量 (str)
@@ -168,6 +176,12 @@ class OpenAIAdapter(AIClient):
         # finish_reason
         finish_reason = None
 
+        # ── raw HTTP body 捕获 ──
+        from jarvis.services.ai.call_logger import enrich_raw_body
+        if call_id is not None:
+            enrich_raw_body(call_id, raw_request=payload)
+        raw_sse_chunks: list[dict] = []
+
         try:
             async with self.client.stream(
                 "POST", "/v1/chat/completions", json=payload
@@ -185,6 +199,8 @@ class OpenAIAdapter(AIClient):
                         data = json.loads(payload_str)
                     except json.JSONDecodeError:
                         continue
+                    if call_id is not None:
+                        raw_sse_chunks.append(data)
 
                     choice = (data.get("choices") or [{}])[0]
                     delta = choice.get("delta", {}) or {}
@@ -255,7 +271,13 @@ class OpenAIAdapter(AIClient):
             }
             yield {"type": "message_stop", "content": ""}
 
+            # 流结束 — 把所有 SSE chunk 一次性写入日志
+            if call_id is not None and raw_sse_chunks:
+                enrich_raw_body(call_id, raw_stream_events=raw_sse_chunks)
+
         except httpx.HTTPError as e:
+            if call_id is not None and raw_sse_chunks:
+                enrich_raw_body(call_id, raw_stream_events=raw_sse_chunks)
             raise ProviderNotAvailableError("openai", str(e))
 
     async def vision_analyze(self, image_data, prompt) -> str:

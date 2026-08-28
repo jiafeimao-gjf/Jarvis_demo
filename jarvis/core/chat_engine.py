@@ -321,7 +321,8 @@ class ChatEngine:
         # 7. Phase 1: 调 LLM (非流式, 一次)
         logger.debug("[Chat] Phase 1: 调 LLM...")
         response = await self.router.chat(
-            messages, model=model, instance=instance, stream=False
+            messages, model=model, instance=instance, stream=False,
+            conversation_id=self.current_conversation.conversation_id,
         )
         response_text = response.content or ""
         response_thinking = (
@@ -374,6 +375,7 @@ class ChatEngine:
         async for event in self.agent_loop_runner.run_iterations(
             messages, self.router,
             model=model, instance=instance,
+            conversation_id=self.current_conversation.conversation_id,
             current_text=response_text,
             current_thinking=response_thinking,
             current_content_blocks=content_blocks,
@@ -578,7 +580,10 @@ class ChatEngine:
         content_blocks: list[dict] = []
         current_tool: dict | None = None
 
-        async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
+        async for event in self.router.chat_stream_full(
+            messages, model=model, instance=instance,
+            conversation_id=self.current_conversation.conversation_id,
+        ):
             etype = event.get("type", "")
 
             if etype == "thinking_start":
@@ -647,6 +652,7 @@ class ChatEngine:
             async for event in self.agent_loop_runner.run_iterations(
                 messages, self.router,
                 model=model, instance=instance,
+                conversation_id=self.current_conversation.conversation_id,
                 current_text=streamed_text,
                 current_thinking=streamed_thinking,
                 current_content_blocks=content_blocks,
@@ -864,7 +870,10 @@ class ChatEngine:
         content_blocks: list[dict] = []
         current_tool: dict | None = None
 
-        async for event in self.router.chat_stream_full(messages, model=model, instance=instance):
+        async for event in self.router.chat_stream_full(
+            messages, model=model, instance=instance,
+            conversation_id=self.current_conversation.conversation_id,
+        ):
             etype = event.get("type", "")
 
             if etype == "thinking_start":
@@ -934,6 +943,7 @@ class ChatEngine:
             async for event in self.agent_loop_runner.run_iterations(
                 messages, self.router,
                 model=model, instance=instance,
+                conversation_id=self.current_conversation.conversation_id,
                 current_text=streamed_text,
                 current_thinking=streamed_thinking,
                 current_content_blocks=content_blocks,
