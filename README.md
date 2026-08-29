@@ -170,6 +170,7 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 | **读** | 文件/图片/PDF 读取 | 粘贴图片、文件上传 |
 | **写** | 代码/文档生成、文件操作 | 直接对话 |
 | **执行** | 工具调用（文件/Bash/浏览器/子代理...）| 对话中自然触发 |
+| **追溯** | 每次 LLM 调用的 body + response 完整记录 | Settings → LLM 日志 |
 
 ## 子代理（Subagent）
 
@@ -202,6 +203,35 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 
 通过 `Skill` 工具调用，技能定义在 `workspace/skills/` 目录，支持 markdown 编写 + YAML frontmatter 元数据。
 
+## LLM 调用追溯
+
+每次 LLM 调用（chat / stream / subagent / 工具迭代 / 主题生成 / 上下文压缩）都被完整记录：
+
+**存储位置**：`workspace/logs/llm_calls/YYYY-MM-DD/`
+- `index.jsonl` — 一行一条摘要（时间 / provider / model / latency / 状态 / 是否有工具调用）
+- `<call_id>.json` — 完整详情（含 request body、response body、SSE chunks、thinking、tool_use）
+
+**前端入口**：Settings → "LLM 日志"
+
+**两种视图**：
+- **按时间** — 平铺列表，按调用时间倒序
+- **按会话** — 按 `conversation_id` 分组折叠，一次看到一次对话触发的所有 LLM 调用
+
+**详情 4 Tab**：
+- Request Body — 完整 messages + tools + 参数
+- Response — content / thinking / content_blocks / usage
+- Raw HTTP — 真实发到 provider 的 HTTP payload + 流式 SSE chunks
+- Messages — 完整 messages 列表，按 role 彩色标签分组
+
+**典型用例**：
+- 排查"为什么这次对话跑了 30 秒" → 看 avg / p95 latency + 调用次数
+- 复盘"subagent 的工具循环" → 按会话视图 → 展开看每次调用
+- 排查 4xx/5xx 错误 → Raw HTTP tab 看 provider 返回
+
+**清理**：按日期清空或一键清空所有日志。
+
+详细设计见 [`模型请求数据追溯.md`](模型请求数据追溯.md)。
+
 ## 记忆系统
 
 - **上下文压缩**：`ContextManager` 按 token 预算动态裁剪历史，注入相关记忆（top-k 向量检索）。
@@ -228,6 +258,7 @@ python -m pytest tests/ -v
 - `DESIGN_PATTERNS.md` — 设计模式详解
 - `bugs.md` — Bug 记录与解决方案
 - `TODO.md` — 功能优先级
+- `模型请求数据追溯.md` — LLM 调用日志系统设计与 Bug 修复记录
 
 ---
 
