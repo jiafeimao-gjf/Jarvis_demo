@@ -1,5 +1,6 @@
 # jarvis/services/ai/router.py
 """AI Request Router — model → provider → adapter"""
+import copy
 from typing import Optional, List, AsyncIterator
 import time
 from jarvis.services.ai.base import AIClient, AIResponse, ResponseMetrics
@@ -89,7 +90,9 @@ class AIRouter:
             conversation_id=conversation_id,
             source="router.chat",
             request={
-                "messages": messages,
+                # ★ 深拷贝 messages: agent_loop_runner 会 in-place append (assistant turn + tool_result),
+                # 不深拷贝的话, 日志里的 messages 会被后续迭代污染
+                "messages": copy.deepcopy(messages),
                 "tools_count": len(kwargs.get("tools") or []),
                 "stream": False,
                 "max_tokens": kwargs.get("max_tokens"),
@@ -186,7 +189,8 @@ class AIRouter:
             conversation_id=conversation_id,
             source="router.chat_stream_full",
             request={
-                "messages": messages,
+                # ★ 深拷贝 messages: 同样的 in-place mutation 污染防护
+                "messages": copy.deepcopy(messages),
                 "stream": True,
                 "max_tokens": kwargs.get("max_tokens"),
                 "temperature": kwargs.get("temperature"),
