@@ -43,10 +43,13 @@ def _clean_topic(raw: str) -> str:
 async def generate_topic(router, user_input: str,
                          model: Optional[str] = None,
                          instance=None,
+                         conversation_id: Optional[str] = None,
                          timeout: float = 5.0) -> str:
     """Generate a 4-12 char Chinese topic for a conversation.
 
     Falls back to the first 12 chars of user_input on any failure.
+
+    conversation_id: 透传给 router.chat, 让 LLM 调用日志能关联到主对话.
     """
     if not user_input or not router:
         return _fallback_topic(user_input or "")
@@ -59,7 +62,8 @@ async def generate_topic(router, user_input: str,
     try:
         resp = await asyncio.wait_for(
             router.chat(messages, model=model, instance=instance,
-                        max_tokens=40, temperature=0.3),
+                        max_tokens=40, temperature=0.3,
+                        conversation_id=conversation_id),
             timeout=timeout,
         )
         text = resp.content if resp else ""

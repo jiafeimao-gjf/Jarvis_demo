@@ -1085,7 +1085,8 @@ class ChatEngine:
         主流程已结束时调用,不影响响应延迟。"""
         try:
             topic = await generate_topic(self.router, user_input,
-                                         model=model, instance=instance)
+                                         model=model, instance=instance,
+                                         conversation_id=self.current_conversation.conversation_id if self.current_conversation else None)
             # 防止覆盖用户已编辑的主题
             if self.current_conversation.topic:
                 logger.info(
@@ -1131,6 +1132,7 @@ class ChatEngine:
             topic = await generate_topic(
                 self.router, first_user.content,
                 model=model, instance=instance,
+                conversation_id=self.current_conversation.conversation_id,
             )
             self.current_conversation.set_topic(topic)
             await self.memory.update_conversation_topic(

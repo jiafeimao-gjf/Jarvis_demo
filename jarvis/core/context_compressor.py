@@ -197,6 +197,7 @@ async def default_summarize(
     messages: list[dict],
     model: Optional[str] = None,
     max_tokens: int = 800,
+    conversation_id: Optional[str] = None,
 ) -> str:
     """调一次 LLM 总结给定消息列表.
 
@@ -205,6 +206,7 @@ async def default_summarize(
         messages: 待摘要的消息列表 (dict 形式, 含 role/content)
         model: 可选模型 ID, 默认跟随主模型
         max_tokens: 摘要输出上限
+        conversation_id: 透传给 router.chat, 让 LLM 调用日志能关联到主对话
 
     Returns:
         摘要字符串. 失败时返回 "".
@@ -233,6 +235,7 @@ async def default_summarize(
             ],
             model=model,
             stream=False,
+            conversation_id=conversation_id,
         )
         return (resp.content or "").strip()
     except Exception as e:
@@ -407,6 +410,7 @@ class ContextCompressor:
             self.router,
             [{"role": m.role, "content": m.content} for m in msgs_to_summarize],
             model=model_id,
+            conversation_id=conversation.conversation_id,
         )
         if not summary:
             logger.warning("[Compressor] 摘要为空, 跳过替换")

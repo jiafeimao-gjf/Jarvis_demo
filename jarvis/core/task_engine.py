@@ -485,6 +485,12 @@ class SubagentStrategy(TaskStrategy):
         except ValueError:
             mode = self._DispatchMode.SEQUENTIAL
 
+        # 取父对话 ID — 透传给 subagent LLM 调用, 让日志能关联到主会话
+        parent_conv_id = (
+            self.orchestrator.parent_conversation.conversation_id
+            if self.orchestrator.parent_conversation else None
+        )
+
         # 批量模式 — 显式传了 tasks (含空列表) 都走批量分支
         if batch is not None:
             requests = []
@@ -510,6 +516,7 @@ class SubagentStrategy(TaskStrategy):
                 mode=mode,
                 requests=requests,
                 reduce_prompt=params.get("reduce_prompt"),
+                conversation_id=parent_conv_id,
             )
             # v3: 收集所有 sub_session_ids, 主会话可一次性跳转
             sub_session_ids = [
@@ -533,6 +540,7 @@ class SubagentStrategy(TaskStrategy):
             role=role,
             task=params.get("task", ""),
             context=params.get("context"),
+            conversation_id=parent_conv_id,
         )
         return {
             "status": "success" if result.success else "error",

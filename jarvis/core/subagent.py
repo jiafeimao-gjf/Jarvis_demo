@@ -227,11 +227,15 @@ class BaseSubagent(ABC):
                     logger.debug(f"[Subagent {self.role.value}] text tool parse failed: {e}")
         return tool_uses
 
-    async def run(self, task: str, context: Optional[str] = None) -> SubagentResult:
+    async def run(self, task: str, context: Optional[str] = None,
+                  conversation_id: Optional[str] = None) -> SubagentResult:
         """执行子任务. v3: 含工具循环 (最多 max_iterations 轮).
 
         每轮: 调 LLM → 检测 tool_use → 经 TaskExecutor 执行 → 结果回注 → 下一轮.
         无 tool_use 或达到 max_iterations 时结束. 每轮消息持久化到子会话.
+
+        conversation_id: 主对话 ID. 透传给 router.chat, 让 LLM 日志能关联到
+                          主对话 (而不是落到 (no-conv) 分组).
 
         无 task_executor 时退化为单轮 LLM 调用 (不执行工具).
         每次调用创建独立子会话, 记录 user/assistant/tool/tool_result, 持久化到 DB.
@@ -271,6 +275,7 @@ class BaseSubagent(ABC):
                     model=model,
                     instance=self.instance,
                     stream=False,
+                    conversation_id=conversation_id,
                 )
                 final_output = resp.content or ""
                 final_thinking = (
@@ -680,6 +685,7 @@ class SubagentOrchestrator:
         task: str,
         context: Optional[str] = None,
         config_overrides: Optional[dict] = None,
+        conversation_id: Optional[str] = None,
     ) -> SubagentResult:
         agent = create_subagent(
             role=role,
@@ -697,13 +703,15 @@ class SubagentOrchestrator:
         logger.info(
             f"[Orchestrator] dispatching {agent.role.value}: {task[:80]!r}"
         )
-        return await agent.run(task=task, context=context)
+        return await agent.run(task=task, context=context,
+                               conversation_id=conversation_id)
 
     async def run_batch(
         self,
         mode: DispatchMode,
         requests: list[DispatchRequest],
         reduce_prompt: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> DispatchBatchResult:
         if not requests:
             return DispatchBatchResult(mode=mode, results=[])
@@ -719,7 +727,8 @@ class SubagentOrchestrator:
                         ctx + "\n\n[先前子代理输出]\n" + "\n---\n".join(prior_context)
                     ).strip()
                 results.append(
-                    await self.run_one(req.role, req.task, ctx, req.config_overrides)
+                    await self.run_one(req.role, req.task, ctx, req.config_overrides,
+                                       conversation_id=conversation_id)
                 )
                 if results[-1].output:
                     prior_context.append(
@@ -730,7 +739,8 @@ class SubagentOrchestrator:
         if mode == DispatchMode.PARALLEL:
             results = await asyncio.gather(
                 *[
-                    self.run_one(r.role, r.task, r.context, r.config_overrides)
+                    self.run_one(r.role, r.task, r.context, r.config_overrides,
+                                 conversation_id=conversation_id)
                     for r in requests
                 ],
                 return_exceptions=False,
@@ -740,7 +750,8 @@ class SubagentOrchestrator:
         # MAP_REDUCE
         results = await asyncio.gather(
             *[
-                self.run_one(r.role, r.task, r.context, r.config_overrides)
+                self.run_one(r.role, r.task, r.context, r.config_overrides,
+                             conversation_id=conversation_id)
                 for r in requests
             ]
         )
@@ -758,7 +769,8 @@ class SubagentOrchestrator:
                     )},
                 ]
                 resp = await self.router.chat(
-                    messages, model=self.model, instance=self.instance, stream=False
+                    messages, model=self.model, instance=self.instance, stream=False,
+                    conversation_id=conversation_id,
                 )
                 reduced = resp.content
             except Exception as e:
