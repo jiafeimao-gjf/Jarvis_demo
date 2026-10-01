@@ -212,6 +212,8 @@ onUnmounted(() => {
 
 <template>
   <div
+    :id="`msg-${message.id}`"
+    :data-user-turn="isUser ? message.id : undefined"
     :class="[
       'flex flex-col px-4 py-3 max-w-[70%] break-words',
       isUser

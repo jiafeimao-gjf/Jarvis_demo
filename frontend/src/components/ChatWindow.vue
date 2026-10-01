@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useSettingsStore } from '@/stores/settings'
 import { useProvidersStore } from '@/stores/providers'
@@ -57,6 +57,222 @@ function closeSubagentPanel() {
   activeSubSessionId.value = null
   activeBatchIds.value = []
 }
+
+// ── 用户轮次面板 (持久化开关) ────────────────────────────────────
+const TURNS_PANEL_KEY = 'jarvis_user_turns_panel_v1'
+const INPUT_HISTORY_KEY = 'jarvis_input_history_v1'
+const INPUT_HISTORY_MAX = 100  // 每会话最多保留的输入历史条数
+
+function loadShowTurnsPanel(): boolean {
+  try {
+    const v = localStorage.getItem(TURNS_PANEL_KEY)
+    return v === null ? true : v === 'true'
+  } catch {
+    return true
+  }
+}
+
+function loadInputHistory(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(INPUT_HISTORY_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveInputHistory(history: Record<string, string[]>) {
+  try {
+    localStorage.setItem(INPUT_HISTORY_KEY, JSON.stringify(history))
+  } catch {
+    /* quota exceeded / disabled — silent */
+  }
+}
+
+const showUserTurnsPanel = ref(loadShowTurnsPanel())
+const activeUserTurnId = ref<string | null>(null)
+let turnObserver: IntersectionObserver | null = null
+let observedElements: WeakSet<Element> | null = null
+
+// ── 输入历史 (上下键翻找) ──────────────────────────────────────────
+const inputHistory = ref<Record<string, string[]>>(loadInputHistory())
+const historyIndex = ref<number>(-1)   // -1 = 不在历史模式
+const savedDraft = ref<string>('')     // 进入历史前先存草稿
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+
+// 计算用户轮次 (图片消息显示 📷 [图片] 占位)
+const userTurns = computed(() =>
+  chatStore.messages
+    .filter(m => m.role === 'user')
+    .map((m, idx) => {
+      const isImageOnly = !!(m.image && !m.content.trim())
+      const text = isImageOnly
+        ? '📷 [图片]'
+        : m.content.replace(/\s+/g, ' ').slice(0, 60) +
+          (m.content.length > 60 ? '...' : '')
+      return { id: m.id, index: idx + 1, preview: text, isImageOnly }
+    })
+)
+
+// ── 输入历史函数 ────────────────────────────────────────────────────
+function pushInputHistory(convId: string | null, text: string) {
+  if (!text || !text.trim()) return
+  const key = convId || '_pending'
+  const current = inputHistory.value[key] || []
+  // 去重连续重复
+  if (current.length > 0 && current[current.length - 1] === text) return
+  const next = [...current, text]
+  // 封顶 — FIFO 丢最旧
+  if (next.length > INPUT_HISTORY_MAX) {
+    next.splice(0, next.length - INPUT_HISTORY_MAX)
+  }
+  inputHistory.value = { ...inputHistory.value, [key]: next }
+  saveInputHistory(inputHistory.value)
+}
+
+function resetHistoryNav() {
+  historyIndex.value = -1
+  savedDraft.value = ''
+}
+
+function recallHistory(direction: 'up' | 'down') {
+  const convId = chatStore.currentConversationId || '_pending'
+  const history = inputHistory.value[convId] || []
+  if (history.length === 0) return
+
+  if (direction === 'up') {
+    if (historyIndex.value === -1) {
+      savedDraft.value = inputValue.value
+      historyIndex.value = history.length - 1
+    } else if (historyIndex.value > 0) {
+      historyIndex.value--
+    } else {
+      return  // 已经在最旧, 不动
+    }
+  } else {
+    if (historyIndex.value === -1) return  // 不在历史模式, 不响应 down
+    if (historyIndex.value < history.length - 1) {
+      historyIndex.value++
+    } else {
+      // 回到草稿
+      historyIndex.value = -1
+      inputValue.value = savedDraft.value
+      savedDraft.value = ''
+      nextTick(autoResize)
+      return
+    }
+  }
+  inputValue.value = history[historyIndex.value] || ''
+  nextTick(() => {
+    autoResize()
+    // 光标移到末尾, 方便继续编辑
+    const ta = textareaRef.value
+    if (ta) {
+      ta.selectionStart = ta.selectionEnd = ta.value.length
+    }
+  })
+}
+
+function getCursorLine(): number {
+  const ta = textareaRef.value
+  if (!ta) return 0
+  const cursorPos = ta.selectionStart
+  const before = ta.value.substring(0, cursorPos)
+  return before.split('\n').length - 1
+}
+
+// ── 自动高度 (1-6 行 clamp) ───────────────────────────────────────
+const TEXTAREA_LINE_HEIGHT = 24   // px, 与 text-sm 匹配
+const TEXTAREA_VERTICAL_PADDING = 24  // py-3 = 0.75rem ≈ 24px
+const TEXTAREA_MIN_HEIGHT = TEXTAREA_LINE_HEIGHT + TEXTAREA_VERTICAL_PADDING  // 48px
+const TEXTAREA_MAX_HEIGHT = TEXTAREA_LINE_HEIGHT * 6 + TEXTAREA_VERTICAL_PADDING  // 168px
+
+function autoResize() {
+  const ta = textareaRef.value
+  if (!ta) return
+  // 重置后读 scrollHeight — 否则 textarea 只缩不涨
+  ta.style.height = 'auto'
+  const newHeight = Math.max(
+    TEXTAREA_MIN_HEIGHT,
+    Math.min(ta.scrollHeight, TEXTAREA_MAX_HEIGHT)
+  )
+  ta.style.height = newHeight + 'px'
+  ta.style.overflowY = ta.scrollHeight > TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden'
+}
+
+// 监听 inputValue — 覆盖用户输入 AND 编程清空 (handleSend)
+watch(inputValue, () => nextTick(autoResize))
+
+// ── 用户轮次面板: 滚动跳转 + IntersectionObserver ──────────────────
+function scrollToMessage(msgId: string) {
+  const el = document.getElementById(`msg-${msgId}`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // 立即更新高亮 (不依赖 observer 后续触发)
+  activeUserTurnId.value = msgId
+}
+
+function toggleTurnsPanel() {
+  showUserTurnsPanel.value = !showUserTurnsPanel.value
+  try {
+    localStorage.setItem(TURNS_PANEL_KEY, String(showUserTurnsPanel.value))
+  } catch { /* ignore */ }
+  // 重新挂载 observer (面板刚打开, 需要观察新可见的元素)
+  if (showUserTurnsPanel.value) {
+    nextTick(setupTurnObserver)
+  }
+}
+
+function setupTurnObserver() {
+  // disconnect 旧的 (避免挂到已脱离 DOM 的元素)
+  turnObserver?.disconnect()
+  if (!observedElements) observedElements = new WeakSet()
+
+  turnObserver = new IntersectionObserver(
+    (entries) => {
+      // 收集当前可见的 user turn, 选 topmost
+      const visible: { id: string; top: number }[] = []
+      for (const e of entries) {
+        if (!e.isIntersecting) continue
+        const id = (e.target as HTMLElement).dataset.userTurn
+        if (id) visible.push({ id, top: e.boundingClientRect.top })
+      }
+      if (visible.length > 0) {
+        visible.sort((a, b) => a.top - b.top)
+        activeUserTurnId.value = visible[0].id
+      }
+    },
+    { rootMargin: '-15% 0px -55% 0px', threshold: 0 }
+  )
+
+  // 范围限定到 messagesContainer, 防止误选
+  const container = messagesContainer.value
+  if (!container) return
+  const userTurnEls = container.querySelectorAll('[data-user-turn]')
+  userTurnEls.forEach(el => {
+    if (!observedElements!.has(el)) {
+      turnObserver!.observe(el)
+      observedElements!.add(el)
+    }
+  })
+}
+
+// 切换会话 / 新消息时, 刷新观察者
+watch(() => chatStore.currentConversationId, () => {
+  activeUserTurnId.value = null
+  resetHistoryNav()
+  observedElements = new WeakSet()  // 旧元素已脱离, 重置
+  nextTick(() => {
+    setupTurnObserver()
+    scrollToBottom(false)
+  })
+})
+
+watch(() => chatStore.messages.length, () => {
+  nextTick(setupTurnObserver)
+})
 
 // ESC 关闭抽屉
 function onKeydown(e: KeyboardEvent) {
@@ -318,6 +534,9 @@ async function handleSend() {
   const text = inputValue.value.trim()
   if (!text || isLoading.value) return
 
+  // 写入输入历史 (用户需求 #2) — builtin / skill / normal 都记录, 语义一致
+  pushInputHistory(chatStore.currentConversationId, text)
+
   // ── Slash command 检测 ────────────────────────────────────────────
   // /clear /stop /context 走 builtin; /{skill_name} [request] 注入 skill 后正常发
   if (text.startsWith('/')) {
@@ -325,21 +544,25 @@ async function handleSend() {
     const rest = text.slice(firstToken.length).trim()
     const cmd = slashCommands.value.find(c => c.label === firstToken)
     if (cmd && cmd.type === 'builtin') {
-      inputValue.value = ''
       executeBuiltinCommand(cmd.id)
+      inputValue.value = ''  // 发送后清空 (用户需求 #3) — 统一在末尾, 这里 builtin 路径先清
+      resetHistoryNav()
       return
     }
     if (cmd && cmd.type === 'skill' && cmd.skillRef) {
       // 注入 skill 内容, 转成普通消息发出
       const augmented = applySkillPrefix(cmd.skillRef.id, rest)
-      inputValue.value = ''
       await sendNormalMessage(augmented)
+      inputValue.value = ''
+      resetHistoryNav()
       return
     }
     // 未匹配: 继续走正常发送 (让 LLM 看到 /xxx, 由它自己判断)
   }
 
   await sendNormalMessage(text)
+  inputValue.value = ''
+  resetHistoryNav()
 }
 
 async function sendNormalMessage(text: string) {
@@ -564,6 +787,21 @@ function handleKeydown(e: KeyboardEvent) {
       return
     }
   }
+
+  // 输入历史翻找 (用户需求 #2) — 光标在第一行才触发,
+  // 保留多行文本的 cursor 上下移动能力
+  if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+      && e.key === 'ArrowUp' && getCursorLine() === 0) {
+    e.preventDefault()
+    recallHistory('up')
+    return
+  }
+  if (e.key === 'ArrowDown' && historyIndex.value !== -1) {
+    e.preventDefault()
+    recallHistory('down')
+    return
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     handleSend()
@@ -628,11 +866,19 @@ watch(
 
 onMounted(() => {
   scrollToBottom(false)
+  setupTurnObserver()
+})
+
+onUnmounted(() => {
+  turnObserver?.disconnect()
+  if (toolSkippedTimer) clearTimeout(toolSkippedTimer)
 })
 </script>
 
 <template>
-  <div class="flex flex-col h-full relative cyber-grid">
+  <div class="flex h-full">
+    <!-- 主聊天区 -->
+    <div class="flex flex-col flex-1 relative cyber-grid min-w-0">
     <!-- Topic header — display or click-to-edit -->
     <div class="topic-header border-b border-primary/10 px-6 py-3 flex items-center gap-2 bg-background/30 relative z-10">
       <span class="text-[10px] uppercase tracking-widest text-muted-foreground/60">主题</span>
@@ -652,6 +898,16 @@ onMounted(() => {
           <svg class="w-3.5 h-3.5 text-primary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
+        <!-- 切换轮次列表按钮 (用户需求 #4) -->
+        <button
+          class="p-1 hover:bg-primary/10 rounded transition-all opacity-50 hover:opacity-100 shrink-0"
+          :title="showUserTurnsPanel ? '隐藏轮次列表' : '显示轮次列表'"
+          @click="toggleTurnsPanel"
+        >
+          <svg class="w-3.5 h-3.5 text-primary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 6h16M4 12h16M4 18h7"/>
           </svg>
         </button>
       </template>
@@ -750,11 +1006,13 @@ onMounted(() => {
 
       <div class="flex gap-3 relative z-10">
         <textarea
+          ref="textareaRef"
           v-model="inputValue"
-          placeholder="输入 / 触发命令面板，回车发送，Shift+Enter 换行，可粘贴图片"
-          class="flex-1 input-cyber rounded-2xl px-4 py-3 text-sm outline-none glow-border resize-none"
+          placeholder="输入 / 触发命令面板，回车发送，Shift+Enter 换行，↑↓ 翻历史，可粘贴图片"
+          class="flex-1 input-cyber rounded-2xl px-4 py-3 text-sm outline-none glow-border resize-none overflow-hidden"
           :disabled="isLoading"
           rows="1"
+          :style="`min-height: ${TEXTAREA_MIN_HEIGHT}px; max-height: ${TEXTAREA_MAX_HEIGHT}px;`"
           @keydown="handleKeydown"
           @paste="handlePaste"
         ></textarea>
@@ -775,6 +1033,48 @@ onMounted(() => {
       :batch-ids="activeBatchIds"
       @close="closeSubagentPanel"
     />
+    </div>
+    <!-- /主聊天区 -->
+
+    <!-- 用户轮次侧栏 (用户需求 #4) — 显示所有 user 消息, 点击跳转 -->
+    <aside
+      v-if="showUserTurnsPanel && userTurns.length > 0"
+      class="w-72 shrink-0 border-l border-primary/10 bg-background/40 flex flex-col"
+    >
+      <div class="px-4 py-3 border-b border-primary/10 flex items-center justify-between shrink-0">
+        <h3 class="text-[10px] uppercase tracking-widest text-muted-foreground/70 font-medium">
+          对话轮次 · {{ userTurns.length }}
+        </h3>
+        <button
+          class="p-1 hover:bg-primary/10 rounded transition-colors"
+          title="隐藏轮次列表"
+          @click="toggleTurnsPanel"
+        >
+          <svg class="w-3.5 h-3.5 text-muted-foreground/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+        <button
+          v-for="turn in userTurns"
+          :key="turn.id"
+          :class="[
+            'w-full text-left px-3 py-2 rounded-md text-xs transition-colors border',
+            activeUserTurnId === turn.id
+              ? 'bg-primary/15 text-primary border-primary/30'
+              : 'border-transparent hover:bg-primary/5 hover:border-primary/20'
+          ]"
+          :title="turn.preview"
+          @click="scrollToMessage(turn.id)"
+        >
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-[10px] font-mono text-muted-foreground/70 shrink-0">#{{ turn.index }}</span>
+          </div>
+          <div class="line-clamp-2 text-foreground/80 leading-relaxed break-all">{{ turn.preview }}</div>
+        </button>
+      </div>
+    </aside>
   </div>
 </template>
 
