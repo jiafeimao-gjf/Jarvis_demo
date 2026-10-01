@@ -291,10 +291,14 @@ class ChatEngine:
 
         # 5. 通过 ContextManager 构建最终 messages:
         #    - 注入相关记忆 (默认 top_k=3)
+        #    - 工具历史 → 自然语言摘要 (ToolHistoryCompactor)
         #    - 按 token 预算裁剪对话历史 (替代旧的硬编码 limit=10)
+        # 注: 不再用 get_history(limit=10), 传全量 messages 让 ContextManager
+        # 用 token 预算 + 工具聚合统一决定裁剪 — 旧 limit=10 会绕过预算逻辑,
+        # 长对话下早期工具历史永远丢失.
         history_dicts = [
             {"role": m.role, "content": m.content}
-            for m in self.current_conversation.get_history(limit=10)
+            for m in self.current_conversation.messages
         ]
         # 关键: 移除刚加进去的 user_input, 因为 build_messages 会自动追加
         if history_dicts and history_dicts[-1].get("content") == user_input:
@@ -311,11 +315,14 @@ class ChatEngine:
         )
         messages = ctx_result["messages"]
         stats = ctx_result["stats"]
+        tool_hist = stats.get("tool_history", {}) or {}
         logger.debug(
             f"[Chat] ContextManager | history_in={stats['history_in']} "
             f"history_out={stats['history_out']} dropped={stats['dropped']} "
             f"memory={stats['memory_chunks']} tokens~={stats['tokens_estimate']} "
-            f"budget={stats['budget_available']}"
+            f"budget={stats['budget_available']} "
+            f"tools={tool_hist.get('tool_turns', 0)} "
+            f"tools_agg={tool_hist.get('aggregated_count', 0)}"
         )
 
         # 7. Phase 1: 调 LLM (非流式, 一次)
@@ -543,9 +550,11 @@ class ChatEngine:
         logger.debug(f"[StreamChat] Prompt设置已加载 | persona={'有' if prompt_settings.persona else '无'}")
 
         # 4. 构建消息列表 — 通过 ContextManager 做 token 预算 + 记忆注入
+        # 注: 不再用 get_history(limit=10), 传全量 messages 让 ContextManager
+        # 用 token 预算 + 工具聚合统一决定裁剪.
         history_dicts = [
             {"role": m.role, "content": m.content}
-            for m in self.current_conversation.get_history(limit=10)
+            for m in self.current_conversation.messages
         ]
         # build_messages 会自动追加 user_input, 这里去掉末尾重复
         if history_dicts and history_dicts[-1].get("content") == user_input:
@@ -561,13 +570,16 @@ class ChatEngine:
             conversation=self.current_conversation,
         )
         messages = ctx_result["messages"]
+        _tool_hist = (ctx_result["stats"].get("tool_history") or {})
         logger.debug(
             f"[StreamChat] ContextManager | "
             f"history_in={ctx_result['stats']['history_in']} "
             f"history_out={ctx_result['stats']['history_out']} "
             f"dropped={ctx_result['stats']['dropped']} "
             f"memory={ctx_result['stats']['memory_chunks']} "
-            f"tokens~={ctx_result['stats']['tokens_estimate']}"
+            f"tokens~={ctx_result['stats']['tokens_estimate']} "
+            f"tools={_tool_hist.get('tool_turns', 0)} "
+            f"tools_agg={_tool_hist.get('aggregated_count', 0)}"
         )
 
         # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用
@@ -852,12 +864,16 @@ class ChatEngine:
         )
         messages = ctx_result["messages"]
         history_count = ctx_result["stats"]["history_out"]
+        _tool_hist = (ctx_result["stats"].get("tool_history") or {})
         logger.debug(
             f"[StreamChatWithMsgs] ContextManager | "
             f"history_in={ctx_result['stats']['history_in']} "
             f"history_out={history_count} "
             f"dropped={ctx_result['stats']['dropped']} "
-            f"memory={ctx_result['stats']['memory_chunks']}"
+            f"memory={ctx_result['stats']['memory_chunks']} "
+            f"tokens~={ctx_result['stats']['tokens_estimate']} "
+            f"tools={_tool_hist.get('tool_turns', 0)} "
+            f"tools_agg={_tool_hist.get('aggregated_count', 0)}"
         )
 
         # 5. 第一阶段：流式调用，实时输出文本/思考，同时检测工具调用

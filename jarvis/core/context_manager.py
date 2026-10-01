@@ -34,6 +34,7 @@ from typing import Optional, Any
 
 from jarvis.services.ai.models import MODELS
 from jarvis.utils.logger import get_logger
+from jarvis.core.tool_history import ToolHistoryCompactor, ToolHistoryStats
 
 logger = get_logger(__name__)
 
@@ -325,9 +326,14 @@ class ContextManager:
         self,
         strategy: Optional[CompactionStrategy] = None,
         compressor: Optional[Any] = None,  # ContextCompressor 实例, 避免循环导入
+        tool_history_compactor: Optional[ToolHistoryCompactor] = None,
     ):
         self.strategy = strategy or HybridStrategy()
         self.compressor = compressor  # 可选: per-conversation 自动压缩
+        # 工具历史压缩 — 把 tool/tool_result 转成自然语言摘要,
+        # 默认开启, 让 LLM 在多轮对话中"记住"自己之前调用过什么工具.
+        # 设 enabled=False 可关闭 (例如纯 chat 不走工具的场景).
+        self.tool_history_compactor = tool_history_compactor or ToolHistoryCompactor()
 
     @staticmethod
     def context_window_for(model_id: Optional[str]) -> int:
@@ -389,13 +395,31 @@ class ContextManager:
         """
         budget = budget or self.budget_for(model_id)
 
-        # 0a) 剔除 history 里不能回放的中间角色 (tool / tool_result 等)
-        # — 详见 HISTORY_ALLOWED_ROLES 注释.
+        # 0a) 工具历史压缩 — 把 tool/tool_result 转成自然语言摘要
+        # (必须在 _sanitize_history 之前, 否则 strict policy 会先把
+        # tool/tool_result 全部丢光, LLM 看不到自己之前调用过什么工具).
+        tool_stats = ToolHistoryStats()
+        if self.tool_history_compactor is not None and self.tool_history_compactor.enabled:
+            history, tool_stats = self.tool_history_compactor.compact(history)
+            if tool_stats.tool_turns > 0:
+                logger.info(
+                    f"[Context] tool_history | turns={tool_stats.tool_turns} "
+                    f"aggregated={tool_stats.aggregated} "
+                    f"older={tool_stats.aggregated_count} "
+                    f"{tool_stats.total_before_tokens}→"
+                    f"{tool_stats.total_after_tokens} tokens"
+                )
+
+        # 0b) 剔除 history 里不能回放的中间角色 (tool / tool_result 等)
+        # — 经过 0a 后, tool 角色已被转为 user-role 摘要, 此处应丢弃 0 条.
+        # — 若用户传入了绕过 0a 的 history (例如旧调用方直接传 raw tool msgs),
+        #    仍按 strict policy 兜底丢弃, 防止 4xx.
         history, dropped_tool_msgs = self._sanitize_history(history)
         if dropped_tool_msgs:
             logger.info(
                 f"[Context] filtered {dropped_tool_msgs} non-replayable "
-                f"tool/tool_result messages from history"
+                f"tool/tool_result messages from history "
+                f"(should be 0 if tool_history_compactor ran)"
             )
 
         # 0) 可选: 触发 per-conversation 自动压缩
@@ -475,5 +499,6 @@ class ContextManager:
                 "tokens_estimate": messages_tokens(messages),
                 "budget_available": budget.available_for_history,
                 "compressed": compressed,
+                "tool_history": tool_stats.to_dict(),
             },
         }
