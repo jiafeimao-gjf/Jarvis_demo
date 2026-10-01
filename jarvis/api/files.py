@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from jarvis.core.file_tracker import file_tracker
 
-router = APIRouter(prefix="/api/files", tags=["files"])
+router = APIRouter(prefix="/files", tags=["files"])
 
 # 内容获取上限: 1MB
 MAX_CONTENT_BYTES = 1 * 1024 * 1024
