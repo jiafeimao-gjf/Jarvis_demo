@@ -21,6 +21,7 @@ Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模�
 
 - **ToolHistoryCompactor**：把 `tool` / `tool_result` 消息转成自然语言摘要注入 LLM 上下文，多轮对话里 LLM 能"记住"之前调过什么工具；总 token 超阈值时聚合早期调用
 - **ChatWindow UX**：输入框自适应 1-6 行高度；↑/↓ 在已发送内容中翻找（per-conversation，localStorage 持久化）；发送后自动清空；右侧新增「对话轮次」侧栏，点击跳转到对应消息
+- **会话文件追踪 + 可视化**：file 工具的 write / edit / delete / mkdir 操作自动记录到会话；右侧独立「会话文件」侧栏列出所有触碰过的文件；点击打开全屏 Viewer，`.md` / `.html` / 代码文件 / 图片按扩展名渲染（marked + DOMPurify / sandboxed iframe / highlight.js / `<img>`）
 
 ## 快速开始
 
@@ -177,6 +178,7 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 | **执行** | 工具调用（文件/Bash/浏览器/子代理...）| 对话中自然触发 |
 | **记忆** | token 预算 + 滑动窗口 + 摘要 + 工具历史 + 向量检索 | 自动 |
 | **导航** | 输入历史 ↑/↓ 翻找、对话轮次列表点击跳转 | 聊天界面 |
+| **文件** | 会话文件追踪（write/edit/delete/mkdir）+ 可视化（md/html/code/image） | 聊天界面右侧 |
 | **追溯** | 每次 LLM 调用的 body + response 完整记录 | Settings → LLM 日志 |
 
 ## 子代理（Subagent）
