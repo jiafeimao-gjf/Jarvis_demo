@@ -16,7 +16,7 @@ start() {
     nohup python -m uvicorn jarvis.main:app --host 0.0.0.0 --port $BACKEND_PORT > logs/backend.log 2>&1 &
     echo $! > logs/backend.pid
     echo "✅ 后端已启动 (PID: $(cat logs/backend.pid))"
-
+    # exit 0
     # 等待后端启动
     sleep 2
 

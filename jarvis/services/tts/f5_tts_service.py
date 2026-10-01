@@ -37,13 +37,21 @@ class F5TTSBridge:
         self._lock = threading.Lock()
         self._last_error: Optional[str] = None
         self._demo_path_added = False
+        self._seed_patched = False
         self._add_demo_to_path()
-        self._patch_seed_everything()
+        # 注意：这里**不能**调用 _patch_seed_everything()。
+        # 它会 `import f5_tts.model.utils`，而该模块顶层又 import torch / rjieba /
+        # pypinyin，整条链耗时可达数十秒（实测 torch 单项就要 8~50s，受机器负载影响）。
+        # 本类在模块底部即被实例化，也就是说这个重导入会落在 **FastAPI 启动流程**里，
+        # 让 uvicorn 迟迟不绑定端口 —— 表现为"后端卡住起不来"，且日志停在
+        # `[F5TTS] added demo path` 之后再无输出。
+        # 而 TTS 是可选能力（降级到浏览器 TTS），不该由它拖住整个服务启动。
+        # 因此改为在 ensure_service() 里按需 patch，时序上仍早于 demo TTSService 的导入。
 
-    @staticmethod
-    def _patch_seed_everything():
+    def _patch_seed_everything(self):
         """Monkey-patch f5_tts.model.utils.seed_everything。
 
+        幂等：重复调用只会生效一次，避免把 ``_orig`` 反复包裹。
         原实现: ``os.environ["PYTHONHASHSEED"] = str(seed)``，其中 seed
         来自 ``random.randint(0, sys.maxsize)``。64 位 macOS 上 sys.maxsize
         远超 Python 允许的 [0, 2**32-1] 范围，子进程启动时直接 Fatal:
@@ -52,6 +60,8 @@ class F5TTSBridge:
 
         解决: 把 seed clamp 到 [0, 2**32-1] 后再写环境变量。
         """
+        if self._seed_patched:
+            return
         try:
             import f5_tts.model.utils as _f5utils
         except Exception:
@@ -77,6 +87,7 @@ class F5TTSBridge:
             _f5api.seed_everything = _clamped
         except Exception:
             pass
+        self._seed_patched = True
         logger.debug("[F5TTS] seed_everything patched (PYTHONHASHSEED clamp)")
 
     @staticmethod
@@ -99,6 +110,10 @@ class F5TTSBridge:
         with self._lock:
             if self._service is not None:
                 return self._service
+            # 按需应用 seed patch：必须早于 demo TTSService 的导入，否则
+            # TTSService 内部 `from f5_tts... import seed_everything` 会先绑定到原函数，
+            # 之后的 monkey-patch 就失效了。
+            self._patch_seed_everything()
             try:
                 tts_module = importlib.import_module("tts_service")
                 self._service = tts_module.service
@@ -137,7 +152,15 @@ class F5TTSBridge:
 
     @property
     def device(self) -> str:
-        """推理设备（mps/cuda/cpu/unknown）。"""
+        """推理设备（mps/cuda/cpu/unknown）。
+
+        注意：这是一次**状态查询**，不能顺带把模型加载起来。
+        原实现无条件调用 ensure_service()，而 main.py 的启动日志里会求值
+        ``f5_tts.device``，于是启动流程被迫等待整条 f5_tts/ torch 导入链
+        （数十秒起步），表现为"端口迟迟不绑定"。这里补上与 available 同源的短路判断。
+        """
+        if not settings.voice_clone.enabled:
+            return "disabled"
         try:
             return self.ensure_service().get_device()
         except Exception:

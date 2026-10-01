@@ -136,8 +136,35 @@ class ServerConfig(BaseModel):
 # ============== CORS Configuration ==============
 
 class CORSConfig(BaseModel):
-    """CORS 配置"""
-    allow_origins: List[str] = ["http://localhost:8529", "http://127.0.0.1:8529"]
+    """CORS 配置
+
+    放行来源分四类，前两类与后两类的原因完全不同，不要一起删：
+
+    - 8529 两个：Jarvis_demo 自带前端（vite dev server 端口）。
+    - 5173 两个：Electron 桌面客户端（同级 electorn_demo）的**开发态**。
+      桌面客户端不再走 vite proxy，而是让渲染层直连 9529，因此浏览器侧的
+      CORS 会真正参与。**这两个是必需的** —— 缺了它们，开发态所有请求都失败。
+      实测：未放行 5173 时，客户端里跨源请求报 `TypeError: Failed to fetch`，
+      而后端日志里连访问记录都没有（预检就没通过）。
+
+    - "null"：桌面客户端**打包态**。窗口经 `loadFile` 加载，origin 是 file://。
+      但请注意：**实测（Electron 44 / Chromium 152）该形态下发出的 fetch 不携带
+      Origin 头，因此并不触发 CORS 检查** —— 也就是说放行 "null" 是预防性的，
+      并非当前必需。保留它是因为一旦改用自定义协议（Origin 会变成具体的
+      `scheme://host`）或 Chromium 收紧 file:// 的跨源处理，缺了它会直接断链，
+      而断链现象与"后端没启动"完全一样，极难归因。
+
+    放行 "null" 意味着本机任意 file:// 页面都能访问该后端。考虑到服务只监听
+    本机、且本身不含鉴权体系，这是可接受的权衡；一旦引入凭证鉴权，
+    必须连同 allow_credentials 一起重新评估。
+    """
+    allow_origins: List[str] = [
+        "http://localhost:8529",
+        "http://127.0.0.1:8529",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "null",
+    ]
     allow_credentials: bool = True
     allow_methods: List[str] = ["*"]
     allow_headers: List[str] = ["*"]

@@ -14,7 +14,7 @@ function readStoredTheme(): Theme {
     const v = sessionStorage.getItem(STORAGE_KEY)
     if (v === 'light' || v === 'dark') return v
   } catch { /* sessionStorage disabled */ }
-  return 'dark'  // safe default — matches existing app behavior
+  return 'light'  // 默认白天主题
 }
 
 function writeStoredTheme(t: Theme) {
@@ -26,7 +26,7 @@ function writeStoredTheme(t: Theme) {
 function applyToDom(t: Theme) {
   if (typeof document === 'undefined') return
   // The .light class in main.css swaps the CSS variable palette.
-  // Default (no class) = dark. .light = light.
+  // Default (no class) = dark. .light = light. Store default is 'light'.
   document.documentElement.classList.toggle('light', t === 'light')
 }
 
