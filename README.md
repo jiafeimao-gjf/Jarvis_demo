@@ -17,6 +17,11 @@ Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模�
 | 工具执行 | TaskExecutor（Strategy Pattern）|
 | 子代理 | SubagentOrchestrator（独立会话 + 工具循环）|
 
+### 最近更新（v2026.10）
+
+- **ToolHistoryCompactor**：把 `tool` / `tool_result` 消息转成自然语言摘要注入 LLM 上下文，多轮对话里 LLM 能"记住"之前调过什么工具；总 token 超阈值时聚合早期调用
+- **ChatWindow UX**：输入框自适应 1-6 行高度；↑/↓ 在已发送内容中翻找（per-conversation，localStorage 持久化）；发送后自动清空；右侧新增「对话轮次」侧栏，点击跳转到对应消息
+
 ## 快速开始
 
 ```bash
@@ -166,10 +171,12 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 | 能力 | 说明 | 触发方式 |
 |------|------|----------|
 | **听** | 语音识别（Paraformer / Whisper STT，本地推理）| 麦克风按钮 |
-| **说** | 语音合成（浏览器 SpeechSynthesis）| 说"speak" |
+| **说** | 语音合成（浏览器 SpeechSynthesis / F5-TTS 克隆声音）| 说"speak" |
 | **读** | 文件/图片/PDF 读取 | 粘贴图片、文件上传 |
 | **写** | 代码/文档生成、文件操作 | 直接对话 |
 | **执行** | 工具调用（文件/Bash/浏览器/子代理...）| 对话中自然触发 |
+| **记忆** | token 预算 + 滑动窗口 + 摘要 + 工具历史 + 向量检索 | 自动 |
+| **导航** | 输入历史 ↑/↓ 翻找、对话轮次列表点击跳转 | 聊天界面 |
 | **追溯** | 每次 LLM 调用的 body + response 完整记录 | Settings → LLM 日志 |
 
 ## 子代理（Subagent）
@@ -234,9 +241,38 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 
 ## 记忆系统
 
-- **上下文压缩**：`ContextManager` 按 token 预算动态裁剪历史，注入相关记忆（top-k 向量检索）。
-- **会话持久化**：对话保存到 SQLite，LanceDB 支持语义搜索。
-- **独立子会话**：每个 subagent 调用创建独立 Conversation，父会话可跳转查看完整执行轨迹。
+每次 LLM 调用前，`ContextManager` 把对话历史 + 相关记忆 + 工具历史按 token 预算打包：
+
+- **Token 预算**：从 `MODELS[model_id].context_window` 自动取值，预留输出 / 记忆 / system
+- **Compaction 策略**：`SlidingWindow` / `Summarization` / `Hybrid`，可自定义实现 `CompactionStrategy.compact()` 替换
+- **ToolHistoryCompactor**（v2026.10 新增）：把 `tool` / `tool_result` 消息转成自然语言 `user`-role 摘要
+  ```
+  [工具执行 #1] bash.exec
+    参数: {"cmd": "ls -la"}
+    结果: <truncated to 500 chars>
+  ```
+  总 token 超 1500 时按 `tool.action` 分组 + 计数聚合成
+  ```
+  [早期工具执行摘要 — 共 N 次工具调用]
+    · bash.exec (×3, 3 成功)
+    · file.read (×2, 2 成功)
+  ```
+  最近 4 个工具 turn 保留原文。多轮对话里 LLM 知道之前调过什么工具、参数和结果概要，避免重复调用。
+
+**会话持久化**：对话保存到 SQLite，LanceDB 支持语义搜索。
+
+**独立子会话**：每个 subagent 调用创建独立 Conversation，父会话可跳转查看完整执行轨迹。
+
+## 对话导航与输入体验
+
+| 功能 | 说明 |
+|------|------|
+| **自适应输入框** | 高度 1-6 行 clamp（48-168px），超 6 行出滚动条；`watch(inputValue, autoResize)` 覆盖编程清空 |
+| **输入历史翻找** | ↑/↓ 在已发送内容中翻找，per-conversation 隔离，封顶 100 条；持久化到 `localStorage:jarvis_input_history_v1`；`/clear` / `/context` / `/skill x` 都记入历史 |
+| **多行 cursor 不被吞** | 仅光标在第一行时 ↑ 才召回历史；中间行 ↑ 走原生 cursor 移动 |
+| **发送后置空** | Enter 发送后输入框立即清空，光标回到 textarea |
+| **对话轮次侧栏** | 右侧 `w-72` 面板列出所有 user 输入，点击 `scrollIntoView` 跳转；IntersectionObserver 追踪当前可见 turn 自动高亮；图片消息显示 `📷 [图片]`；面板开关持久化 |
+| **Slash 命令面板** | `/` 触发，↑↓ 选择，Enter 执行，`/clear` / `/stop` / `/context` / `/<skill_id>` |
 
 ## 开发
 
