@@ -8,7 +8,9 @@ import { useApi } from '@/composables/useApi'
 import { usePCMPlayer } from '@/composables/usePCMPlayer'
 import ChatMessage from './ChatMessage.vue'
 import SubagentSessionPanel from './SubagentSessionPanel.vue'
-import type { Skill } from '@/types'
+import FileSidebar from './FileSidebar.vue'
+import FileViewer from './FileViewer.vue'
+import type { Skill, FileOp } from '@/types'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
@@ -60,12 +62,22 @@ function closeSubagentPanel() {
 
 // ── 用户轮次面板 (持久化开关) ────────────────────────────────────
 const TURNS_PANEL_KEY = 'jarvis_user_turns_panel_v1'
+const FILES_PANEL_KEY = 'jarvis_user_files_panel_v1'
 const INPUT_HISTORY_KEY = 'jarvis_input_history_v1'
 const INPUT_HISTORY_MAX = 100  // 每会话最多保留的输入历史条数
 
 function loadShowTurnsPanel(): boolean {
   try {
     const v = localStorage.getItem(TURNS_PANEL_KEY)
+    return v === null ? true : v === 'true'
+  } catch {
+    return true
+  }
+}
+
+function loadShowFilesPanel(): boolean {
+  try {
+    const v = localStorage.getItem(FILES_PANEL_KEY)
     return v === null ? true : v === 'true'
   } catch {
     return true
@@ -92,7 +104,9 @@ function saveInputHistory(history: Record<string, string[]>) {
 }
 
 const showUserTurnsPanel = ref(loadShowTurnsPanel())
+const showFilesPanel = ref(loadShowFilesPanel())
 const activeUserTurnId = ref<string | null>(null)
+const selectedFile = ref<FileOp | null>(null)
 let turnObserver: IntersectionObserver | null = null
 let observedElements: WeakSet<Element> | null = null
 
@@ -223,6 +237,21 @@ function toggleTurnsPanel() {
   if (showUserTurnsPanel.value) {
     nextTick(setupTurnObserver)
   }
+}
+
+function toggleFilesPanel() {
+  showFilesPanel.value = !showFilesPanel.value
+  try {
+    localStorage.setItem(FILES_PANEL_KEY, String(showFilesPanel.value))
+  } catch { /* ignore */ }
+}
+
+function openFileViewer(file: FileOp) {
+  selectedFile.value = file
+}
+
+function closeFileViewer() {
+  selectedFile.value = null
 }
 
 function setupTurnObserver() {
@@ -910,6 +939,16 @@ onUnmounted(() => {
             <path d="M4 6h16M4 12h16M4 18h7"/>
           </svg>
         </button>
+        <!-- 切换文件列表按钮 (v2026.10 文件追踪) -->
+        <button
+          class="p-1 hover:bg-primary/10 rounded transition-all opacity-50 hover:opacity-100 shrink-0"
+          :title="showFilesPanel ? '隐藏文件列表' : '显示文件列表'"
+          @click="toggleFilesPanel"
+        >
+          <svg class="w-3.5 h-3.5 text-primary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+          </svg>
+        </button>
       </template>
       <template v-else>
         <input
@@ -1075,6 +1114,21 @@ onUnmounted(() => {
         </button>
       </div>
     </aside>
+
+    <!-- 文件侧栏 (v2026.10) — 独立列, 显示本会话 file 工具触碰过的文件 -->
+    <FileSidebar
+      v-if="showFilesPanel && chatStore.currentConversationId"
+      :conversation-id="chatStore.currentConversationId"
+      @close="toggleFilesPanel"
+      @open-viewer="openFileViewer"
+    />
+
+    <!-- 文件可视化弹窗 (Teleport 到 body, 全屏遮罩) -->
+    <FileViewer
+      :conversation-id="chatStore.currentConversationId"
+      :file="selectedFile"
+      @close="closeFileViewer"
+    />
   </div>
 </template>
 

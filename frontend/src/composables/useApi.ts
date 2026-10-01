@@ -20,6 +20,8 @@ import type {
   LLMCallLogDetail,
   LLMCallLogListResponse,
   LLMCallLogStats,
+  FileListResponse,
+  FileContentResponse,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -566,6 +568,24 @@ export function useApi() {
     return res.json()
   }
 
+  // ── 会话文件追踪 (per-conversation file tool ops) ───────────────
+  async function listSessionFiles(conversationId: string): Promise<FileListResponse> {
+    const res = await fetch(`${API_BASE}/files?conversation_id=${encodeURIComponent(conversationId)}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.json()
+  }
+
+  async function getFileContent(conversationId: string, path: string): Promise<FileContentResponse> {
+    const res = await fetch(
+      `${API_BASE}/files/content?conversation_id=${encodeURIComponent(conversationId)}&path=${encodeURIComponent(path)}`
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`HTTP ${res.status} ${text}`)
+    }
+    return res.json()
+  }
+
   return {
     error,
     chat,
@@ -610,5 +630,8 @@ export function useApi() {
     getLLMCallLog,
     clearLLMCallLogs,
     getLLMCallStats,
+    // 会话文件追踪
+    listSessionFiles,
+    getFileContent,
   }
 }

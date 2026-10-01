@@ -188,6 +188,40 @@ export interface MemoryQueryResponse {
   count: number
 }
 
+// ── Session Files ───────────────────────────────────────────────────────
+
+/** 文件工具产生的单条操作记录 */
+export interface FileOp {
+  path: string
+  action: 'write' | 'edit' | 'delete' | 'mkdir'
+  timestamp: string
+  size: number
+  status: 'success' | 'error'
+  error?: string | null
+}
+
+/** GET /api/files 响应 */
+export interface FileListResponse {
+  conversation_id: string
+  files: FileOp[]
+  stats: {
+    total_ops: number
+    unique_paths: number
+    by_action: Record<string, number>
+  }
+}
+
+/** GET /api/files/content 响应 */
+export interface FileContentResponse {
+  path: string
+  size: number
+  encoding: 'utf-8' | 'base64'
+  content: string
+  truncated: boolean
+  extension: string
+  message?: string
+}
+
 // ── LLM 调用日志 ────────────────────────────────────────────────────────
 
 /** 单条调用的摘要 (列表用, 不含完整 body) */

@@ -35,6 +35,7 @@ from jarvis.api.providers import router as providers_router
 from jarvis.api.voice_tts import router as voice_tts_router
 from jarvis.api.skills import router as skills_router
 from jarvis.api.logs import router as logs_router
+from jarvis.api.files import router as files_router
 
 api_router.include_router(chat_router)
 api_router.include_router(voice_router)
@@ -45,3 +46,4 @@ api_router.include_router(providers_router)
 api_router.include_router(voice_tts_router)
 api_router.include_router(skills_router)
 api_router.include_router(logs_router)
+api_router.include_router(files_router)

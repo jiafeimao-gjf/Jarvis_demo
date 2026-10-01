@@ -334,6 +334,10 @@ class FileOperationStrategy(TaskStrategy):
         else:
             full_path.write_text(content, encoding="utf-8")
 
+        # 记录到 FileTracker (per-conversation)
+        from jarvis.core.file_tracker import record_file_op
+        record_file_op(path, "write", full_path)
+
         return {
             "status": "success",
             "message": f"文件已写入: {path}",
@@ -355,6 +359,9 @@ class FileOperationStrategy(TaskStrategy):
         new_text = text.replace(old_content, new_content, 1)
         full_path.write_text(new_text, encoding="utf-8")
 
+        from jarvis.core.file_tracker import record_file_op
+        record_file_op(path, "edit", full_path)
+
         return {
             "status": "success",
             "message": f"文件已修改: {path}",
@@ -373,6 +380,11 @@ class FileOperationStrategy(TaskStrategy):
         elif full_path.is_dir():
             import shutil
             shutil.rmtree(full_path)
+
+        # delete 后 full_path 已不存在, 传个虚拟的 Path 即可 (size=0)
+        from pathlib import Path as _Path
+        from jarvis.core.file_tracker import record_file_op
+        record_file_op(path, "delete", _Path(str(full_path)))
 
         return {
             "status": "success",
@@ -409,6 +421,10 @@ class FileOperationStrategy(TaskStrategy):
         """创建目录"""
         full_path = self._resolve_path(path)
         full_path.mkdir(parents=True, exist_ok=True)
+
+        from jarvis.core.file_tracker import record_file_op
+        record_file_op(path, "mkdir", full_path)
+
         return {
             "status": "success",
             "message": f"目录已创建: {path}",

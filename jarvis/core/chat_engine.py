@@ -205,6 +205,31 @@ class ChatEngine:
         except Exception as e:
             logger.warning(f"[ChatEngine] 读 tool_loop_max_iterations 失败: {e}")
 
+    async def _iter_agent_loop(self, messages: list[dict], **kwargs):
+        """Wrap agent_loop_runner.run_iterations with file tracker context.
+
+        自动设置 current_conversation_id contextvar (供 file_tracker 使用),
+        并把 conversation_id kwarg 转发给 run_iterations.
+
+        调用方不需要再传 conversation_id, 也不需要手动 try/finally.
+        用于 stream_chat / stream_chat_with_messages 两处 async generator
+        入口, 避免在大段 async for body 上重新缩进.
+        """
+        from jarvis.core.file_tracker import current_conversation_id
+        conv_id = (
+            self.current_conversation.conversation_id
+            if self.current_conversation else None
+        )
+        token = current_conversation_id.set(conv_id) if conv_id else None
+        try:
+            async for event in self.agent_loop_runner.run_iterations(
+                messages, self.router, **kwargs
+            ):
+                yield event
+        finally:
+            if token is not None:
+                current_conversation_id.reset(token)
+
     def _extract_tool_calls_from_blocks(self, content_blocks: list) -> list:
         """从 Anthropic content_blocks 中提取工具调用"""
         tool_calls = []
@@ -379,73 +404,79 @@ class ChatEngine:
             self._resolve_provider_protocol(instance)
         )
         final_result: Optional[AgentLoopResult] = None
-        async for event in self.agent_loop_runner.run_iterations(
-            messages, self.router,
-            model=model, instance=instance,
-            conversation_id=self.current_conversation.conversation_id,
-            current_text=response_text,
-            current_thinking=response_thinking,
-            current_content_blocks=content_blocks,
-            current_tool_uses=tool_uses,
-        ):
-            etype = event.get("type", "")
+        # FileTracker 上下文 — 让 file 工具记录到当前 conversation_id
+        from jarvis.core.file_tracker import current_conversation_id
+        _ft_token = current_conversation_id.set(self.current_conversation.conversation_id)
+        try:
+            async for event in self.agent_loop_runner.run_iterations(
+                messages, self.router,
+                model=model, instance=instance,
+                conversation_id=self.current_conversation.conversation_id,
+                current_text=response_text,
+                current_thinking=response_thinking,
+                current_content_blocks=content_blocks,
+                current_tool_uses=tool_uses,
+            ):
+                etype = event.get("type", "")
 
-            if etype == "tool_iter":
-                logger.info(
-                    f"[Chat] AgentLoop iter {event['iteration']}/{event['max']}"
-                )
+                if etype == "tool_iter":
+                    logger.info(
+                        f"[Chat] AgentLoop iter {event['iteration']}/{event['max']}"
+                    )
 
-            elif etype == "tool_call":
-                # 持久化: 记录 tool 调用 (与旧实现一致)
-                tool_call_message = {
-                    "tool": event["tool"],
-                    "action": event["action"],
-                    "params": event["params"],
-                }
-                self.current_conversation.add_message(
-                    "tool", json.dumps(tool_call_message)
-                )
-                logger.info(
-                    f"[Chat] 工具调用: {event['tool']}.{event['action']} | "
-                    f"params={event['params']}"
-                )
+                elif etype == "tool_call":
+                    # 持久化: 记录 tool 调用 (与旧实现一致)
+                    tool_call_message = {
+                        "tool": event["tool"],
+                        "action": event["action"],
+                        "params": event["params"],
+                    }
+                    self.current_conversation.add_message(
+                        "tool", json.dumps(tool_call_message)
+                    )
+                    logger.info(
+                        f"[Chat] 工具调用: {event['tool']}.{event['action']} | "
+                        f"params={event['params']}"
+                    )
 
-            elif etype == "tool_result":
-                # 持久化: 记录 tool_result (与旧实现一致)
-                result_content = ToolResultFormatter.format_plain(
-                    tool=event["tool"],
-                    action=event["action"],
-                    params=event.get("params", {}),
-                    result=event["result"],
-                )
-                self.current_conversation.add_message("tool_result", result_content)
-                status = (
-                    event["result"].get("status", "success")
-                    if isinstance(event["result"], dict)
-                    else "success"
-                )
-                logger.info(
-                    f"[Chat] 工具 {event['tool']}.{event['action']} 执行完成 | "
-                    f"status={status}"
-                )
+                elif etype == "tool_result":
+                    # 持久化: 记录 tool_result (与旧实现一致)
+                    result_content = ToolResultFormatter.format_plain(
+                        tool=event["tool"],
+                        action=event["action"],
+                        params=event.get("params", {}),
+                        result=event["result"],
+                    )
+                    self.current_conversation.add_message("tool_result", result_content)
+                    status = (
+                        event["result"].get("status", "success")
+                        if isinstance(event["result"], dict)
+                        else "success"
+                    )
+                    logger.info(
+                        f"[Chat] 工具 {event['tool']}.{event['action']} 执行完成 | "
+                        f"status={status}"
+                    )
 
-            elif etype == "tool_skipped":
-                # dedup: 重复调用, 记录但不执行
-                tool_call_message = {
-                    "tool": event["tool"],
-                    "skipped": True,
-                    "reason": event.get("reason", ""),
-                }
-                self.current_conversation.add_message(
-                    "tool", json.dumps(tool_call_message)
-                )
-                logger.info(
-                    f"[Chat] 工具重复跳过: {event['tool']} | "
-                    f"reason={event.get('reason', '')}"
-                )
+                elif etype == "tool_skipped":
+                    # dedup: 重复调用, 记录但不执行
+                    tool_call_message = {
+                        "tool": event["tool"],
+                        "skipped": True,
+                        "reason": event.get("reason", ""),
+                    }
+                    self.current_conversation.add_message(
+                        "tool", json.dumps(tool_call_message)
+                    )
+                    logger.info(
+                        f"[Chat] 工具重复跳过: {event['tool']} | "
+                        f"reason={event.get('reason', '')}"
+                    )
 
-            elif etype == "result":
-                final_result = event["result"]
+                elif etype == "result":
+                    final_result = event["result"]
+        finally:
+            current_conversation_id.reset(_ft_token)
 
         if final_result is None:
             # 防御性: runner 没产出 result 事件时, 用 Phase 1 响应兜底
@@ -661,10 +692,9 @@ class ChatEngine:
             # Phase 1 的 assistant turn 已经在 content_blocks 中, runner 会复用
             # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
             final_result: Optional[AgentLoopResult] = None
-            async for event in self.agent_loop_runner.run_iterations(
-                messages, self.router,
+            async for event in self._iter_agent_loop(
+                messages,
                 model=model, instance=instance,
-                conversation_id=self.current_conversation.conversation_id,
                 current_text=streamed_text,
                 current_thinking=streamed_thinking,
                 current_content_blocks=content_blocks,
@@ -956,10 +986,9 @@ class ChatEngine:
             )
             # runner 会自动注入 assistant turn (含 tool_use) + tool_result, 修核心 bug
             final_result: Optional[AgentLoopResult] = None
-            async for event in self.agent_loop_runner.run_iterations(
-                messages, self.router,
+            async for event in self._iter_agent_loop(
+                messages,
                 model=model, instance=instance,
-                conversation_id=self.current_conversation.conversation_id,
                 current_text=streamed_text,
                 current_thinking=streamed_thinking,
                 current_content_blocks=content_blocks,
