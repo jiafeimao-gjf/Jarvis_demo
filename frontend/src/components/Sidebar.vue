@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chat'
 import { useTheme } from '@/stores/theme'
 import { ref, nextTick } from 'vue'
 import type { Conversation } from '@/types'
+import { formatDateTime } from '@/lib/utils'
 
 const emit = defineEmits<{
   (e: 'select-conversation'): void
@@ -142,10 +143,13 @@ function onEditKeydown(e: KeyboardEvent) {
       >
         <template v-if="editingId !== conv.id">
           <button
-            class="flex-1 text-left truncate text-xs"
+            class="flex-1 min-w-0 text-left"
             @click="selectConversation(conv.id)"
           >
-            {{ displayTitle(conv) }}
+            <div class="truncate text-xs">{{ displayTitle(conv) }}</div>
+            <div class="text-[10px] text-muted-foreground/50 tracking-wide mt-0.5">
+              {{ formatDateTime(conv.updatedAt) }}
+            </div>
           </button>
           <button
             class="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/20 rounded transition-all shrink-0"
@@ -211,10 +215,11 @@ function onEditKeydown(e: KeyboardEvent) {
             class="w-full px-3 py-1.5 rounded text-xs border border-transparent flex items-center gap-2 group opacity-60 hover:opacity-100 transition-all"
           >
             <button
-              class="flex-1 text-left truncate text-muted-foreground hover:text-foreground"
+              class="flex-1 min-w-0 text-left text-muted-foreground hover:text-foreground"
               :title="displayTitle(conv)"
             >
-              {{ displayTitle(conv) }}
+              <div class="truncate">{{ displayTitle(conv) }}</div>
+              <div class="text-[10px] opacity-70 mt-0.5">{{ formatDateTime(conv.updatedAt) }}</div>
             </button>
             <button
               class="opacity-0 group-hover:opacity-100 p-1 hover:bg-primary/20 rounded transition-all shrink-0"

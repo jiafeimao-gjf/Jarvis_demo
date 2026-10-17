@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { Message, Conversation } from '@/types'
 import { useSettingsStore } from '@/stores/settings'
+import { parseUtcDate } from '@/lib/utils'
 
 // sessionStorage cache: instant topic display on page reload
 // Avoids the "未命名对话" flash before loadFromBackend completes.
@@ -108,8 +109,8 @@ export const useChatStore = defineStore('chat', () => {
             title: conv.title || `对话 ${conv.message_count} 条消息`,
             topic,
             messages: [],
-            createdAt: new Date(conv.created_at),
-            updatedAt: new Date(conv.updated_at),
+            createdAt: parseUtcDate(conv.created_at),
+            updatedAt: parseUtcDate(conv.updated_at),
             userId: settingsStore.settings.user_name || '',
           }
           if (archivedIds.value.has(conv.conversation_id)) {
@@ -161,6 +162,8 @@ export const useChatStore = defineStore('chat', () => {
               role: m.role,
               content: m.content,
               image: m.image || undefined,
+              // 必须保留 timestamp — 之前漏发导致每次同步都覆盖掉后端存的时间
+              timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
             })),
             context: conversation.context || {}
           })

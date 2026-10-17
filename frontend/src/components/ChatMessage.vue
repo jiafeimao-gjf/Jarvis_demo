@@ -3,7 +3,7 @@ import { computed, ref, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import type { Message } from '@/types'
-import { formatTime } from '@/lib/utils'
+import { formatDateTime } from '@/lib/utils'
 import { useApi } from '@/composables/useApi'
 import { usePCMPlayer } from '@/composables/usePCMPlayer'
 import { useSettingsStore } from '@/stores/settings'
@@ -322,7 +322,7 @@ onUnmounted(() => {
         isUser ? 'text-muted-foreground/60 text-right' : 'text-muted-foreground/50 text-left'
       ]"
     >
-      {{ formatTime(message.timestamp) }}
+      {{ formatDateTime(message.timestamp) }}
       <button
         v-if="!isUser && settingsStore.settings.tts_enabled"
         class="ml-2 align-middle opacity-50 hover:opacity-100 transition-opacity disabled:opacity-30"

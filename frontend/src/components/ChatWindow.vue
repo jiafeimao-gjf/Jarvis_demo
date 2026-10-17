@@ -11,6 +11,7 @@ import SubagentSessionPanel from './SubagentSessionPanel.vue'
 import FileSidebar from './FileSidebar.vue'
 import FileViewer from './FileViewer.vue'
 import type { Skill, FileOp } from '@/types'
+import { formatDateTime } from '@/lib/utils'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
@@ -126,7 +127,7 @@ const userTurns = computed(() =>
         ? '📷 [图片]'
         : m.content.replace(/\s+/g, ' ').slice(0, 60) +
           (m.content.length > 60 ? '...' : '')
-      return { id: m.id, index: idx + 1, preview: text, isImageOnly }
+      return { id: m.id, index: idx + 1, preview: text, isImageOnly, timestamp: m.timestamp }
     })
 )
 
@@ -317,6 +318,10 @@ const topicDraft = ref('')
 const topicInput = ref<HTMLInputElement | null>(null)
 const topicDisplay = computed(() =>
   chatStore.currentConversation?.topic?.trim() || '未命名对话'
+)
+// 当前对话的完整时间（最后更新），显示在主题栏
+const conversationDateTime = computed(() =>
+  formatDateTime(chatStore.currentConversation?.updatedAt)
 )
 
 function startTopicEdit() {
@@ -919,6 +924,12 @@ onUnmounted(() => {
         >
           {{ topicDisplay }}
         </button>
+        <span
+          v-if="conversationDateTime"
+          class="text-[10px] text-muted-foreground/50 tracking-wide whitespace-nowrap shrink-0"
+        >
+          {{ conversationDateTime }}
+        </span>
         <button
           class="p-1 hover:bg-primary/10 rounded transition-all opacity-50 hover:opacity-100 shrink-0"
           @click="startTopicEdit"
@@ -1109,6 +1120,9 @@ onUnmounted(() => {
         >
           <div class="flex items-center gap-2 mb-1">
             <span class="text-[10px] font-mono text-muted-foreground/70 shrink-0">#{{ turn.index }}</span>
+            <span class="text-[10px] text-muted-foreground/50 tracking-wide whitespace-nowrap">
+              {{ formatDateTime(turn.timestamp) }}
+            </span>
           </div>
           <div class="line-clamp-2 text-foreground/80 leading-relaxed break-all">{{ turn.preview }}</div>
         </button>
