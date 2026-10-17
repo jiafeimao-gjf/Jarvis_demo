@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS Desktop · 整体架构</title>
+<style>
+:root{
+  --bg:#0b1017; --panel:#121b26; --panel-2:#0e1621; --line:rgba(255,255,255,.09);
+  --text:#e6edf5; --muted:#8b9bb0; --dim:#6b7c91;
+  --blue-fill:#0C447C; --blue-stroke:#85B7EB; --blue-t1:#C9E2FA; --blue-t2:#85B7EB;
+  --blue-chip:#042C53; --blue-chipbd:#185FA5;
+  --teal-fill:#085041; --teal-stroke:#5DCAA5; --teal-t1:#B7EAD8; --teal-t2:#5DCAA5;
+  --amber-fill:#633806; --amber-stroke:#EF9F27; --amber-t1:#FAC775; --amber-t2:#EF9F27;
+  --red-fill:#501313; --red-stroke:#F09595; --red-t1:#F7C1C1; --red-t2:#F09595;
+  --divider:#8b9bb0;
+}
+[data-theme="light"]{
+  --bg:#f4f6f9; --panel:#ffffff; --panel-2:#f8fafc; --line:rgba(15,30,50,.12);
+  --text:#16202e; --muted:#5b6b80; --dim:#7b8a9c;
+  --blue-fill:#E6F1FB; --blue-stroke:#185FA5; --blue-t1:#0C447C; --blue-t2:#185FA5;
+  --blue-chip:#FFFFFF; --blue-chipbd:#85B7EB;
+  --teal-fill:#E1F5EE; --teal-stroke:#0F6E56; --teal-t1:#085041; --teal-t2:#0F6E56;
+  --amber-fill:#FAEEDA; --amber-stroke:#854F0B; --amber-t1:#633806; --amber-t2:#854F0B;
+  --red-fill:#FCEBEB; --red-stroke:#A32D2D; --red-t1:#791F1F; --red-t2:#A32D2D;
+  --divider:#5b6b80;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",sans-serif;
+  font-size:14px; line-height:1.65; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1140px;margin:0 auto;padding:40px 20px 72px}
+
+header.top{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;flex-wrap:wrap;
+  padding-bottom:24px;border-bottom:1px solid var(--line)}
+h1{font-size:22px;font-weight:500;margin:0 0 6px}
+.sub{color:var(--muted);font-size:13px;margin:0}
+button.toggle{
+  background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;
+  padding:7px 14px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;
+}
+button.toggle:hover{border-color:var(--muted)}
+
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.meta span{
+  font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:4px 10px;font-variant-numeric:tabular-nums;
+}
+.meta b{color:var(--text);font-weight:500}
+
+section{margin-top:40px}
+h2{font-size:16px;font-weight:500;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+h2 .n{
+  font-size:12px;color:var(--muted);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:1px 8px;font-variant-numeric:tabular-nums
+}
+.lede{color:var(--muted);font-size:13px;margin:0 0 18px;max-width:820px}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.card + .card{margin-top:14px}
+svg{display:block;width:100%;height:auto}
+text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+.t14{font-size:14px;font-weight:500}
+.t13{font-size:13px;font-weight:500}
+.t12{font-size:12px}
+.p{fill:var(--text)}.m{fill:var(--muted)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px}
+.mini{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.mini h3{margin:0 0 6px;font-size:13px;font-weight:500}
+.mini p{margin:0;font-size:12.5px;color:var(--muted)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--text)}
+
+.alert{border-radius:12px;padding:16px 18px;border:1px solid var(--red-stroke);background:var(--red-fill);color:var(--red-t1)}
+.alert h3{margin:0 0 8px;font-size:13.5px;font-weight:500;color:var(--red-t1)}
+.alert p{margin:0 0 8px;font-size:12.5px;color:var(--red-t1);opacity:.95}
+.alert ol{margin:8px 0 0;padding-left:20px;font-size:12.5px}
+.alert li{margin-bottom:6px}
+.alert code{background:rgba(128,128,128,.16);border-color:transparent;color:inherit}
+
+.note{border-radius:12px;padding:14px 18px;border:1px solid var(--amber-stroke);background:var(--amber-fill);color:var(--amber-t1);font-size:12.5px}
+.note b{font-weight:500}
+
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px;background:var(--panel-2)}
+tr:last-child td{border-bottom:none}
+td code{font-size:11.5px}
+
+footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);color:var(--dim);font-size:12px}
+footer ul{margin:8px 0 0;padding-left:18px}
+footer li{margin-bottom:4px}
+footer code{font-size:11px;background:transparent;border:none;padding:0;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>JARVIS Desktop · 整体架构</h1>
+    <p class="sub">macOS 专项适配的 Electron 客户端框架 · 四层隔离 + IPC 契约驱动 + 全链路可验收</p>
+    <div class="meta">
+      <span><b>v1.1.0</b></span>
+      <span>bundle id <b>com.jarvis.desktop</b></span>
+      <span>scheme <b>jarvis</b></span>
+      <span>最低系统 <b>macOS 13</b></span>
+      <span>Electron <b>44.4.3</b></span>
+      <span>Vue <b>3</b> · Vite <b>7</b> · TS <b>5.9</b></span>
+    </div>
+  </div>
+  <button class="toggle" id="tg">切换浅色</button>
+</header>
+
+<section>
+  <h2><span class="n">01</span>进程与代码分层</h2>
+  <p class="lede">四个平级目录，边界由静态检查与单元测试共同锁死。任一越界都会在 <code>npm run typecheck</code> 或 <code>npm test</code> 阶段暴露。</p>
+  <div class="card">
+    <svg viewBox="0 0 1100 616" role="img" aria-label="四层结构图">
+      <rect x="20" y="20" width="1060" height="576" rx="24" fill="var(--panel-2)" stroke="var(--line)"/>
+      <text class="t14 p" x="48" y="52">JARVIS Desktop</text>
+      <text class="t12 m" x="1052" y="52" text-anchor="end">Electron 44.4.3 · 单一 .app</text>
+
+      <rect x="44" y="76" width="1012" height="132" rx="14" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t14" x="68" y="102" fill="var(--blue-t1)">主进程 · Node 侧</text>
+      <text class="t12" x="1032" y="102" text-anchor="end" fill="var(--blue-t2)">系统能力的唯一出口</text>
+
+      <rect x="68" y="122" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="159" y="147" text-anchor="middle" fill="var(--blue-t1)">窗口 · 生命周期</text>
+      <text class="t12" x="159" y="170" text-anchor="middle" fill="var(--blue-t2)">单例锁 · 状态恢复</text>
+
+      <rect x="263" y="122" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="354" y="147" text-anchor="middle" fill="var(--blue-t1)">菜单 · 托盘</text>
+      <text class="t12" x="354" y="170" text-anchor="middle" fill="var(--blue-t2)">macOS 原生集成</text>
+
+      <rect x="458" y="122" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="549" y="147" text-anchor="middle" fill="var(--blue-t1)">安全策略</text>
+      <text class="t12" x="549" y="170" text-anchor="middle" fill="var(--blue-t2)">沙箱 · CSP · 导航</text>
+
+      <rect x="653" y="122" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="744" y="147" text-anchor="middle" fill="var(--blue-t1)">服务层</text>
+      <text class="t12" x="744" y="170" text-anchor="middle" fill="var(--blue-t2)">偏好 · 更新 · 崩溃</text>
+
+      <rect x="848" y="122" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="939" y="147" text-anchor="middle" fill="var(--blue-t1)">IPC 注册表</text>
+      <text class="t12" x="939" y="170" text-anchor="middle" fill="var(--blue-t2)">32 通道 · 出参校验</text>
+
+      <line x1="228" y1="208" x2="228" y2="240" stroke="var(--divider)" stroke-width="1.5" marker-start="url(#a1)" marker-end="url(#a1)"/>
+      <text class="t12 m" x="248" y="224">invoke ↔ handle · 统一返回 IpcResult&lt;T&gt;，不跨进程抛异常</text>
+      <line x1="880" y1="208" x2="880" y2="240" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a1)"/>
+      <text class="t12 m" x="900" y="224">推送 IPC_PUSH</text>
+
+      <rect x="44" y="240" width="1012" height="64" rx="14" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="68" y="262" fill="var(--blue-t1)">Preload 桥 · sandbox: true · contextIsolation: true · nodeIntegration: false</text>
+      <text class="t12" x="68" y="284" fill="var(--blue-t2)">contextBridge.exposeInMainWorld('api', { invoke, on, available, platform }) —— 只此四项，别无出口</text>
+
+      <line x1="228" y1="304" x2="228" y2="336" stroke="var(--divider)" stroke-width="1.5" marker-start="url(#a1)" marker-end="url(#a1)"/>
+      <text class="t12 m" x="248" y="320">window.api（白名单通道，通道名不在契约表内直接拒绝）</text>
+      <line x1="880" y1="304" x2="880" y2="336" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a1)"/>
+
+      <rect x="44" y="336" width="1012" height="132" rx="14" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t14" x="68" y="362" fill="var(--blue-t1)">渲染进程 · Vue 3 + Vite 7</text>
+      <text class="t12" x="1032" y="362" text-anchor="end" fill="var(--blue-t2)">无 Node 能力，不得 import electron / node:*</text>
+
+      <rect x="68" y="382" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="159" y="407" text-anchor="middle" fill="var(--blue-t1)">对话界面</text>
+      <text class="t12" x="159" y="430" text-anchor="middle" fill="var(--blue-t2)">15 个组件</text>
+
+      <rect x="263" y="382" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="354" y="407" text-anchor="middle" fill="var(--blue-t1)">状态管理</text>
+      <text class="t12" x="354" y="430" text-anchor="middle" fill="var(--blue-t2)">10 个 Pinia store</text>
+
+      <rect x="458" y="382" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="549" y="407" text-anchor="middle" fill="var(--blue-t1)">数据获取</text>
+      <text class="t12" x="549" y="430" text-anchor="middle" fill="var(--blue-t2)">useApi（走 /api）</text>
+
+      <rect x="653" y="382" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="744" y="407" text-anchor="middle" fill="var(--blue-t1)">主题外观</text>
+      <text class="t12" x="744" y="430" text-anchor="middle" fill="var(--blue-t2)">深浅跟随系统</text>
+
+      <rect x="848" y="382" width="183" height="66" rx="9" fill="var(--blue-chip)" stroke="var(--blue-chipbd)"/>
+      <text class="t13" x="939" y="407" text-anchor="middle" fill="var(--blue-t1)">系统面板</text>
+      <text class="t12" x="939" y="430" text-anchor="middle" fill="var(--blue-t2)">DesktopPanel 集成</text>
+
+      <rect x="44" y="500" width="1012" height="76" rx="14" fill="var(--teal-fill)" stroke="var(--teal-stroke)" stroke-dasharray="6 4"/>
+      <text class="t14" x="68" y="528" fill="var(--teal-t1)">契约层 · src/shared/</text>
+      <text class="t12" x="1032" y="528" text-anchor="end" fill="var(--teal-t2)">零依赖 · 编译期引用 · 不参与运行时</text>
+      <text class="t12" x="68" y="556" fill="var(--teal-t2)">ipc.ts（32 条调用通道 + 7 条推送通道）· types.ts · defaults.ts · csp.ts · errors.ts</text>
+
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--divider)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+  <div class="grid">
+    <div class="mini">
+      <h3>窗口只能由一个地方创建</h3>
+      <p>业务模块禁止出现 <code>new BrowserWindow(</code>，由 <code>window-manager.ts</code> 独占。测试会静态扫描并失败。</p>
+    </div>
+    <div class="mini">
+      <h3>shared/ 是编译期契约</h3>
+      <p>被主进程、preload、渲染层三向引用，因此不得 import <code>electron</code> 或 <code>node:*</code>（连同 Vitest 一起跑不了）。</p>
+    </div>
+    <div class="mini">
+      <h3>常量跨文件一致</h3>
+      <p><code>APP_ID</code> / <code>PRODUCT_NAME</code> / <code>APP_SCHEME</code> / <code>MINIMUM_SYSTEM_VERSION</code> 必须与打包配置一致，只改一处测试立刻失败。</p>
+    </div>
+    <div class="mini">
+      <h3>渲染层无系统能力</h3>
+      <p>一切系统调用走 <code>window.api</code>，经 <code>useDesktop</code> 封装。IPC 返回判别联合而非抛出异常。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>IPC 契约：单一事实来源</h2>
+  <p class="lede">新增一条通道必须同时改三处。这不是约定，是类型系统强制的——校验器表是 <code>Record&lt;Channel, Validator&gt;</code>，漏写就编译不过。</p>
+  <div class="card">
+    <svg viewBox="0 0 1100 204" role="img" aria-label="IPC 契约三处同步">
+      <rect x="20" y="20" width="320" height="72" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="180" y="48" text-anchor="middle" fill="var(--blue-t1)">shared/ipc.ts</text>
+      <text class="t12" x="180" y="70" text-anchor="middle" fill="var(--blue-t2)">声明通道名 · 入参 · 出参类型</text>
+
+      <line x1="340" y1="56" x2="390" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <rect x="390" y="20" width="320" height="72" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="550" y="48" text-anchor="middle" fill="var(--blue-t1)">main/ipc/validators.ts</text>
+      <text class="t12" x="550" y="70" text-anchor="middle" fill="var(--blue-t2)">入参清洗与拒绝</text>
+
+      <line x1="710" y1="56" x2="760" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <rect x="760" y="20" width="320" height="72" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="920" y="48" text-anchor="middle" fill="var(--blue-t1)">main/ipc/*.ts handler</text>
+      <text class="t12" x="920" y="70" text-anchor="middle" fill="var(--blue-t2)">统一返回 IpcResult&lt;T&gt;</text>
+
+      <rect x="20" y="120" width="1060" height="64" rx="12" fill="var(--red-fill)" stroke="var(--red-stroke)" stroke-dasharray="6 4"/>
+      <text class="t13" x="48" y="146" fill="var(--red-t1)">漏写任何一环 → npm run typecheck 直接编译失败</text>
+      <text class="t12" x="48" y="168" fill="var(--red-t2)">VALIDATORS 声明为 Record&lt;Channel, Validator&gt;，缺 key 无法通过类型检查；新增通道还会同时触发 preload 白名单校验测试</text>
+
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--divider)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">03</span>运行时链路：开发态 vs 打包态</h2>
+  <p class="lede">两条路径的<strong>同源条件完全不同</strong>：开发态有 vite proxy 兜底，打包态没有代理、只有 <code>file://</code>。但它们在代码里共用同一套地址解析（<code>lib/api-client</code>），差别仅在于基址是否为空。</p>
+  <p class="lede" style="margin-top:10px"><b>修复前的对照：</b>打包态下 <code>fetch('/api/status')</code> 得到 <code>TypeError: Failed to fetch</code>（被解析成 <code>file:///api/status</code>）。这条断言已固化为回归探针，见 <code>npm run verify:backend</code>。</p>
+  <div class="card">
+    <svg viewBox="0 0 1100 354" role="img" aria-label="运行时链路对比">
+      <text class="t13 p" x="20" y="20">开发态 · npm run dev</text>
+      <rect x="20" y="34" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="280" y="60" text-anchor="middle" fill="var(--blue-t1)">Electron 渲染层</text>
+      <text class="t12" x="280" y="82" text-anchor="middle" fill="var(--blue-t2)">主进程 loadURL(http://localhost:5173)</text>
+
+      <line x1="280" y1="98" x2="280" y2="138" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a3)"/>
+      <text class="t12 m" x="300" y="118">经 api-client 补全基址</text>
+
+      <rect x="20" y="138" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="280" y="164" text-anchor="middle" fill="var(--blue-t1)">api-client + preload 下发的基址</text>
+      <text class="t12" x="280" y="186" text-anchor="middle" fill="var(--blue-t2)">无基址时退回相对路径，由 vite proxy 兜底</text>
+
+      <line x1="280" y1="202" x2="280" y2="242" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a3)"/>
+      <text class="t12 m" x="300" y="222">跨源直连 + CORS 预检</text>
+
+      <rect x="20" y="242" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="280" y="268" text-anchor="middle" fill="var(--blue-t1)">FastAPI 后端 :9529</text>
+      <text class="t12" x="280" y="290" text-anchor="middle" fill="var(--blue-t2)">uvicorn jarvis.main:app · 200 OK</text>
+
+      <text class="t13 p" x="560" y="20">打包态 · .app（已修复）</text>
+      <rect x="560" y="34" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="820" y="60" text-anchor="middle" fill="var(--blue-t1)">Electron 渲染层</text>
+      <text class="t12" x="820" y="82" text-anchor="middle" fill="var(--blue-t2)">主进程 loadFile(...) → 页面 origin 是 file://</text>
+
+      <line x1="820" y1="98" x2="820" y2="138" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a3)"/>
+      <text class="t12 m" x="840" y="118">同一套 api-client 解析</text>
+
+      <rect x="560" y="138" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="820" y="164" text-anchor="middle" fill="var(--blue-t1)">/api/status → 绝对地址</text>
+      <text class="t12" x="820" y="186" text-anchor="middle" fill="var(--blue-t2)">http://127.0.0.1:9529/api/status</text>
+
+      <line x1="820" y1="202" x2="820" y2="242" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a3)"/>
+      <text class="t12 m" x="840" y="222">fetch 不携 Origin，不涉 CORS</text>
+
+      <rect x="560" y="242" width="520" height="64" rx="12" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="820" y="268" text-anchor="middle" fill="var(--blue-t1)">FastAPI 后端 :9529</text>
+      <text class="t12" x="820" y="290" text-anchor="middle" fill="var(--blue-t2)">200 OK（实测）</text>
+
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--divider)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">04</span>主进程启动时序</h2>
+  <p class="lede">顺序有硬约束。分界线两侧访问的系统能力可用性不同，调换会直接崩在启动阶段。</p>
+  <div class="card">
+    <svg viewBox="0 0 1100 376" role="img" aria-label="主进程启动时序">
+      <text class="t12 m" x="20" y="24">app.whenReady 之前 · 只注册监听，不碰 session</text>
+
+      <rect x="20" y="40" width="242" height="64" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="141" y="64" text-anchor="middle" fill="var(--blue-t1)">① 单实例锁</text>
+      <text class="t12" x="141" y="86" text-anchor="middle" fill="var(--blue-t2)">二次启动唤起已有窗口</text>
+
+      <rect x="292" y="40" width="242" height="64" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="413" y="64" text-anchor="middle" fill="var(--blue-t1)">② 日志 · 协议</text>
+      <text class="t12" x="413" y="86" text-anchor="middle" fill="var(--blue-t2)">深链 scheme 注册</text>
+
+      <rect x="564" y="40" width="242" height="64" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="685" y="64" text-anchor="middle" fill="var(--blue-t1)">③ WebContents 加固</text>
+      <text class="t12" x="685" y="86" text-anchor="middle" fill="var(--blue-t2)">web-contents-created 监听</text>
+
+      <rect x="836" y="40" width="242" height="64" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="957" y="64" text-anchor="middle" fill="var(--blue-t1)">④ 崩溃监控</text>
+      <text class="t12" x="957" y="86" text-anchor="middle" fill="var(--blue-t2)">render-process-gone 归因</text>
+
+      <rect x="20" y="132" width="1058" height="42" rx="10" fill="var(--amber-fill)" stroke="var(--amber-stroke)"/>
+      <text class="t13" x="549" y="158" text-anchor="middle" fill="var(--amber-t1)">── app.whenReady ──  分界线：这一侧起才允许访问 session.defaultSession</text>
+
+      <rect x="20" y="200" width="242" height="64" rx="10" fill="var(--teal-fill)" stroke="var(--teal-stroke)"/>
+      <text class="t13" x="141" y="224" text-anchor="middle" fill="var(--teal-t1)">⑤ 会话安全策略</text>
+      <text class="t12" x="141" y="246" text-anchor="middle" fill="var(--teal-t2)">权限 · 下载 · 导航拦截</text>
+
+      <rect x="292" y="200" width="242" height="64" rx="10" fill="var(--teal-fill)" stroke="var(--teal-stroke)"/>
+      <text class="t13" x="413" y="224" text-anchor="middle" fill="var(--teal-t1)">⑥ 偏好 · 主题</text>
+      <text class="t12" x="413" y="246" text-anchor="middle" fill="var(--teal-t2)">读取持久化并下发</text>
+
+      <rect x="564" y="200" width="242" height="64" rx="10" fill="var(--teal-fill)" stroke="var(--teal-stroke)"/>
+      <text class="t13" x="685" y="224" text-anchor="middle" fill="var(--teal-t1)">⑦ IPC 装配</text>
+      <text class="t12" x="685" y="246" text-anchor="middle" fill="var(--teal-t2)">32 + 7 通道与校验器注册</text>
+
+      <rect x="836" y="200" width="242" height="64" rx="10" fill="var(--teal-fill)" stroke="var(--teal-stroke)"/>
+      <text class="t13" x="957" y="224" text-anchor="middle" fill="var(--teal-t1)">⑧ 窗口创建并显示</text>
+      <text class="t12" x="957" y="246" text-anchor="middle" fill="var(--teal-t2)">window-manager 独占</text>
+
+      <rect x="20" y="296" width="1058" height="60" rx="10" fill="var(--red-fill)" stroke="var(--red-stroke)"/>
+      <text class="t12" x="44" y="320" fill="var(--red-t1)">为什么必须分开：ready 前访问 session.defaultSession 会抛 Session can only be received when app is ready，表现为「启动即崩、日志无有效信息」。</text>
+      <text class="t12" x="44" y="340" fill="var(--red-t2)">安全策略因此被拆成 registerWebContentsHardening()（ready 前）与 applySessionSecurityPolicy()（ready 后）两个函数。</text>
+    </svg>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">05</span>打包与验收链路</h2>
+  <p class="lede">每一步都有对应的脚本，验收退出码可直接接进 CI 判断，不靠人眼看。</p>
+  <div class="card">
+    <svg viewBox="0 0 1100 124" role="img" aria-label="打包与验收链路">
+      <rect x="20" y="20" width="180" height="72" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="110" y="46" text-anchor="middle" fill="var(--blue-t1)">src/ 源码</text>
+      <text class="t12" x="110" y="68" text-anchor="middle" fill="var(--blue-t2)">TS 5.9 + Vue 3</text>
+
+      <line x1="200" y1="56" x2="240" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <rect x="240" y="20" width="180" height="72" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="330" y="46" text-anchor="middle" fill="var(--blue-t1)">electron-builder</text>
+      <text class="t12" x="330" y="68" text-anchor="middle" fill="var(--blue-t2)">镜像 + entitlements</text>
+
+      <line x1="420" y1="56" x2="460" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <rect x="460" y="20" width="180" height="72" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="550" y="46" text-anchor="middle" fill="var(--blue-t1)">JARVIS.app</text>
+      <text class="t12" x="550" y="68" text-anchor="middle" fill="var(--blue-t2)">ad-hoc 或开发者证书</text>
+
+      <line x1="640" y1="56" x2="680" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <rect x="680" y="20" width="180" height="72" rx="10" fill="var(--blue-fill)" stroke="var(--blue-stroke)"/>
+      <text class="t13" x="770" y="46" text-anchor="middle" fill="var(--blue-t1)">dmg + zip</text>
+      <text class="t12" x="770" y="68" text-anchor="middle" fill="var(--blue-t2)">universal 拖拽安装界面</text>
+
+      <line x1="860" y1="56" x2="900" y2="56" stroke="var(--divider)" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <rect x="900" y="20" width="180" height="72" rx="10" fill="var(--teal-fill)" stroke="var(--teal-stroke)"/>
+      <text class="t13" x="990" y="46" text-anchor="middle" fill="var(--teal-t1)">验收</text>
+      <text class="t12" x="990" y="68" text-anchor="middle" fill="var(--teal-t2)">verify + smoke 脚本</text>
+
+      <defs>
+        <marker id="a4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="var(--divider)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+  <table>
+    <thead><tr><th style="width:34%">脚本</th><th>作用</th></tr></thead>
+    <tbody>
+      <tr><td><code>scripts/make-dmg.sh</code></td><td>一键产出 dmg + zip，注入国内镜像、临时配置固定架构、失败时兜底，并透传验收退出码</td></tr>
+      <tr><td><code>scripts/verify-release.sh</code></td><td>四项结论：签名、架构、Gatekeeper、公证票据。支持 <code>--expect-adhoc</code></td></tr>
+      <tr><td><code>scripts/smoke-test.sh</code></td><td>把产物真的启动一次：进程存活、窗口显示、日志命中标记、正常退出</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2><span class="n">06</span>已修复：打包态后端链路</h2>
+  <div class="alert">
+    <h3>问题：打包态下所有 /api 与 /ws 请求失效</h3>
+    <p>打包出来的 .app 装到别的机器上界面能开，但每一个后端请求都失败 —— 现象与"后端没启动"完全一致。根因不是某一行写错，而是<strong>相对路径隐含了"同源"这个前提</strong>：<code>file://</code> 页面下 <code>/api/chat</code> 被解析成 <code>file:///api/chat</code>，请求根本没离开应用。</p>
+    <p>实际涉面比看上去大：全仓 <strong>74 处 fetch</strong>，其中 69 处各自硬编码 <code>/api</code> 前缀。开发态之所以看起来一切正常，是 5173 的代理在替它们兜底。</p>
+  </div>
+  <div class="note" style="margin-top:14px">
+    <b>采用的方案（原三个候选中选第 2 项）：</b>主进程经 <code>additionalArguments</code> 下发后端基址 → preload 暴露 <code>window.api.backendOrigin</code> → 渲染层统一经 <code>lib/api-client</code> 补全为绝对地址。另两个候选被否：<code>protocol.handle</code> 反代承载不了 WebSocket 升级（等于只解决一半）；<code>session.setProxy</code> 对 file:// 无效（不走网络栈代理）。
+  </div>
+  <div class="card" style="margin-top:14px">
+    <table>
+      <thead><tr><th style="width:38%">落点</th><th>改动</th></tr></thead>
+      <tbody>
+        <tr><td><code>shared/defaults.ts</code></td><td>新增 <code>BACKEND_ORIGIN</code> / <code>BACKEND_ORIGIN_ARG</code>，作唯一事实来源</td></tr>
+        <tr><td><code>shared/backend-path.ts</code></td><td>新增：地址补全的纯逻辑（零依赖，可在 node 环境单测）</td></tr>
+        <tr><td><code>main/window-manager.ts</code></td><td><code>webPreferences</code> 增 <code>additionalArguments</code> 下发基址</td></tr>
+        <tr><td><code>preload/index.ts</code></td><td>解析 argv，暴露 <code>backendOrigin</code></td></tr>
+        <tr><td><code>renderer/lib/api-client.ts</code></td><td>新增：<code>apiUrl</code> / <code>apiFetch</code>，后端请求的唯一出口</td></tr>
+        <tr><td>7 个文件 · 69 处调用点</td><td><code>fetch(</code> → <code>apiFetch(</code></td></tr>
+        <tr><td><code>stores/notification.ts</code></td><td>WS 地址改由基址推导，不再拼 <code>window.location.host</code></td></tr>
+        <tr><td><code>Jarvis_demo</code> 的 <code>.env</code> / <code>config.py</code></td><td>CORS 增放行 5173（必需）与 <code>null</code>（预防性）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note" style="margin-top:14px">
+    <b>一条被实测推翻的初始判断：</b>原以为打包态必须让后端放行 <code>Origin: null</code>。实测（Electron 44 / Chromium 152）<code>file://</code> 页面发出的 fetch <strong>不携带 Origin 头</strong>，因此并不触发 CORS 检查 —— 在未放行 <code>null</code> 的旧配置下，打包态直连同样成功。相反 <code>5173</code> 是<strong>必需</strong>的：开发态现在是真正的跨源请求，少放行它就报 <code>TypeError: Failed to fetch</code>，而后端日志里连访问记录都不会有。
+  </div>
+  <div class="note" style="margin-top:14px">
+    <b>回归防护：</b><code>tests/unit/renderer-api-guard.spec.ts</code> 扫描渲染层源码，禁止裸 <code>fetch('/api…')</code>、禁止绕过封装直接摸 <code>window.api</code>、禁止在调用点内联 <code>window.location.host</code>；<code>tests/unit/backend-path.spec.ts</code> 覆盖地址补全规则；<code>npm run verify:backend</code> 在真实 Electron 里验证两种形态的连通性（打包形态的裸相对路径必须失败，充当回归探针）。
+  </div>
+  <div class="note" style="margin-top:14px">
+    <b>仍在的外部阻塞：</b>无 Apple Developer 账号，签名/公证只能走 ad-hoc（<code>spctl</code> 必然 rejected）；<code>electron-builder.yml</code> 的 <code>publish.owner</code> 仍是占位值 —— 自动更新链路未接通。
+  </div>
+</section>
+
+<footer>
+  <div>事实来源（本图所有数字与约束均取自以下文件，非推断）</div>
+  <ul>
+    <li>契约与常量：<code>src/shared/ipc.ts</code>（32 条调用通道 + 7 条推送通道）、<code>src/shared/defaults.ts</code>、<code>src/shared/csp.ts</code></li>
+    <li>启动顺序与安全策略拆分：<code>src/main/index.ts</code>、<code>src/main/security.ts</code></li>
+    <li>运行时链路：<code>src/main/window-manager.ts</code>（含 <code>additionalArguments</code> 下发基址）、<code>src/preload/index.ts</code>、<code>src/renderer/vite.config.ts</code>、<code>src/renderer/src/lib/api-client.ts</code>、<code>src/shared/backend-path.ts</code></li>
+    <li>连通性实测：<code>npm run verify:backend</code>（<code>scripts/verify-backend-connection.mjs</code>，覆盖开发态与打包形态）</li>
+    <li>边界约束的自动化校验：<code>tests/unit/release-config.spec.ts</code>（45 项静态隔离与跨文件一致性）</li>
+  </ul>
+</footer>
+
+</div>
+<script>
+(function(){
+  var root=document.documentElement, btn=document.getElementById('tg');
+  var prefers=window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  var theme=prefers?'light':'dark';
+  function apply(){
+    root.setAttribute('data-theme',theme);
+    btn.textContent=theme==='dark'?'切换浅色':'切换深色';
+  }
+  btn.addEventListener('click',function(){theme=theme==='dark'?'light':'dark';apply();});
+  apply();
+})();
+</script>
+</body>
+</html>
