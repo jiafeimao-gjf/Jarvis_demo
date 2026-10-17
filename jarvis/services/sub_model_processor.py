@@ -90,7 +90,10 @@ class SubModelProcessor:
             )
             return result
         except Exception as e:
-            logger.error(f"Audio transcription failed: {type(e).__name__}: {e}")
+            logger.error(
+                f"Audio transcription failed (backend={settings.stt_backend!r}): "
+                f"{type(e).__name__}: {e}"
+            )
             return ""
 
     async def process_image(
@@ -122,8 +125,13 @@ class SubModelProcessor:
 
     def get_status(self) -> dict:
         """导出状态"""
+        from jarvis.services.stt import get_stt_status
+
         return {
             "stt_model": self.stt_model,
             "vision_model": self.vision_model,
             "router_ready": self._router is not None,
+            # STT 后端可用性 — 通过 /api/status → mediator.get_status 暴露,
+            # 避免 paraformer 依赖缺失只体现在日志里
+            "stt": get_stt_status(),
         }
