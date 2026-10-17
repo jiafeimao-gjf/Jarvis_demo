@@ -16,6 +16,19 @@ from jarvis.config import settings
 logger = get_logger(__name__)
 
 
+def _resolve_model_id(model: Optional[str], instance, config) -> str:
+    """决定本次调用实际使用的 model id。
+
+    优先级: 显式 model > instance.default_model > 全局默认。
+    历史 bug: 语音链路调用 chat(text, conv_id) 不带 model, 于是落到全局默认
+    (qwen3:4b), 却通过 active instance (deepseek) 的 adapter 发出 → 400。
+    """
+    if model:
+        return model
+    inst_model = getattr(instance, "default_model", "") if instance is not None else ""
+    return inst_model or config.default_model
+
+
 class AIRouter:
     """Routes AI requests: model ID → provider → adapter → API call"""
 
@@ -68,7 +81,7 @@ class AIRouter:
     ) -> AIResponse:
         """非流式 chat — 接入 LLMCallLogger 记录 body + response."""
         from jarvis.services.ai.call_logger import get_call_logger
-        model_id = model or self.config.default_model
+        model_id = _resolve_model_id(model, instance, self.config)
 
         # 决定实际走的 provider (instance 绑定 → 强制用 instance.type)
         if instance is not None:
@@ -150,7 +163,7 @@ class AIRouter:
         provider: Optional[str] = None, instance=None,
         conversation_id: Optional[str] = None, **kwargs
     ) -> AsyncIterator[str]:
-        model_id = model or self.config.default_model
+        model_id = _resolve_model_id(model, instance, self.config)
         if instance is not None:
             client = self._get_client_with_instance(instance, model_id)
         else:
@@ -171,7 +184,7 @@ class AIRouter:
         """
         from jarvis.services.ai.call_logger import get_call_logger
 
-        model_id = model or self.config.default_model
+        model_id = _resolve_model_id(model, instance, self.config)
         if instance is not None:
             client = self._get_client_with_instance(instance, model_id)
             actual_provider = getattr(instance, "type", "") or self.config.default_provider

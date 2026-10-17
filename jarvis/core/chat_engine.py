@@ -115,6 +115,20 @@ class ChatEngine:
             logger.warning(f"[ChatEngine] provider_id={provider_id!r} not found or disabled, using active")
         return store.get_active_instance()
 
+    @staticmethod
+    def _resolve_model(model: Optional[str], instance) -> Optional[str]:
+        """未显式指定 model 时, 跟随当前 ProviderInstance 的 default_model。
+
+        历史 bug: 语音链路调用 chat(text, conv_id) 不带 model → 落到全局默认
+        (qwen3:4b), 却通过 active instance (deepseek) 的 adapter 发出 → 400。
+        这里统一解析, 让 context 预算 / subagent / router 看到同一个 model。
+        """
+        if model:
+            return model
+        if instance is None:
+            return None
+        return getattr(instance, "default_model", "") or None
+
     def _resolve_provider_protocol(self, instance) -> str:
         """PR3: 根据 instance.type 决定 tool-call 协议.
 
@@ -294,6 +308,8 @@ class ChatEngine:
         self.subagent_orchestrator.parent_conversation = self.current_conversation
         # 让 subagent 跟随主对话的模型 / ProviderInstance
         instance = self._resolve_instance(provider_id)
+        # 未显式传 model → 跟随实例默认模型 (语音等不传 model 的链路)
+        model = self._resolve_model(model, instance)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
 
@@ -566,6 +582,8 @@ class ChatEngine:
         self.subagent_orchestrator.parent_conversation = self.current_conversation
         # 解析 ProviderInstance — 主对话 / subagent / 后续工具迭代共用同一实例
         instance = self._resolve_instance(provider_id)
+        # 未显式传 model → 跟随实例默认模型 (语音等不传 model 的链路)
+        model = self._resolve_model(model, instance)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
 
@@ -866,6 +884,8 @@ class ChatEngine:
         self.subagent_orchestrator.parent_conversation = self.current_conversation
         # 解析 ProviderInstance — 主对话 / subagent / 后续工具迭代共用同一实例
         instance = self._resolve_instance(provider_id)
+        # 未显式传 model → 跟随实例默认模型 (语音等不传 model 的链路)
+        model = self._resolve_model(model, instance)
         self.subagent_orchestrator.model = model
         self.subagent_orchestrator.instance = instance
 
