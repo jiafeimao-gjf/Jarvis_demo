@@ -54,7 +54,7 @@ cd frontend && npm run build
 | Real-time | WebSocket + SSE (Server-Sent Events) |
 | AI provider | Ollama (primary), OpenAI/Anthropic adapters config-driven |
 | AI orchestration | AIRouter — model registry → adapter → API |
-| Voice STT | Local Paraformer-large via funasr (MPS) with WebM direct decode |
+| Voice STT | Local Paraformer-large via funasr (MPS) + FSMN-VAD + CT-Transformer 标点子模型, 启动后台预热; whisper 自动回退 |
 | Voice TTS | F5-TTS voice clone (optional, default browser SpeechSynthesis fallback) |
 | Vision analysis | Ollama qwen3.5:9b via /v1/messages (Anthropic-compatible) |
 | Multimodal routing | SubModelProcessor facade → sub-model → text → chat |
@@ -175,9 +175,9 @@ frontend/                       # Frontend (Vue 3 + TypeScript)
 │   │   └── usePCMPlayer.ts     # Web Audio API PCM int16 stream player (for cloned voice playback)
 │   └── components/
 │       ├── Header.vue          # Top nav bar with status indicators
-│       ├── Sidebar.vue         # Conversation list (主+归档双 section), new chat button, 归档/恢复/删除
-│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display + PCM playback + slash 命令面板 (输入 / 弹)
-│       ├── ChatMessage.vue     # Single message bubble (markdown rendering); 🔈 按钮受 tts_enabled 全局开关控制
+│       ├── Sidebar.vue         # Conversation list (主+归档双 section), new chat button, 归档/恢复/删除, 每条显示 updatedAt 完整时间
+│       ├── ChatWindow.vue      # Main chat UI: messages, input, streaming display + PCM playback + slash 命令面板 + 对话轮次侧栏 (每轮带时间)
+│       ├── ChatMessage.vue     # Single message bubble (markdown rendering); 底部显示完整时间 YYYY-MM-DD HH:mm:ss; 🔈 按钮受 tts_enabled 全局开关控制
 │       ├── CameraPreview.vue   # Camera feed + capture + analyze UI
 │       ├── HardwareControls.vue# Hardware toggle (camera, microphone, screen share)
 │       ├── ProviderManager.vue # Provider instance CRUD (multi-provider per project)
@@ -492,7 +492,13 @@ Audio and image processed by dedicated sub-models → plain text → injected in
    (降级: 未启用/缺 ref → 浏览器 SpeechSynthesis)
 ```
 
-- **STT**: Paraformer-large via funasr (MPS), lazy-loaded, supports direct WebM binary input
+- **STT**: Paraformer-large via funasr (MPS) + `vad_model` (FSMN-VAD) + `punc_model` (CT-Transformer 标点)。
+  **必须显式传 vad/punc** —— 主模型目录只有 ASR 主干，漏传会导致无标点 + 汉字间带空格。
+  支持直接 WebM bytes 输入。
+  - 冷启动 ~90s（ASR 867MB + punc 1.1GB），热调用 ~0.3s；`main.py` startup 用
+    `asyncio.create_task(engine.warmup())` 后台预热，不阻塞服务启动
+  - `get_stt_engine()` 在 funasr 缺失时**自动回退 whisper**（ffmpeg 解码 WebM → whisper-base）
+  - `/api/status` → `systems.sub_model_processor.stt` 暴露 `requested_backend` / `effective_backend` / `loaded_backend`
 - **Vision**: `qwen3.5:9b` via `/v1/messages` Anthropic-compatible endpoint with `content: [{image, source:...}]`
 - **Camera**: 30s auto-capture with queue (max 2), start/stop toggle, frame image persisted per conversation
 - **Voice in**: single mic button — click to record, click to stop, timer display, no time limit
@@ -551,6 +557,8 @@ Primary: **Ollama** (local). OpenAI/Anthropic adapters exist but are not in fall
 - **Camera**: video preview + toggle start/stop auto-analysis (30s), image cards with fullscreen viewer
 - **Settings** (左右布局 — 侧栏菜单 + 主内容): provider/model selection, prompts, hardware config — saved to memory DB
 - **Sidebar 主列表**: hover 显示 ✏️ 编辑 / 📦 归档 / 🗑 删除; 底部 "已归档 (N)" 可折叠 section, 每项可 ↺ 恢复 / 🗑 永久删除
+- **时间显示**: 侧边栏会话列表、聊天窗口主题栏、每条消息、对话轮次侧栏统一显示 `YYYY-MM-DD HH:mm:ss`。
+  格式化用 `lib/utils.ts:formatDateTime()`; 后端会话时间 (`created_at`/`updated_at`) 是 **UTC 无时区标记**, 必须经 `parseUtcDate()` 解析。会话列表/主题栏用 `updatedAt`（最后活动时间）
 - **ProviderManager**: add/edit/delete ProviderInstances with custom model names and API keys (for proxy providers like MiniMax)
 - **SkillManager** (Settings → 技能管理): 3 Tab (列表/标签/分组) + 编辑 modal (markdown 实时预览) + active groups 切换
 
@@ -621,3 +629,8 @@ tags: demo, alpha          # 可选, 自动识别
 - **运行中手工加 skill 文件不自动入库** — `SkillStore.refresh_from_disk()` 只在 `load()` 和 `POST /api/skills/refresh` 时跑, 重启会重新扫描; 想要实时同步改 `chat_engine._build_system_prompt` 里调 `await skill_store.refresh_from_disk()`(有 IO 开销)。
 - **chat_stream 的 `enable_tts=False` 仍推 `tts_fallback`** — 后端 `chat.py` 加 `tts_disabled = not enable_tts` 短路 `push_token_events` / `flush_tail_events`, 早 return; 不要只靠前端忽略事件, 否则带宽 + 后端 CPU 都浪费。
 - **归档恢复看不到内容** — `archiveConversation` 清空 `conv.messages` 省内存, 恢复必须重新 fetch; `restoreConversation` 独立 await fetch + 切 ID, **不复用 `selectConversation`**, 否则 `await syncToBackend(prevConv)` 会阻塞。
+- **不传 model 的调用链路必须跟随 active instance** — model 解析优先级是 `显式 model > instance.default_model > 全局默认`（`AIRouter._resolve_model_id()` / `ChatEngine._resolve_model()`）。语音链路 `_handle_voice_input` 调 `chat_engine.chat(text, conv_id)` **不带 model**, 旧逻辑直接回退全局默认 `qwen3:4b`, 却通过 active instance (`deepseek`) 的 adapter 发出 → `400 The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed qwen3:4b`。新增"不传 model"的入口时, 复用这两个解析函数, 不要自己写 `model or settings.ai.default_model`。
+- **时间戳有两种语义, 不要混用** — `conversations.created_at/updated_at` 来自 SQLite `CURRENT_TIMESTAMP`, 是 **UTC 且无时区标记** (`"2026-10-17 03:35:14"`), 前端必须用 `parseUtcDate()` 解析, 否则显示会差一个时区; `messages[].timestamp` 来自 Python `Message.to_dict()` 的 `datetime.now().isoformat()`, 是**本地 naive**, 直接 `new Date()`。另外前端 `syncToBackend` 的 payload **必须带 `timestamp`**, 漏带会导致每次同步都把后端已存的消息时间覆盖掉 (历史 bug)。
+- **STT 不要只依赖 `stt_backend` 配置** — `get_stt_engine()` 会用 `resolve_backend()` 先探测依赖 (`importlib.util.find_spec`)，funasr 缺失时自动降级 whisper。**不要**把 paraformer 的 `from funasr import ...` 提到模块顶层，否则 import 期就炸，回退逻辑没机会生效。新增 STT 后端要同时在 `_BACKEND_DEPS` 和 `_FALLBACK` 登记。
+- **Paraformer 必须传 `vad_model` + `punc_model`** — 模型目录 `iic/speech_paraformer-large-vad-punc_...` 只有 ASR 主干，VAD/标点是 `configuration.json` 里声明的独立子模型。漏传的典型症状：转写结果**无标点**且**每个汉字之间带空格**（`这 是 一 次`）。两个子模型 id 见 `ParaformerSTT.VAD_MODEL` / `PUNC_MODEL`。
+- **不要删 startup 里的 STT 预热** — punc 模型 1.1GB，不加预热时**首次语音请求会卡 ~90s**（热调用仅 ~0.3s），用户会误以为功能坏了。`main.py` 用 `asyncio.create_task` 后台跑，不阻塞启动；预热失败只降级为懒加载。

@@ -19,6 +19,7 @@ Jarvis 是基于 FastAPI + Vue 3 的智能助手系统，支持完整的多模�
 
 ### 最近更新（v2026.10）
 
+- **统一时间显示**：侧边栏会话列表、聊天窗口主题栏、消息列表、对话轮次侧栏统一显示 `YYYY-MM-DD HH:mm:ss`；修复会话时间 UTC 解析偏移（显示差时区）、以及前端同步遗漏 `timestamp` 导致历史消息时间被覆盖的问题
 - **ToolHistoryCompactor**：把 `tool` / `tool_result` 消息转成自然语言摘要注入 LLM 上下文，多轮对话里 LLM 能"记住"之前调过什么工具；总 token 超阈值时聚合早期调用
 - **ChatWindow UX**：输入框自适应 1-6 行高度；↑/↓ 在已发送内容中翻找（per-conversation，localStorage 持久化）；发送后自动清空；右侧新增「对话轮次」侧栏，点击跳转到对应消息
 - **会话文件追踪 + 可视化**：file 工具的 write / edit / delete / mkdir 操作自动记录到会话；右侧独立「会话文件」侧栏列出所有触碰过的文件；点击打开全屏 Viewer，`.md` / `.html` / 代码文件 / 图片按扩展名渲染（marked + DOMPurify / sandboxed iframe / highlight.js / `<img>`）
@@ -41,7 +42,7 @@ Jarvis 的多模态能力依赖本地推理模型。**首次启动前**请按本
 |------|------|------|------|----------|
 | **Chat** | `qwen3:4b` | 主对话 | ~2.5 GB | Ollama pull |
 | **Vision** | `qwen3.5:9b` | 图片理解 | ~5.5 GB | Ollama pull |
-| **STT** | Paraformer-large (funasr) | 中文语音转文字 | ~1 GB | 首次调用自动从 ModelScope 下载 |
+| **STT** | Paraformer-large + VAD + 标点 (funasr) | 中文语音转文字 | ~2 GB (ASR 867MB + 标点 1.1GB) | 首次启动后台预热并从 ModelScope 下载 |
 | **T2I** *(可选)* | `x/z-image-turbo` | 文生图 | ~6 GB | Ollama pull |
 
 ### 1. 安装 Ollama + 拉取模型
@@ -163,9 +164,11 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 
 **故障排查**：
 - `Failed to connect to http://localhost:11434` → `ollama serve` 没跑
-- `No module named 'funasr'` → `pip install funasr`
-- `ffmpeg not found` → `brew install ffmpeg`
-- 语音返回空串 → 检查 `logs/jarvis.services.sub_model_processor.log`，搜索 `[Paraformer]` / `[whisper]` 关键字
+- `No module named 'funasr'` → **不致命**，会自动回退到 whisper（日志出现 `回退 'whisper'`）。
+  想要中文最优效果再 `pip install funasr`
+- `ffmpeg not found` → `brew install ffmpeg`（whisper 回退路径依赖它解码 WebM）
+- 语音返回空串 → 检查 `logs/jarvis.services.sub_model_processor.log`，搜索 `[Paraformer]` / `[whisper]` 关键字；
+  或直接看 `GET /api/status` → `systems.sub_model_processor.stt`（含 `effective_backend`）
 
 ## 核心能力
 
@@ -177,7 +180,7 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 | **写** | 代码/文档生成、文件操作 | 直接对话 |
 | **执行** | 工具调用（文件/Bash/浏览器/子代理...）| 对话中自然触发 |
 | **记忆** | token 预算 + 滑动窗口 + 摘要 + 工具历史 + 向量检索 | 自动 |
-| **导航** | 输入历史 ↑/↓ 翻找、对话轮次列表点击跳转 | 聊天界面 |
+| **导航** | 输入历史 ↑/↓ 翻找、对话轮次列表点击跳转（每轮显示完整时间） | 聊天界面 |
 | **文件** | 会话文件追踪（write/edit/delete/mkdir）+ 可视化（md/html/code/image） | 聊天界面右侧 |
 | **追溯** | 每次 LLM 调用的 body + response 完整记录 | Settings → LLM 日志 |
 
@@ -273,7 +276,8 @@ AI__ANTHROPIC__API_KEY=sk-ant-xxx
 | **输入历史翻找** | ↑/↓ 在已发送内容中翻找，per-conversation 隔离，封顶 100 条；持久化到 `localStorage:jarvis_input_history_v1`；`/clear` / `/context` / `/skill x` 都记入历史 |
 | **多行 cursor 不被吞** | 仅光标在第一行时 ↑ 才召回历史；中间行 ↑ 走原生 cursor 移动 |
 | **发送后置空** | Enter 发送后输入框立即清空，光标回到 textarea |
-| **对话轮次侧栏** | 右侧 `w-72` 面板列出所有 user 输入，点击 `scrollIntoView` 跳转；IntersectionObserver 追踪当前可见 turn 自动高亮；图片消息显示 `📷 [图片]`；面板开关持久化 |
+| **对话轮次侧栏** | 右侧 `w-72` 面板列出所有 user 输入，每轮显示 `#序号` + 完整时间 `YYYY-MM-DD HH:mm:ss`，点击 `scrollIntoView` 跳转；IntersectionObserver 追踪当前可见 turn 自动高亮；图片消息显示 `📷 [图片]`；面板开关持久化 |
+| **时间显示** | 会话列表 / 主题栏 / 每条消息 / 轮次侧栏统一 `YYYY-MM-DD HH:mm:ss`（`formatDateTime()`）；会话时间按 UTC 解析（`parseUtcDate()`）；同步保留 `timestamp` |
 | **Slash 命令面板** | `/` 触发，↑↓ 选择，Enter 执行，`/clear` / `/stop` / `/context` / `/<skill_id>` |
 
 ## 开发
