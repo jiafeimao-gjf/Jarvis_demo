@@ -187,6 +187,28 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"[TTS] 初始化检查失败：{e}")
 
+    # STT 后台预热 — paraformer 冷启动约 90s（ASR 主干 + VAD + 1.1GB 标点模型）
+    try:
+        from jarvis.services.stt import get_stt_engine, resolve_backend
+        if resolve_backend(settings.stt_backend, warn=False) == "paraformer":
+            import asyncio as _aio
+
+            async def _warmup_stt():
+                try:
+                    engine = get_stt_engine(settings.stt_backend)
+                    await engine.warmup()
+                    logger.info("[STT] paraformer warmup complete")
+                except Exception as e:
+                    logger.warning(
+                        f"[STT] warmup failed, will lazy-load on first request: {e}"
+                    )
+
+            _aio.create_task(_warmup_stt())
+        else:
+            logger.info("[STT] paraformer unavailable — skip warmup (whisper lazy-loads)")
+    except Exception as e:
+        logger.warning(f"[STT] warmup setup failed: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

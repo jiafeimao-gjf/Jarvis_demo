@@ -23,6 +23,10 @@ class ParaformerSTT(STTEngine):
 
     MODEL = "iic/speech_paraformer-large-vad-punc_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
     REVISION = "v2.0.4"
+    # 主模型目录里只有 ASR 主干；VAD / 标点在同系列 configuration.json 中
+    # 声明为独立子模型。不显式传入时输出无标点、汉字间带空格。
+    VAD_MODEL = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
+    PUNC_MODEL = "iic/punc_ct-transformer_cn-en-common-vocab471067-large"
 
     def __init__(self, device: Optional[str] = None, batch_size_s: int = 300):
         self._device = device  # None = 自动检测 (mps/cpu)
@@ -73,6 +77,14 @@ class ParaformerSTT(STTEngine):
         text = result[0].get("text", "") if isinstance(result[0], dict) else ""
         return text.strip()
 
+    async def warmup(self) -> None:
+        """启动时后台预热模型。
+
+        ASR 主干 867MB + VAD 4.7MB + 标点模型 1.1GB，冷启动约 90s；
+        热调用仅约 0.3s。预热后首次语音请求不再卡住。
+        """
+        await self._ensure_loaded()
+
     async def _ensure_loaded(self):
         """懒加载模型（首次调用时加载，后续复用）"""
         if self._model is not None:
@@ -101,6 +113,8 @@ class ParaformerSTT(STTEngine):
             return AutoModel(
                 model=self.MODEL,
                 model_revision=self.REVISION,
+                vad_model=self.VAD_MODEL,
+                punc_model=self.PUNC_MODEL,
                 device=self._device,
                 batch_size_s=self._batch_size_s,
             )

@@ -27,3 +27,7 @@ class STTEngine(ABC):
     def is_ready(self) -> bool:
         """模型是否已加载。默认 True（懒加载的后端首次 transcribe 才加载）"""
         return True
+
+    async def warmup(self) -> None:
+        """可选：提前加载模型。默认无操作（懒加载后端）。"""
+        return
